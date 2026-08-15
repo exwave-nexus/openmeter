@@ -429,14 +429,17 @@ func (p PlanMeta) StatusAt(t time.Time) PlanStatus {
 		return PlanStatusDraft
 	}
 
-	// Plan has ArchivedStatus if EffectiveTo is in the past relative to time t.
-	if from.Before(t) && (to.Before(t) && from.Before(to)) {
+	// EffectiveFrom is inclusive. A plan published at the current simulation
+	// instant is active immediately; treating equality as invalid breaks the
+	// v1 publish endpoint and makes the catalog impossible to bootstrap.
+	// Plan has ArchivedStatus once EffectiveTo is reached.
+	if !from.After(t) && !to.IsZero() && !to.After(t) {
 		return PlanStatusArchived
 	}
 
-	// Plan has ActiveStatus if EffectiveFrom is set in the past relative to time t and EffectiveTo is not set
-	// or in the future relative to time t.
-	if from.Before(t) && (to.IsZero() || to.After(t)) {
+	// Plan has ActiveStatus if EffectiveFrom is set at or before time t and
+	// EffectiveTo is not set or remains in the future relative to time t.
+	if !from.After(t) && (to.IsZero() || to.After(t)) {
 		return PlanStatusActive
 	}
 

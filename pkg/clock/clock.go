@@ -12,6 +12,9 @@ var (
 )
 
 func Now() time.Time {
+	if now, ok := simulationNow(); ok {
+		return now
+	}
 	if atomic.LoadInt32(&frozen) == 1 {
 		return frozenTime.Load().(time.Time).Round(0)
 	}

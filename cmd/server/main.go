@@ -210,6 +210,7 @@ func main() {
 		logger.Error("failed to create server", "error", err)
 		os.Exit(1)
 	}
+	registerSimulationClockRoutes(s)
 
 	s.Get("/version", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{

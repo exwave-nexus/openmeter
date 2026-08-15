@@ -60,11 +60,7 @@ func NewStripeClient(config StripeClientConfig) (StripeClient, error) {
 		return nil, err
 	}
 
-	backend := stripe.GetBackendWithConfig(stripe.APIBackend, &stripe.BackendConfig{
-		LeveledLogger: leveledLogger{
-			logger: config.Logger,
-		},
-	})
+	backend := stripe.GetBackendWithConfig(stripe.APIBackend, stripeBackendConfig(leveledLogger{logger: config.Logger}))
 	client := &client.API{}
 	client.Init(config.APIKey, &stripe.Backends{
 		API:     backend,
