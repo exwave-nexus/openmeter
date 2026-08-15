@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"time"
 
 	"github.com/ThreeDotsLabs/watermill/message"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/watermill/eventbus"
 	"github.com/openmeterio/openmeter/openmeter/watermill/grouphandler"
 	"github.com/openmeterio/openmeter/openmeter/watermill/router"
+	"github.com/openmeterio/openmeter/pkg/clock"
 )
 
 type WorkerOptions struct {
@@ -166,7 +166,7 @@ func (w *Worker) eventHandler(opts WorkerOptions) (*grouphandler.NoPublishingHan
 			return w.subscriptionSync.SyncByViewAndInvoiceCustomer(
 				ctx,
 				event.SubscriptionView,
-				time.Now(),
+				clock.Now(),
 				subscriptionsync.SkipCustomCurrencySubscriptions(),
 			)
 		}),
@@ -192,7 +192,7 @@ func (w *Worker) eventHandler(opts WorkerOptions) (*grouphandler.NoPublishingHan
 			return w.subscriptionSync.SyncByViewAndInvoiceCustomer(
 				ctx,
 				event.SubscriptionView,
-				time.Now(),
+				clock.Now(),
 				subscriptionsync.SkipCustomCurrencySubscriptions(),
 			)
 		}),
@@ -204,7 +204,7 @@ func (w *Worker) eventHandler(opts WorkerOptions) (*grouphandler.NoPublishingHan
 			return w.subscriptionSync.SyncByViewAndInvoiceCustomer(
 				ctx,
 				event.UpdatedView,
-				time.Now(),
+				clock.Now(),
 				subscriptionsync.SkipCustomCurrencySubscriptions(),
 			)
 		}),

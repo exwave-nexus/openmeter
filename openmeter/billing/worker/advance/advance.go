@@ -11,6 +11,7 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/openmeterio/openmeter/openmeter/billing"
+	"github.com/openmeterio/openmeter/pkg/clock"
 )
 
 type AutoAdvancer struct {
@@ -79,7 +80,7 @@ func (a *AutoAdvancer) ListInvoicesToAdvance(ctx context.Context, namespaces []s
 	invoices, err := a.invoice.ListStandardInvoicesPendingAdvancement(ctx, billing.ListStandardInvoicesPendingAdvancementInput{
 		Namespaces: namespaces,
 		IDs:        ids,
-		AsOf:       time.Now(),
+		AsOf:       clock.Now(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list invoices pending advancement: %w", err)

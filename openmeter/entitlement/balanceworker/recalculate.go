@@ -24,6 +24,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/subject"
 	"github.com/openmeterio/openmeter/openmeter/watermill/eventbus"
 	"github.com/openmeterio/openmeter/openmeter/watermill/marshaler"
+	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/convert"
 	"github.com/openmeterio/openmeter/pkg/lrux"
 	pkgmodels "github.com/openmeterio/openmeter/pkg/models"
@@ -207,7 +208,7 @@ func (r *Recalculator) ListInScopeEntitlements(ctx context.Context, ns string) (
 			entitlement.ListEntitlementsParams{
 				Namespaces:          []string{ns},
 				IncludeDeleted:      true,
-				IncludeDeletedAfter: time.Now().Add(-DefaultIncludeDeletedDuration),
+				IncludeDeletedAfter: clock.Now().Add(-DefaultIncludeDeletedDuration),
 				Page: pagination.Page{
 					PageNumber: page,
 					PageSize:   defaultPageSize,
@@ -280,7 +281,7 @@ type sendEntitlementEventResult struct {
 }
 
 func (r *Recalculator) sendEntitlementEvent(ctx context.Context, ent entitlement.Entitlement) (sendEntitlementEventResult, error) {
-	if ent.DeletedAt != nil || (ent.ActiveTo != nil && time.Now().After(*ent.ActiveTo)) {
+	if ent.DeletedAt != nil || (ent.ActiveTo != nil && clock.Now().After(*ent.ActiveTo)) {
 		return r.sendEntitlementDeletedEvent(ctx, ent)
 	}
 
@@ -306,7 +307,7 @@ func (r *Recalculator) sendEntitlementDeletedEvent(ctx context.Context, ent enti
 		return empty, err
 	}
 
-	calculatedAt := time.Now()
+	calculatedAt := clock.Now()
 
 	event := marshaler.WithSource(
 		metadata.ComposeResourcePath(ent.Namespace, metadata.EntityEntitlement, ent.ID),
@@ -351,7 +352,7 @@ func (r *Recalculator) sendEntitlementUpdatedEvent(ctx context.Context, ent enti
 		return empty, err
 	}
 
-	calculatedAt := time.Now()
+	calculatedAt := clock.Now()
 
 	value, err := r.opts.Entitlement.Entitlement.GetEntitlementValue(ctx, ent.Namespace, ent.CustomerID, ent.ID, calculatedAt)
 	if err != nil {

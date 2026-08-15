@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/samber/lo"
@@ -25,6 +24,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/watermill/eventbus"
 	"github.com/openmeterio/openmeter/openmeter/watermill/grouphandler"
 	"github.com/openmeterio/openmeter/openmeter/watermill/router"
+	"github.com/openmeterio/openmeter/pkg/clock"
 	pkgmodels "github.com/openmeterio/openmeter/pkg/models"
 )
 
@@ -224,7 +224,7 @@ func (w *Worker) eventHandler(metricMeter metric.Meter) (message.NoPublishHandle
 				Entitlement: pkgmodels.NamespacedID{Namespace: event.Namespace.ID, ID: event.Entitlement.ID},
 
 				OriginalEventSource: metadata.ComposeResourcePath(event.Namespace.ID, metadata.EntityEntitlement, event.Entitlement.ID),
-				AsOf:                lo.FromPtrOr(event.Entitlement.ManagedModel.DeletedAt, time.Now()),
+				AsOf:                lo.FromPtrOr(event.Entitlement.ManagedModel.DeletedAt, clock.Now()),
 				SourceOperation:     events.OperationTypeEntitlementDeleted,
 			})
 		}),

@@ -83,13 +83,16 @@ func getOptions(opts ...handleOption) handleEntitlementEventOptions {
 // BalanceWorker simply calculates the entitlement value when a relevant lifecycle change occurs (e.g. granting, voiding, entitlement creation, etc...), thus we can have a unified handler for multiple event types.
 // The handler usually fetches the live state of dependent resources which helps with migration across event versions.
 func (w *Worker) handleEntitlementEvent(ctx context.Context, entitlementID pkgmodels.NamespacedID, options ...handleOption) (marshaler.Event, error) {
-	calculatedAt := time.Now()
-
 	opts := getOptions(options...)
 
 	if err := opts.Validate(); err != nil {
 		return nil, fmt.Errorf("handling entitlement event: %w", err)
 	}
+	// Calculate at the event's simulated timestamp. The worker is asynchronous
+	// and may process an older event after the runner has already advanced the
+	// simulation clock; using the current clock would put usage in a later
+	// period and make the snapshot appear empty.
+	calculatedAt := opts.eventAt
 
 	inScope, err := w.filters.IsNamespaceInScope(ctx, entitlementID.Namespace)
 	if err != nil {

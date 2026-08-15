@@ -40,6 +40,9 @@ func (s *Service) invoicePendingLines(ctx context.Context, customer customer.Cus
 				Customer:          customer,
 				ForceAsyncAdvance: s.forceAsyncInvoicePendingLines,
 			},
+			// Subscription synchronization must not emit a partial invoice. The
+			// normal collection job later applies the configured progressive
+			// billing profile.
 			billing.WithPartialInvoiceLinesDisabled(),
 			billing.WithMaxLinesPerInvoice(s.featureFlags.MaxLinesPerCollectedInvoice),
 		)
@@ -63,7 +66,7 @@ func (s *Service) HandleSubscriptionSyncEvent(ctx context.Context, event *subscr
 	return s.synchronizeSubscriptionAndInvoiceCustomer(
 		ctx,
 		newSubscriptionReferenceOrView(event.Subscription),
-		time.Now(),
+		clock.Now(),
 		subscriptionsync.SkipCustomCurrencySubscriptions(),
 	)
 }

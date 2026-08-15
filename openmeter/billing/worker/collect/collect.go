@@ -12,6 +12,7 @@ import (
 
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/customer"
+	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/models"
 )
 
@@ -130,7 +131,7 @@ func (a *InvoiceCollector) All(ctx context.Context, namespaces []string, custome
 	customerIDs, err := a.ListCustomersToCollect(ctx, ListCustomersToCollectInput{
 		Namespaces:  namespaces,
 		CustomerIDs: customerIDFilter,
-		AsOf:        time.Now(),
+		AsOf:        clock.Now(),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list customers to collect: %w", err)
@@ -165,7 +166,7 @@ func (a *InvoiceCollector) All(ctx context.Context, namespaces []string, custome
 
 				_, collectErr := a.CollectCustomerInvoice(ctx, CollectCustomerInvoiceInput{
 					CustomerID: customerID,
-					AsOf:       time.Now(),
+					AsOf:       clock.Now(),
 				})
 				if collectErr != nil {
 					collectErr = fmt.Errorf("failed to collect invoice for customer [namespace=%s customer=%s]: %w", customerID.Namespace, customerID.ID, collectErr)

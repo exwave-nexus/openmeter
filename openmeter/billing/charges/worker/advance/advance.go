@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/openmeterio/openmeter/openmeter/billing/charges"
 	"github.com/openmeterio/openmeter/openmeter/customer"
+	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/pagination"
 )
 
@@ -48,7 +48,7 @@ func (a *AutoAdvancer) All(ctx context.Context, namespaces []string) error {
 
 // ListCustomersToAdvance lists customers that have charges ready to be advanced
 func (a *AutoAdvancer) ListCustomersToAdvance(ctx context.Context, namespaces []string) ([]customer.CustomerID, error) {
-	now := time.Now()
+	now := clock.Now()
 
 	return pagination.CollectAll(ctx, pagination.NewPaginator(func(ctx context.Context, page pagination.Page) (pagination.Result[customer.CustomerID], error) {
 		return a.chargesService.ListCustomersToAdvance(ctx, charges.ListCustomersToAdvanceInput{

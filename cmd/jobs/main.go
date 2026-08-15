@@ -18,6 +18,7 @@ import (
 	"github.com/openmeterio/openmeter/cmd/jobs/llmcost"
 	"github.com/openmeterio/openmeter/cmd/jobs/migrate"
 	"github.com/openmeterio/openmeter/cmd/jobs/quickstart"
+	"github.com/openmeterio/openmeter/cmd/jobs/simulation"
 	"github.com/openmeterio/openmeter/pkg/log"
 )
 
@@ -36,7 +37,13 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			err := internal.InitializeApplication(ctx, configFileName)
+			// The simulation Compose service supplies configuration entirely via
+			// environment variables and does not mount the usual config.yaml.
+			configPath := configFileName
+			if configPath == "config.yaml" && os.Getenv("OPENMETER_SIMULATION_CLOCK_FILE") != "" {
+				configPath = ""
+			}
+			err := internal.InitializeApplication(ctx, configPath)
 			if err != nil {
 				slog.Error("failed to initialize application", "error", err)
 
@@ -61,6 +68,7 @@ func main() {
 	rootCmd.AddCommand(ledger.Cmd)
 	rootCmd.AddCommand(llmcost.Cmd)
 	rootCmd.AddCommand(quickstart.Cmd)
+	rootCmd.AddCommand(simulation.Cmd)
 	rootCmd.AddCommand(migrate.RootCommand())
 
 	defer func() {

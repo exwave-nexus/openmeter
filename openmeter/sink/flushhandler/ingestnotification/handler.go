@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
-	"time"
 
 	"github.com/samber/lo"
 	"go.opentelemetry.io/otel/metric"
@@ -17,6 +16,7 @@ import (
 	ingestevents "github.com/openmeterio/openmeter/openmeter/sink/flushhandler/ingestnotification/events"
 	sinkmodels "github.com/openmeterio/openmeter/openmeter/sink/models"
 	"github.com/openmeterio/openmeter/openmeter/watermill/eventbus"
+	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/slicesx"
 )
 
@@ -74,7 +74,10 @@ func (h *handler) OnFlushSuccess(ctx context.Context, events []sinkmodels.SinkMe
 		return nil
 	}
 
-	now := time.Now()
+	// Store timestamps must follow the simulation clock. Using wall-clock time
+	// makes simulated usage appear to arrive in the future, so metered queries
+	// exclude it until the real wall clock catches up with the simulation.
+	now := clock.Now()
 
 	// Map the filtered events to the ingest event
 	iEvents := slicesx.Map(filtered, func(message sinkmodels.SinkMessage) ingestevents.EventBatchedIngest {

@@ -12,6 +12,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/openmeterio/openmeter/openmeter/event/metadata"
+	"github.com/openmeterio/openmeter/pkg/clock"
 )
 
 const (
@@ -94,7 +95,11 @@ func NewCloudEvent(ev Event) (cloudevents.Event, error) {
 	cloudEvent.SetSpecVersion("1.0")
 
 	if metadata.Time.IsZero() {
-		cloudEvent.SetTime(time.Now())
+		// The simulation build runs with a paused, externally-controlled clock.
+		// Event metadata must use that clock as well; wall-clock timestamps make
+		// the billing workers see an event from the future and can cause them to
+		// race subscription persistence or skip the simulated billing period.
+		cloudEvent.SetTime(clock.Now())
 	} else {
 		cloudEvent.SetTime(metadata.Time)
 	}
