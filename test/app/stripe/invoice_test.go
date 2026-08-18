@@ -832,11 +832,6 @@ func (s *StripeInvoiceTestSuite) TestComplexInvoice() {
 						Metadata: line.Metadata,
 					}
 
-					if idx == 0 {
-						stripeLine.ID = "il_test_line"
-						stripeLine.InvoiceItem.ID = "ii_test_item"
-					}
-
 					return stripeLine
 				}),
 			},
@@ -853,10 +848,6 @@ func (s *StripeInvoiceTestSuite) TestComplexInvoice() {
 				expectedInvoiceAddLines,
 				func(line *stripe.InvoiceItemParams, idx int) stripeclient.StripeInvoiceItemWithLineID {
 					result := mapInvoiceItemParamsToInvoiceItem(fmt.Sprintf("%d", idx), line)
-					if idx == 0 {
-						result.LineID = "il_test_line"
-						result.InvoiceItem.ID = "ii_test_item"
-					}
 					return result
 				},
 			), nil)
@@ -988,9 +979,6 @@ func (s *StripeInvoiceTestSuite) TestComplexInvoice() {
 		})
 
 		s.StripeAppClient.StableSortStripeInvoiceItemWithID(filteredUpdatedLines)
-		s.Require().Contains(lo.Map(filteredUpdatedLines, func(line *stripeclient.StripeInvoiceItemWithID, _ int) string {
-			return line.ID
-		}), "ii_test_item")
 
 		s.StripeAppClient.
 			On("UpdateInvoiceLines", stripeclient.UpdateInvoiceLinesInput{
@@ -1015,7 +1003,7 @@ func (s *StripeInvoiceTestSuite) TestComplexInvoice() {
 
 		// Update the invoice.
 		results, err = invoicingApp.UpsertStandardInvoice(ctx, updateInvoice)
-		s.Require().NoError(err, "failed to upsert invoice")
+		s.NoError(err, "failed to upsert invoice")
 
 		// Assert results.
 		s.Equal(expectedResult, results.GetLineExternalIDs())

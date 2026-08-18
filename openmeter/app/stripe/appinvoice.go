@@ -449,6 +449,8 @@ func (a appOperations) updateInvoice(ctx context.Context, invoice billing.Standa
 	}
 
 	// Remove Stripe lines from the Stripe invoice
+	// stripeLinesToRemove is keyed by persisted Stripe invoice-line IDs (il_*),
+	// while Stripe's Invoice Item mutation API requires the invoice-item IDs (ii_*).
 	for lineID := range stripeLinesToRemove {
 		stripeLinesRemove = append(stripeLinesRemove, stripeLinesByID[lineID].InvoiceItem.ID)
 	}

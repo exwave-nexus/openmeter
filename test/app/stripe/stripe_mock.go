@@ -139,6 +139,9 @@ func (c *StripeAppClientMock) ListInvoiceLineItems(ctx context.Context, stripeIn
 	}
 
 	lines := args.Get(0).([]*stripe.InvoiceLineItem)
+
+	// Stripe returns invoice-line objects addressed by il_* IDs, each with a backing
+	// Invoice Item addressed by an ii_* ID.
 	for _, line := range lines {
 		if line == nil || !strings.HasPrefix(line.ID, "il_") {
 			return nil, fmt.Errorf("stripe invoice line ID must start with il_: %v", line)
@@ -172,6 +175,8 @@ func (c *StripeAppClientMock) UpdateInvoiceLines(ctx context.Context, input stri
 	if err := input.Validate(); err != nil {
 		return nil, err
 	}
+
+	// Stripe's Invoice Item mutation API accepts backing invoice-item IDs (ii_*) only.
 	for _, line := range input.Lines {
 		if line == nil || !strings.HasPrefix(line.ID, "ii_") {
 			return nil, fmt.Errorf("stripe invoice item ID must start with ii_: %v", line)
@@ -194,6 +199,7 @@ func (c *StripeAppClientMock) RemoveInvoiceLines(ctx context.Context, input stri
 	if err := input.Validate(); err != nil {
 		return err
 	}
+	// Stripe's Invoice Item mutation API accepts backing invoice-item IDs only.
 	for _, id := range input.Lines {
 		if !strings.HasPrefix(id, "ii_") {
 			return fmt.Errorf("stripe invoice item ID must start with ii_: %s", id)
