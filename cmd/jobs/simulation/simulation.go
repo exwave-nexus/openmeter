@@ -24,7 +24,7 @@ const (
 	defaultLookback  = 100 * 365 * 24 * time.Hour
 	defaultMaxPasses = 4
 	defaultTimeout   = 30 * time.Second
-	defaultBatchSize = 10
+	defaultBatchSize = 16
 )
 
 type drainRequest struct {
