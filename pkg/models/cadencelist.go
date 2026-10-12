@@ -45,35 +45,33 @@ func (t CadenceList[T]) Cadences() []T {
 // GetOverlaps returns details about any overlaps between the cadences in the timeline.
 func (t CadenceList[T]) GetOverlaps() []OverlapDetail[T] {
 	var overlaps []OverlapDetail[T]
+	previousIndex := -1
 
-	for i := 0; i < len(t); i++ {
-		if i == 0 {
+	for i, item := range t {
+		cadence2 := item.GetCadence()
+		// An item replaced at its own start is never active. Keep its history,
+		// but do not let it create or hide an overlap between active intervals.
+		if cadence2.ActiveTo != nil && cadence2.ActiveTo.Equal(cadence2.ActiveFrom) {
+			continue
+		}
+		if previousIndex == -1 {
+			previousIndex = i
 			continue
 		}
 
-		item1 := t[i-1]
-		item2 := t[i]
+		item1 := t[previousIndex]
+		item2 := item
 		cadence1 := item1.GetCadence()
-		cadence2 := item2.GetCadence()
 
-		if cadence1.ActiveTo == nil {
+		if cadence1.ActiveTo == nil || cadence2.ActiveFrom.Before(*cadence1.ActiveTo) {
 			overlaps = append(overlaps, OverlapDetail[T]{
-				Index1: i - 1,
-				Index2: i,
-				Item1:  item1,
-				Item2:  item2,
-			})
-			continue
-		}
-
-		if cadence1.ActiveTo != nil && cadence2.ActiveFrom.Before(*cadence1.ActiveTo) {
-			overlaps = append(overlaps, OverlapDetail[T]{
-				Index1: i - 1,
+				Index1: previousIndex,
 				Index2: i,
 				Item1:  item1,
 				Item2:  item2,
 			})
 		}
+		previousIndex = i
 	}
 
 	return overlaps

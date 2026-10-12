@@ -147,3 +147,39 @@ func TestCadenceList_GetOverlaps(t *testing.T) {
 		assert.ElementsMatch(t, expected, list.GetOverlaps(), "Elements should match in any order")
 	})
 }
+
+func TestCadenceList_EmptyHistoryDoesNotCreateOrHideOverlap(t *testing.T) {
+	start := time.Date(2025, time.July, 16, 0, 0, 13, 0, time.UTC)
+	middle, end := start.Add(time.Hour), start.Add(2*time.Hour)
+	for _, test := range []struct {
+		name string
+		list CadenceList[MockCadenceItem]
+	}{
+		{name: "empty before finite", list: CadenceList[MockCadenceItem]{{ActiveFrom: start, ActiveTo: &start}, {ActiveFrom: start, ActiveTo: &end}}},
+		{name: "empty after finite at same start", list: CadenceList[MockCadenceItem]{{ActiveFrom: start, ActiveTo: &end}, {ActiveFrom: start, ActiveTo: &start}}},
+		{name: "empty inside finite", list: CadenceList[MockCadenceItem]{{ActiveFrom: start, ActiveTo: &end}, {ActiveFrom: middle, ActiveTo: &middle}}},
+		{name: "empty inside open ended", list: CadenceList[MockCadenceItem]{{ActiveFrom: start}, {ActiveFrom: middle, ActiveTo: &middle}}},
+		{name: "empty between adjacent intervals", list: CadenceList[MockCadenceItem]{{ActiveFrom: start, ActiveTo: &middle}, {ActiveFrom: middle, ActiveTo: &middle}, {ActiveFrom: middle, ActiveTo: &end}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Empty(t, test.list.GetOverlaps())
+		})
+	}
+
+	t.Run("empty history preserves a real overlap and its original indices", func(t *testing.T) {
+		list := CadenceList[MockCadenceItem]{
+			{ActiveFrom: start, ActiveTo: &end},
+			{ActiveFrom: middle, ActiveTo: &middle},
+			{ActiveFrom: middle},
+		}
+		assert.Equal(t, []OverlapDetail[MockCadenceItem]{{Index1: 0, Index2: 2, Item1: list[0], Item2: list[2]}}, list.GetOverlaps())
+	})
+
+	t.Run("inverted range is not treated as empty", func(t *testing.T) {
+		list := CadenceList[MockCadenceItem]{
+			{ActiveFrom: start, ActiveTo: &end},
+			{ActiveFrom: middle, ActiveTo: &start},
+		}
+		assert.Equal(t, []OverlapDetail[MockCadenceItem]{{Index1: 0, Index2: 1, Item1: list[0], Item2: list[1]}}, list.GetOverlaps())
+	})
+}

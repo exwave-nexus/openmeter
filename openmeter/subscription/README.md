@@ -94,7 +94,9 @@ also accepts the exact start of the current aligned billing period. This lets
 a quota upgrade retain current-period consumption and apply the new included
 discount to that whole period. Earlier periods, arbitrary timestamps, phase
 mutations, and future item schedules retain their history protections. The
-subscription's plan reference stays fixed; rate-card metadata can identify the
+historical version replaced at its own start has an empty active interval;
+it cannot conflict with later non-empty versions or hide a real overlap.
+The subscription's plan reference stays fixed; rate-card metadata can identify the
 effective customized tier. A custom
 cancellation time for an aligned subscription must fall on a billing-period
 boundary. Creation may be scheduled with a custom timestamp, subject to its
