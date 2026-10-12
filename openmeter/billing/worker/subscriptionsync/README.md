@@ -28,6 +28,12 @@ sync must converge. Subscription events provide the prompt path, invoice
 creation triggers a refill of consumed future work, and the periodic reconciler
 repairs missed or failed event processing.
 
+Periodic reconciliation is serial by default. An explicit concurrency setting
+processes independent customers in parallel while preserving subscription order
+within each namespace and customer, and reports every failure in the original
+list order. A caller-owned transaction keeps the serial path because its
+savepoints cannot be shared by concurrent workers.
+
 Invoice patches, charge patches, and the sync-state update share the billing
 transaction. A failure rolls back the plan rather than leaving only the earlier
 patches applied.

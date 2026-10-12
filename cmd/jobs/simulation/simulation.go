@@ -241,7 +241,8 @@ func (c *controller) runPass(ctx context.Context, timeout time.Duration) []stage
 				Namespaces: []string{"default"},
 				Lookback:   c.lookback,
 			},
-			Force: false,
+			Force:       false,
+			Concurrency: c.batchSize,
 		})
 	}) {
 		return results

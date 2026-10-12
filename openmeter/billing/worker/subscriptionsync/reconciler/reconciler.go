@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/samber/lo"
@@ -14,6 +15,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/subscription"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/filter"
+	"github.com/openmeterio/openmeter/pkg/framework/transaction"
 	"github.com/openmeterio/openmeter/pkg/models"
 	"github.com/openmeterio/openmeter/pkg/pagination"
 	"github.com/openmeterio/openmeter/pkg/timeutil"
@@ -215,6 +217,9 @@ func (r *Reconciler) ReconcileSubscription(ctx context.Context, subsID models.Na
 type ReconcilerAllInput struct {
 	ReconcilerListSubscriptionsInput
 	Force bool
+	// Concurrency opts into parallel customer reconciliation. Values <= 1
+	// preserve the serial path, including the original subscription order.
+	Concurrency int
 }
 
 func (r *Reconciler) All(ctx context.Context, in ReconcilerAllInput) error {
@@ -223,31 +228,80 @@ func (r *Reconciler) All(ctx context.Context, in ReconcilerAllInput) error {
 		return fmt.Errorf("failed to list subscriptions: %w", err)
 	}
 
-	var outErr error
-	for _, subscription := range subscriptions {
-		if !in.Force && subscription.SyncState != nil {
-			if !subscription.SyncState.HasBillables {
-				r.logger.InfoContext(ctx, "subscription has no billables, skipping reconciliation", "subscription_id", subscription.NamespacedID)
-				continue
-			}
-
-			if subscription.SyncState.NextSyncAfter == nil {
-				r.logger.InfoContext(ctx, "subscription has no next sync after, skipping reconciliation", "subscription_id", subscription.NamespacedID)
-				continue
-			}
-
-			if subscription.SyncState.NextSyncAfter.After(clock.Now()) {
-				r.logger.InfoContext(ctx, "subscription next sync after is in the future, skipping reconciliation", "subscription_id", subscription.NamespacedID)
-				continue
+	// Nested transactions reuse one savepoint stack and cannot be shared by
+	// independent workers. Existing production callers also stay serial.
+	_, transactionErr := transaction.GetDriverFromContext(ctx)
+	if in.Concurrency <= 1 || transactionErr == nil {
+		var outErr error
+		for _, subscription := range subscriptions {
+			if err := r.reconcileSubscriptionIfNeeded(ctx, subscription, in.Force); err != nil {
+				outErr = errors.Join(outErr, err)
 			}
 		}
+		return outErr
+	}
 
-		if err := r.ReconcileSubscription(ctx, subscription.NamespacedID); err != nil {
-			r.logger.ErrorContext(ctx, "failed to reconcile subscription", "error", err)
+	// Keep each customer's subscriptions in their original list order. Billing
+	// reconciliation owns customer-wide gathering state under its database lock.
+	groupIndexes := make(map[models.NamespacedID]int)
+	groups := make([][]int, 0)
+	for index, subscription := range subscriptions {
+		customerID := models.NamespacedID(subscription.GetCustomerID())
+		groupIndex, ok := groupIndexes[customerID]
+		if !ok {
+			groupIndex = len(groups)
+			groupIndexes[customerID] = groupIndex
+			groups = append(groups, nil)
+		}
+		groups[groupIndex] = append(groups[groupIndex], index)
+	}
 
-			outErr = errors.Join(outErr, fmt.Errorf("failed to reconcile subscription: %w", err))
+	errs := make([]error, len(subscriptions))
+	jobs := make(chan []int)
+	var workers sync.WaitGroup
+	for range min(in.Concurrency, len(groups)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for indexes := range jobs {
+				for _, index := range indexes {
+					errs[index] = r.reconcileSubscriptionIfNeeded(ctx, subscriptions[index], in.Force)
+				}
+			}
+		}()
+	}
+	for _, indexes := range groups {
+		jobs <- indexes
+	}
+	close(jobs)
+	workers.Wait()
+
+	// All eligible subscriptions are attempted; report failures in list order
+	// regardless of which customer worker completed first.
+	return errors.Join(errs...)
+}
+
+func (r *Reconciler) reconcileSubscriptionIfNeeded(ctx context.Context, subscription SubscriptionWithSyncState, force bool) error {
+	if !force && subscription.SyncState != nil {
+		if !subscription.SyncState.HasBillables {
+			r.logger.InfoContext(ctx, "subscription has no billables, skipping reconciliation", "subscription_id", subscription.NamespacedID)
+			return nil
+		}
+
+		if subscription.SyncState.NextSyncAfter == nil {
+			r.logger.InfoContext(ctx, "subscription has no next sync after, skipping reconciliation", "subscription_id", subscription.NamespacedID)
+			return nil
+		}
+
+		if subscription.SyncState.NextSyncAfter.After(clock.Now()) {
+			r.logger.InfoContext(ctx, "subscription next sync after is in the future, skipping reconciliation", "subscription_id", subscription.NamespacedID)
+			return nil
 		}
 	}
 
-	return outErr
+	if err := r.ReconcileSubscription(ctx, subscription.NamespacedID); err != nil {
+		r.logger.ErrorContext(ctx, "failed to reconcile subscription", "error", err)
+		return fmt.Errorf("failed to reconcile subscription: %w", err)
+	}
+	return nil
 }
