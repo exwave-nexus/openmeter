@@ -1,0 +1,52 @@
+name: Publish Exwave image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Immutable release tag for the Exwave OpenMeter image
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exwave-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: exwave-runners
+    timeout-minutes: 45
+    env:
+      IMAGE: rg.fr-par.scw.cloud/exwave-admin/openmeter
+      IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate release tag
+        shell: bash
+        run: |
+          [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
+      - name: Log in to Scaleway Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: rg.fr-par.scw.cloud
+          username: nologin
+          password: ${{ secrets.SCW_SECRET_KEY }}
+      - name: Build image
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg VERSION="$IMAGE_TAG" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            -t "$IMAGE:$IMAGE_TAG" .
+      - name: Push image
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if docker push "$IMAGE:$IMAGE_TAG"; then exit 0; fi
+            if [ "$attempt" -lt 5 ]; then sleep "$((attempt * 10))"; fi
+          done
+          exit 1
