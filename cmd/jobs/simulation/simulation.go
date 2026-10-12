@@ -33,8 +33,9 @@ type drainRequest struct {
 }
 
 type stageResult struct {
-	Name  string `json:"name"`
-	Error string `json:"error,omitempty"`
+	Name      string `json:"name"`
+	ElapsedMS int64  `json:"elapsed_ms"`
+	Error     string `json:"error,omitempty"`
 }
 
 type drainResponse struct {
@@ -223,7 +224,9 @@ func (c *controller) runPass(ctx context.Context, timeout time.Duration) []stage
 	appendStage := func(name string, fn func(context.Context) error) bool {
 		result := stageResult{Name: name}
 		stageContext, cancel := context.WithTimeout(ctx, timeout)
+		started := time.Now()
 		err := fn(stageContext)
+		result.ElapsedMS = time.Since(started).Milliseconds()
 		cancel()
 		if err != nil {
 			result.Error = err.Error()

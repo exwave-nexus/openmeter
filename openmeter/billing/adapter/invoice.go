@@ -234,6 +234,8 @@ func (a *adapter) ListInvoices(ctx context.Context, input billing.ListInvoicesAd
 		default:
 			query = query.Order(billinginvoice.ByCreatedAt(order...))
 		}
+		// Equal primary values must keep a stable order across offset pages.
+		query = query.Order(billinginvoice.ByID(order...))
 
 		response := pagination.Result[billing.Invoice]{
 			Page: input.Page,

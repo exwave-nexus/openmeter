@@ -133,6 +133,8 @@ the lifecycle operation.
 
 - invoice manipulation is serialized per customer and runs under the billing
   transaction and customer update lock
+- invoice listing appends the unique invoice ID to the requested sort, so an
+  unchanged result set has stable pages even when timestamps are equal
 - every invoice contains one fiat currency
 - a customer cannot have two active gathering invoices for the same currency
 - pending-line creation resolves every supplied feature; metered prices require the feature's meter
