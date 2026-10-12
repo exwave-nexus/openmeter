@@ -193,8 +193,17 @@ func (s *service) validateCancel(ctx context.Context, view subscription.Subscrip
 	spec := view.AsSpec()
 
 	// Let's try to decode when the subscription should be canceled
-	if err := timing.ValidateForAction(subscription.SubscriptionActionCancel, &view); err != nil {
-		return fmt.Errorf("invalid cancelation timing: %w", err)
+	var timingErr error
+	if replacementTime, ok := subscription.PlanReplacementTime(ctx, view.Subscription.NamespacedID); ok {
+		if timing.Custom == nil || !timing.Custom.Equal(replacementTime) {
+			return models.NewGenericValidationError(fmt.Errorf("plan replacement cancellation time does not match the validated workflow time"))
+		}
+		timingErr = timing.ValidateForCurrentPeriodPlanChange(&view, &replacementTime)
+	} else {
+		timingErr = timing.ValidateForAction(subscription.SubscriptionActionCancel, &view)
+	}
+	if timingErr != nil {
+		return fmt.Errorf("invalid cancelation timing: %w", timingErr)
 	}
 
 	cancelTime, err := timing.ResolveForSpec(view.Spec)

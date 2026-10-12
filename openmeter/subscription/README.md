@@ -100,6 +100,14 @@ cancellation time for an aligned subscription must fall on a billing-period
 boundary. Creation may be scheduled with a custom timestamp, subject to its
 past-time tolerance.
 
+Changing plans can replace the subscription at a delayed effective timestamp
+within the still-open aligned period. This exception requires custom timing
+and the new billing anchor to match at whole-second precision, within the same
+active phase and no later than the subscription clock. The workflow ends the
+old subscription and starts its replacement at that exact instant, preserving
+cancellation hooks. It cannot rewrite closed periods. Ordinary creation and
+cancellation retain their timing rules.
+
 Phase offsets and item timing overrides remain relative to the subscription
 and phase; do not persist a derived absolute end as independent source truth.
 

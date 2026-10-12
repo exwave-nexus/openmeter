@@ -198,6 +198,34 @@ func (c Timing) ValidateForCurrentPeriodEdit(subView *SubscriptionView) error {
 	return nil
 }
 
+// ValidateForCurrentPeriodPlanChange permits a delayed reset only within the
+// still-open billing period. The replacement must begin at its explicit anchor.
+func (c Timing) ValidateForCurrentPeriodPlanChange(subView *SubscriptionView, billingAnchor *time.Time) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if subView == nil || c.Custom == nil || billingAnchor == nil || !c.Custom.Equal(*billingAnchor) {
+		return models.NewGenericValidationError(fmt.Errorf("current-period plan replacement requires matching custom timing and billing anchor"))
+	}
+	if !c.Custom.Equal(c.Custom.Truncate(time.Second)) {
+		return models.NewGenericValidationError(fmt.Errorf("current-period plan replacement requires a whole-second timestamp"))
+	}
+	now := clock.Now()
+	period, err := subView.Spec.GetAlignedBillingPeriodAt(now)
+	if err != nil {
+		return models.NewGenericValidationError(fmt.Errorf("cannot change the current billing period: %w", err))
+	}
+	if c.Custom.Before(period.From) || c.Custom.After(now) {
+		return models.NewGenericValidationError(fmt.Errorf("current-period plan replacement cannot rewrite a closed billing period or begin in the future"))
+	}
+	currentPhase, currentExists := subView.Spec.GetCurrentPhaseAt(now)
+	changePhase, changeExists := subView.Spec.GetCurrentPhaseAt(*c.Custom)
+	if !currentExists || !changeExists || currentPhase.PhaseKey != changePhase.PhaseKey {
+		return models.NewGenericValidationError(fmt.Errorf("current-period plan replacement cannot rewrite a different phase"))
+	}
+	return nil
+}
+
 func (c Timing) isDateAlignedWithBillingCadence(spec SubscriptionSpec, date time.Time) bool {
 	period, err := spec.GetAlignedBillingPeriodAt(date)
 	if err != nil {

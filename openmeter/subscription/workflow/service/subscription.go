@@ -27,6 +27,10 @@ import (
 )
 
 func (s *service) CreateFromPlan(ctx context.Context, inp subscriptionworkflow.CreateSubscriptionWorkflowInput, plan subscription.Plan) (subscription.SubscriptionView, error) {
+	return s.createFromPlan(ctx, inp, plan, false)
+}
+
+func (s *service) createFromPlan(ctx context.Context, inp subscriptionworkflow.CreateSubscriptionWorkflowInput, plan subscription.Plan, currentPeriodReplacement bool) (subscription.SubscriptionView, error) {
 	return transaction.Run(ctx, s.TransactionManager, func(ctx context.Context) (subscription.SubscriptionView, error) {
 		var def subscription.SubscriptionView
 
@@ -60,7 +64,13 @@ func (s *service) CreateFromPlan(ctx context.Context, inp subscriptionworkflow.C
 			return def, fmt.Errorf("unexpected nil customer")
 		}
 
-		if err := inp.Timing.ValidateForAction(subscription.SubscriptionActionCreate, nil); err != nil {
+		validateTiming := inp.Timing.ValidateForAction(subscription.SubscriptionActionCreate, nil)
+		if currentPeriodReplacement {
+			// ChangeToPlan already validated the explicit time against the old
+			// subscription's open period. Only creation's age tolerance differs.
+			validateTiming = inp.Timing.Validate()
+		}
+		if err := validateTiming; err != nil {
 			return def, fmt.Errorf("invalid timing: %w", err)
 		}
 
@@ -320,6 +330,17 @@ func (s *service) ChangeToPlan(ctx context.Context, subscriptionID models.Namesp
 		if !creditEnabled && plan.ToCreateSubscriptionPlanInput().SettlementMode == productcatalog.CreditOnlySettlementMode {
 			return res{}, models.NewGenericValidationError(errors.New("credits are not enabled on this deployment of OpenMeter"))
 		}
+		currentPeriodReplacement := inp.Timing.Custom != nil && inp.BillingAnchor != nil && inp.Timing.Custom.Equal(*inp.BillingAnchor) && !inp.Timing.Custom.After(clock.Now())
+		if currentPeriodReplacement {
+			view, err := s.Service.GetView(ctx, subscriptionID)
+			if err != nil {
+				return res{}, err
+			}
+			if err := inp.Timing.ValidateForCurrentPeriodPlanChange(&view, inp.BillingAnchor); err != nil {
+				return res{}, err
+			}
+			ctx = subscription.WithPlanReplacementTime(ctx, subscriptionID, *inp.Timing.Custom)
+		}
 
 		// Second, let's try to cancel the current subscription
 		curr, err := s.Service.Cancel(ctx, subscriptionID, inp.Timing)
@@ -342,13 +363,13 @@ func (s *service) ChangeToPlan(ctx context.Context, subscriptionID models.Namesp
 		}
 
 		// Third, let's create a new subscription with the new plan
-		new, err := s.CreateFromPlan(ctx, subscriptionworkflow.CreateSubscriptionWorkflowInput{
+		new, err := s.createFromPlan(ctx, subscriptionworkflow.CreateSubscriptionWorkflowInput{
 			ChangeSubscriptionWorkflowInput: inp,
 			Namespace:                       curr.Namespace,
 			CustomerID:                      curr.CustomerId,
 			BillingAnchor:                   lo.ToPtr(lo.FromPtrOr(inp.BillingAnchor, curr.BillingAnchor)), // We default to the current anchor
 			Annotations:                     createInputAnnotations,
-		}, plan)
+		}, plan, currentPeriodReplacement)
 		if err != nil {
 			return res{}, fmt.Errorf("failed to create new subscription: %w", err)
 		}
