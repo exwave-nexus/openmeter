@@ -89,7 +89,13 @@ billing period containing that clock time. The resolved time becomes the
 effective time used while applying patches.
 
 Allowed timing depends on the action. Running edits accept immediate or
-next-billing-cycle timing but not arbitrary custom timestamps. A custom
+next-billing-cycle timing. Replacing existing rate cards in the active phase
+also accepts the exact start of the current aligned billing period. This lets
+a quota upgrade retain current-period consumption and apply the new included
+discount to that whole period. Earlier periods, arbitrary timestamps, phase
+mutations, and future item schedules retain their history protections. The
+subscription's plan reference stays fixed; rate-card metadata can identify the
+effective customized tier. A custom
 cancellation time for an aligned subscription must fall on a billing-period
 boundary. Creation may be scheduled with a custom timestamp, subject to its
 past-time tolerance.

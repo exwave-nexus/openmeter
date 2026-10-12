@@ -169,6 +169,35 @@ func (c Timing) ValidateForAction(action SubscriptionAction, subView *Subscripti
 	return nil
 }
 
+// ValidateForCurrentPeriodEdit permits quota replacement at the start of the
+// still-open billing period. Other update callers keep their stricter timing
+// rules so a running edit cannot rewrite an earlier billing period.
+func (c Timing) ValidateForCurrentPeriodEdit(subView *SubscriptionView) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if c.Custom == nil {
+		return c.ValidateForAction(SubscriptionActionUpdate, subView)
+	}
+	if subView == nil {
+		return fmt.Errorf("missing subscription view")
+	}
+	now := clock.Now()
+	period, err := subView.Spec.GetAlignedBillingPeriodAt(now)
+	if err != nil {
+		return models.NewGenericValidationError(fmt.Errorf("cannot edit the current billing period: %w", err))
+	}
+	if !c.Custom.Equal(period.From) {
+		return models.NewGenericValidationError(fmt.Errorf("cannot edit running subscription with custom timing except at the current aligned billing period start"))
+	}
+	currentPhase, currentExists := subView.Spec.GetCurrentPhaseAt(now)
+	editPhase, editExists := subView.Spec.GetCurrentPhaseAt(*c.Custom)
+	if !currentExists || !editExists || currentPhase.PhaseKey != editPhase.PhaseKey {
+		return models.NewGenericValidationError(fmt.Errorf("cannot edit a different phase at the current billing period start"))
+	}
+	return nil
+}
+
 func (c Timing) isDateAlignedWithBillingCadence(spec SubscriptionSpec, date time.Time) bool {
 	period, err := spec.GetAlignedBillingPeriodAt(date)
 	if err != nil {

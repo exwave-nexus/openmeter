@@ -250,8 +250,33 @@ func (s *service) EditRunning(ctx context.Context, subscriptionID models.Namespa
 		}
 
 		// Let's try to decode when the subscription should be patched
-		if err := timing.ValidateForAction(subscription.SubscriptionActionUpdate, &curr); err != nil {
+		if err := timing.ValidateForCurrentPeriodEdit(&curr); err != nil {
 			return subscription.SubscriptionView{}, models.NewGenericValidationError(fmt.Errorf("invalid timing: %w", err))
+		}
+		if timing.Custom != nil {
+			// Backdating is limited to replacement rate cards in this period.
+			// Phase mutations and scheduled item versions retain their normal
+			// history protections.
+			phase, _ := curr.Spec.GetCurrentPhaseAt(*timing.Custom)
+			cadence, err := curr.Spec.GetPhaseCadence(phase.PhaseKey)
+			if err != nil {
+				return subscription.SubscriptionView{}, err
+			}
+			for _, customization := range customizations {
+				var addItem *patch.PatchAddItem
+				switch p := customization.(type) {
+				case patch.PatchAddItem:
+					addItem = &p
+				case *patch.PatchAddItem:
+					addItem = p
+				default:
+					return subscription.SubscriptionView{}, models.NewGenericValidationError(fmt.Errorf("current-period edits only support replacement rate cards"))
+				}
+				items := phase.ItemsByKey[addItem.ItemKey]
+				if addItem.PhaseKey != phase.PhaseKey || len(items) == 0 || !items[len(items)-1].GetCadence(cadence).IsActiveAt(*timing.Custom) {
+					return subscription.SubscriptionView{}, models.NewGenericValidationError(fmt.Errorf("current-period edits require an existing rate card active at the period start"))
+				}
+			}
 		}
 
 		editTime, err := timing.ResolveForSpec(curr.Spec)
