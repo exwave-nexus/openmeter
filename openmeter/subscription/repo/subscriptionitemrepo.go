@@ -170,6 +170,7 @@ func (r *subscriptionItemRepo) Create(ctx context.Context, input subscription.Cr
 			SetNillableDescription(input.Description).
 			SetPhaseID(input.PhaseID).
 			SetKey(input.Key).
+			SetMetadata(input.RateCard.AsMeta().Metadata).
 			SetName(input.RateCard.AsMeta().Name).
 			SetNillableDescription(input.RateCard.AsMeta().Description).
 			SetNillableFeatureKey(input.RateCard.AsMeta().FeatureKey).

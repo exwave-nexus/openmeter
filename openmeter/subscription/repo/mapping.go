@@ -217,6 +217,7 @@ func MapDBSubscriptionItem(item *db.SubscriptionItem) (subscription.Subscription
 	var rc productcatalog.RateCard
 	rcMeta := productcatalog.RateCardMeta{
 		Name:                item.Name,
+		Metadata:            item.Metadata,
 		Description:         item.Description,
 		FeatureKey:          item.FeatureKey,
 		EntitlementTemplate: item.EntitlementTemplate,
