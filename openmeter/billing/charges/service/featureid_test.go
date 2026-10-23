@@ -36,6 +36,18 @@ type ChargeFeatureIDTestSuite struct {
 	BaseSuite
 }
 
+func requireFeatureMeterValidationIssue(t *testing.T, err error, expectedCode string) billing.ValidationIssue {
+	t.Helper()
+
+	issues, systemErr := billing.ToValidationIssues(err)
+	require.NoError(t, systemErr)
+	require.Len(t, issues, 1)
+	require.Equal(t, expectedCode, issues[0].Code)
+	require.Empty(t, issues[0].Component)
+
+	return issues[0]
+}
+
 func (s *ChargeFeatureIDTestSuite) SetupSuite() {
 	s.BaseSuite.SetupSuite()
 }
@@ -73,7 +85,7 @@ func (s *ChargeFeatureIDTestSuite) TestCreateResolvesFeatureIDsForUsageBasedAndM
 
 	createdCharges, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.createMockChargeIntent(createMockChargeIntentInput{
 				customer:       cust.GetID(),
 				currency:       USD,
@@ -101,7 +113,7 @@ func (s *ChargeFeatureIDTestSuite) TestCreateResolvesFeatureIDsForUsageBasedAndM
 				uniqueReferenceID: "usage-based",
 				featureKey:        usageFeature.Key,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(createdCharges, 2)
@@ -153,7 +165,7 @@ func (s *ChargeFeatureIDTestSuite) TestUsageBasedActivationRecalculatesFeatureID
 
 	createdCharges, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.createMockChargeIntent(createMockChargeIntentInput{
 				customer:       cust.GetID(),
 				currency:       USD,
@@ -167,7 +179,7 @@ func (s *ChargeFeatureIDTestSuite) TestUsageBasedActivationRecalculatesFeatureID
 				uniqueReferenceID: "usage-based-versioned",
 				featureKey:        featureKey,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(createdCharges, 1)
@@ -175,7 +187,7 @@ func (s *ChargeFeatureIDTestSuite) TestUsageBasedActivationRecalculatesFeatureID
 	createdCharge, err := createdCharges[0].AsUsageBasedCharge()
 	s.NoError(err)
 	s.Equal(meta.ChargeStatusCreated, meta.ChargeStatus(createdCharge.Status))
-	s.Equal(featureV1.ID, createdCharge.State.FeatureID)
+	s.Empty(createdCharge.State.FeatureID)
 
 	s.archiveFeature(ctx, ns, featureV1.ID)
 	featureV2 := s.createFeature(ctx, ns, featureKey, meterV2.ID)
@@ -263,26 +275,32 @@ func (s *ChargeFeatureIDTestSuite) TestCreateCustomerChargeResolvesFeatureByID()
 	s.Run("flat fee charge created by feature ID", func() {
 		// given:
 		// - a caller that only knows the feature ID, as the v3 create endpoint does
+		discounts := billing.DiscountsFromProductCatalog(productcatalog.Discounts{
+			Percentage: &productcatalog.PercentageDiscount{Percentage: models.NewPercentage(10)},
+		})
+		flatFeeInput := &charges.CreateCustomerChargeFlatFeeInput{
+			IntentMutableFields: flatfee.IntentMutableFields{
+				IntentMutableFields: meta.IntentMutableFields{
+					Name:              "flat fee by feature id",
+					ServicePeriod:     servicePeriod,
+					FullServicePeriod: servicePeriod,
+					BillingPeriod:     servicePeriod,
+				},
+				InvoiceAt:             servicePeriod.From,
+				PaymentTerm:           productcatalog.InAdvancePaymentTerm,
+				PercentageDiscounts:   discounts.Percentage,
+				AmountBeforeProration: alpacadecimal.NewFromInt(25),
+			},
+			FeatureID:      lo.ToPtr(flatFeeFeature.ID),
+			SettlementMode: productcatalog.CreditOnlySettlementMode,
+		}
+
 		// when:
 		created, err := s.Charges.CreateCustomerCharge(ctx, charges.CreateCustomerChargeInput{
 			Namespace:    ns,
 			CustomerID:   cust.ID,
 			CurrencyCode: USD,
-			FlatFee: &charges.CreateCustomerChargeFlatFeeInput{
-				IntentMutableFields: flatfee.IntentMutableFields{
-					IntentMutableFields: meta.IntentMutableFields{
-						Name:              "flat fee by feature id",
-						ServicePeriod:     servicePeriod,
-						FullServicePeriod: servicePeriod,
-						BillingPeriod:     servicePeriod,
-					},
-					InvoiceAt:             servicePeriod.From,
-					PaymentTerm:           productcatalog.InAdvancePaymentTerm,
-					AmountBeforeProration: alpacadecimal.NewFromInt(25),
-				},
-				FeatureID:      lo.ToPtr(flatFeeFeature.ID),
-				SettlementMode: productcatalog.CreditOnlySettlementMode,
-			},
+			FlatFee:      flatFeeInput,
 		})
 		s.Require().NoError(err)
 
@@ -293,6 +311,8 @@ func (s *ChargeFeatureIDTestSuite) TestCreateCustomerChargeResolvesFeatureByID()
 		s.Require().NotNil(flatFeeCharge.State.FeatureID)
 		s.Equal(flatFeeFeature.ID, *flatFeeCharge.State.FeatureID)
 		s.Equal(flatFeeFeature.Key, flatFeeCharge.Intent.GetFeatureKey())
+		s.Require().NotNil(flatFeeCharge.Intent.GetEffectiveIntent().PercentageDiscounts)
+		s.NotEmpty(flatFeeCharge.Intent.GetEffectiveIntent().PercentageDiscounts.CorrelationID)
 
 		fetched, err := s.mustGetChargeByID(flatFeeCharge.GetChargeID()).AsFlatFeeCharge()
 		s.Require().NoError(err)
@@ -302,27 +322,33 @@ func (s *ChargeFeatureIDTestSuite) TestCreateCustomerChargeResolvesFeatureByID()
 	})
 
 	s.Run("usage based charge created by feature ID", func() {
+		discounts := billing.DiscountsFromProductCatalog(productcatalog.Discounts{
+			Usage: &productcatalog.UsageDiscount{Quantity: alpacadecimal.NewFromInt(1)},
+		})
+		usageBasedInput := &charges.CreateCustomerChargeUsageBasedInput{
+			IntentMutableFields: usagebased.IntentMutableFields{
+				IntentMutableFields: meta.IntentMutableFields{
+					Name:              "usage based by feature id",
+					ServicePeriod:     servicePeriod,
+					FullServicePeriod: servicePeriod,
+					BillingPeriod:     servicePeriod,
+				},
+				InvoiceAt: servicePeriod.From,
+				Price: *productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+					Amount: alpacadecimal.NewFromInt(2),
+				}),
+				Discounts: discounts,
+			},
+			FeatureID:      usageFeature.ID,
+			SettlementMode: productcatalog.CreditOnlySettlementMode,
+		}
+
 		// when:
 		created, err := s.Charges.CreateCustomerCharge(ctx, charges.CreateCustomerChargeInput{
 			Namespace:    ns,
 			CustomerID:   cust.ID,
 			CurrencyCode: USD,
-			UsageBased: &charges.CreateCustomerChargeUsageBasedInput{
-				IntentMutableFields: usagebased.IntentMutableFields{
-					IntentMutableFields: meta.IntentMutableFields{
-						Name:              "usage based by feature id",
-						ServicePeriod:     servicePeriod,
-						FullServicePeriod: servicePeriod,
-						BillingPeriod:     servicePeriod,
-					},
-					InvoiceAt: servicePeriod.From,
-					Price: *productcatalog.NewPriceFrom(productcatalog.UnitPrice{
-						Amount: alpacadecimal.NewFromInt(2),
-					}),
-				},
-				FeatureID:      usageFeature.ID,
-				SettlementMode: productcatalog.CreditOnlySettlementMode,
-			},
+			UsageBased:   usageBasedInput,
 		})
 		s.Require().NoError(err)
 
@@ -331,6 +357,8 @@ func (s *ChargeFeatureIDTestSuite) TestCreateCustomerChargeResolvesFeatureByID()
 		s.Require().NoError(err)
 		s.Equal(usageFeature.ID, usageBasedCharge.State.FeatureID)
 		s.Equal(usageFeature.Key, usageBasedCharge.Intent.GetFeatureKey())
+		s.Require().NotNil(usageBasedCharge.Intent.GetEffectiveIntent().Discounts.Usage)
+		s.NotEmpty(usageBasedCharge.Intent.GetEffectiveIntent().Discounts.Usage.CorrelationID)
 
 		fetched, err := s.mustGetChargeByID(usageBasedCharge.GetChargeID()).AsUsageBasedCharge()
 		s.Require().NoError(err)
@@ -398,9 +426,10 @@ func (s *ChargeFeatureIDTestSuite) TestCreateCustomerChargeResolvesFeatureByID()
 		})
 
 		// then:
-		// - the failure surfaces as not-found rather than a downstream "feature key is required"
+		// - the failure surfaces as a feature validation issue rather than a downstream "feature key is required"
 		s.Require().Error(err)
-		s.True(models.IsGenericNotFoundError(err), "expected not found error, got %v", err)
+		issue := requireFeatureMeterValidationIssue(s.T(), err, billing.ErrInvoiceLineFeatureNotFound.Code)
+		s.Empty(issue.Path)
 	})
 }
 
@@ -413,7 +442,7 @@ func (s *ChargeFeatureIDTestSuite) TestCreateFlatFeeWithUnresolvableFeatureKeyRe
 	// when:
 	// - the charge is created
 	// then:
-	// - creation returns a not-found error without persisting a charge
+	// - creation returns a feature validation issue without persisting a charge
 	ctx := context.Background()
 	ns := s.GetUniqueNamespace("charges-service-feature-key-unresolvable")
 	s.ProvisionDefaultTaxCodes(ctx, ns)
@@ -432,7 +461,7 @@ func (s *ChargeFeatureIDTestSuite) TestCreateFlatFeeWithUnresolvableFeatureKeyRe
 
 	_, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.createMockChargeIntent(createMockChargeIntentInput{
 				customer:       cust.GetID(),
 				currency:       USD,
@@ -447,13 +476,13 @@ func (s *ChargeFeatureIDTestSuite) TestCreateFlatFeeWithUnresolvableFeatureKeyRe
 				uniqueReferenceID: "flat-fee-missing-feature",
 				featureKey:        "this-feature-does-not-exist",
 			}),
-		},
+		),
 	})
 
 	s.Require().Error(err)
-	s.ErrorContains(err, "resolve create feature meter")
-	s.True(models.IsGenericNotFoundError(err), "expected not found error, got %v", err)
-	s.False(models.IsGenericValidationError(err), "not found error must not be wrapped as validation: %v", err)
+	s.ErrorContains(err, "resolve flat fee feature")
+	issue := requireFeatureMeterValidationIssue(s.T(), err, billing.ErrInvoiceLineFeatureNotFound.Code)
+	s.Empty(issue.Path)
 
 	listed, listErr := s.Charges.ListCharges(ctx, charges.ListChargesInput{
 		Namespace:   ns,
@@ -469,7 +498,7 @@ func (s *ChargeFeatureIDTestSuite) TestCreateUsageBasedWithUnresolvableFeatureKe
 	// when:
 	// - the charge is created
 	// then:
-	// - creation returns a not-found error without persisting a charge
+	// - creation returns a feature validation issue without persisting a charge
 	ctx := s.T().Context()
 	ns := s.GetUniqueNamespace("charges-service-usage-feature-key-unresolvable")
 	s.ProvisionDefaultTaxCodes(ctx, ns)
@@ -484,7 +513,7 @@ func (s *ChargeFeatureIDTestSuite) TestCreateUsageBasedWithUnresolvableFeatureKe
 
 	_, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.createMockChargeIntent(createMockChargeIntentInput{
 				customer:       cust.GetID(),
 				currency:       USD,
@@ -497,12 +526,12 @@ func (s *ChargeFeatureIDTestSuite) TestCreateUsageBasedWithUnresolvableFeatureKe
 				managedBy:  billing.ManuallyManagedLine,
 				featureKey: "this-usage-feature-does-not-exist",
 			}),
-		},
+		),
 	})
 
 	s.Require().Error(err)
-	s.True(models.IsGenericNotFoundError(err), "expected not found error, got %v", err)
-	s.False(models.IsGenericValidationError(err), "not found error must not be wrapped as validation: %v", err)
+	issue := requireFeatureMeterValidationIssue(s.T(), err, billing.ErrInvoiceLineFeatureNotFound.Code)
+	s.Empty(issue.Path)
 
 	listed, listErr := s.Charges.ListCharges(ctx, charges.ListChargesInput{
 		Namespace:   ns,
@@ -540,7 +569,7 @@ func (s *ChargeFeatureIDTestSuite) TestCreateUsageBasedRequiresFeatureMeterBefor
 
 	_, err = s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.createMockChargeIntent(createMockChargeIntentInput{
 				customer:       cust.GetID(),
 				currency:       USD,
@@ -565,12 +594,13 @@ func (s *ChargeFeatureIDTestSuite) TestCreateUsageBasedRequiresFeatureMeterBefor
 				managedBy:  billing.ManuallyManagedLine,
 				featureKey: meterlessFeature.Key,
 			}),
-		},
+		),
 	})
 
 	s.Require().Error(err)
-	s.True(models.IsGenericValidationError(err), "expected validation error, got %v", err)
-	s.ErrorContains(err, "has no meter associated")
+	issue := requireFeatureMeterValidationIssue(s.T(), err, billing.ErrInvoiceLineFeatureHasNoMeters.Code)
+	s.Empty(issue.Path)
+	s.ErrorContains(err, "usage based invoice line: feature has no meters")
 
 	listed, listErr := s.Charges.ListCharges(ctx, charges.ListChargesInput{
 		Namespace:   ns,
@@ -580,13 +610,9 @@ func (s *ChargeFeatureIDTestSuite) TestCreateUsageBasedRequiresFeatureMeterBefor
 	s.Empty(listed.Items)
 }
 
-func (s *ChargeFeatureIDTestSuite) TestCreateUsageBasedMissingFeatureTakesPrecedenceOverMeterValidation() {
+func (s *ChargeFeatureIDTestSuite) TestCreateUsageBasedReturnsAllFeatureValidationIssues() {
 	// given:
 	// - one usage-based intent references a missing feature and another a meterless feature
-	// when:
-	// - both charges are created in one request
-	// then:
-	// - the missing feature rejects the whole request as not-found before anything is persisted
 	ctx := s.T().Context()
 	ns := s.GetUniqueNamespace("charges-service-usage-mixed-feature-errors")
 	s.ProvisionDefaultTaxCodes(ctx, ns)
@@ -606,9 +632,11 @@ func (s *ChargeFeatureIDTestSuite) TestCreateUsageBasedMissingFeatureTakesPreced
 	clock.FreezeTime(servicePeriod.From.Add(-time.Hour))
 	defer clock.UnFreeze()
 
+	// when:
+	// - both charges are created in one request
 	_, err = s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.createMockChargeIntent(createMockChargeIntentInput{
 				customer:       cust.GetID(),
 				currency:       USD,
@@ -633,12 +661,24 @@ func (s *ChargeFeatureIDTestSuite) TestCreateUsageBasedMissingFeatureTakesPreced
 				managedBy:  billing.ManuallyManagedLine,
 				featureKey: meterlessFeature.Key,
 			}),
-		},
+		),
 	})
 
+	// then:
+	// - both validation issues are returned and neither charge is persisted
 	s.Require().Error(err)
-	s.True(models.IsGenericNotFoundError(err), "expected not found error, got %v", err)
-	s.False(models.IsGenericValidationError(err), "not found error must take precedence over validation: %v", err)
+	issues, systemErr := billing.ToValidationIssues(err)
+	s.NoError(systemErr)
+	s.ElementsMatch([]string{
+		billing.ErrInvoiceLineFeatureNotFound.Code,
+		billing.ErrInvoiceLineFeatureHasNoMeters.Code,
+	}, lo.Map(issues, func(issue billing.ValidationIssue, _ int) string {
+		return issue.Code
+	}))
+	for _, issue := range issues {
+		s.Empty(issue.Path)
+		s.Empty(issue.Component)
+	}
 
 	listed, listErr := s.Charges.ListCharges(ctx, charges.ListChargesInput{
 		Namespace:   ns,

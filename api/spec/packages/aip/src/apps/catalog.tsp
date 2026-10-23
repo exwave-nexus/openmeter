@@ -106,7 +106,7 @@ union InstallAppRequest {
   sandbox: InstallAppBase<AppType.Sandbox>,
 
   @summary("External Invoicing")
-  external_invoicing: InstallAppBase<AppType.ExternalInvoicing>,
+  external_invoicing: InstallAppExternalInvoicing,
 }
 
 /**
@@ -132,6 +132,23 @@ model InstallAppBase<T extends AppType> {
 }
 
 /**
+ * Model for installing an External Invoicing app from the catalog.
+ */
+@friendlyName("BillingInstallAppExternalInvoicing")
+model InstallAppExternalInvoicing {
+  ...OmitProperties<
+    InstallAppBase<AppType.ExternalInvoicing>,
+    "create_billing_profile"
+  >;
+
+  /**
+   * If true, creates the Auto Collection preset with an OpenMeter supplier in the US
+   * (postal code 94114), without replacing the default profile.
+   */
+  create_billing_profile: boolean;
+}
+
+/**
  * Model for installing an app from the catalog with an API key.
  */
 @friendlyName("BillingInstallApp{name}WithApiKey", T)
@@ -149,10 +166,29 @@ model InstallAppWithApiKey<T extends AppType> {
  * Response of the app install.
  */
 @friendlyName("BillingInstallAppResponse")
-model InstallAppResponse {
-  @visibility(Lifecycle.Read)
-  app: App;
+@discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
+union InstallAppResponse {
+  @summary("Stripe")
+  stripe: InstalledApp<AppStripe>,
 
+  @summary("Sandbox")
+  sandbox: InstalledApp<AppSandbox>,
+
+  @summary("External Invoicing")
+  external_invoicing: InstalledApp<AppExternalInvoicing>,
+}
+
+/**
+ * Response of an installed app.
+ */
+@friendlyName("BillingInstalled{name}", T)
+@withVisibility(Lifecycle.Read)
+model InstalledApp<T extends {}> {
+  ...T;
+
+  /**
+   * Default capabilities of the installed app.
+   */
   @visibility(Lifecycle.Read)
   default_for_capability_types: AppCapabilityType[];
 }

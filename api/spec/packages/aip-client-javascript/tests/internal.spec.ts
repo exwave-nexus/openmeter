@@ -28,29 +28,31 @@ describe('internal sub-client', () => {
     expect(sdk.internal).toBe(sdk.internal)
     // x-internal operations must not leak onto the public sub-clients.
     expect('createAddon' in sdk.subscriptions).toBe(false)
-    // Entirely-internal groups have no public getter at all.
-    expect('currencies' in sdk).toBe(false)
+    expect('updateAddon' in sdk.subscriptions).toBe(false)
   })
 
-  it('routes internal.subscriptions.createAddon() to the subscription addons resource', async () => {
+  const addon = {
+    id: '01ARZ3NDEKTSV4RRFFQ69G5FAW',
+    name: 'Add-on',
+    addon: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAX' },
+    quantity: 1,
+    quantity_at: '2024-01-01T00:00:00Z',
+    active_from: '2024-01-01T00:00:00Z',
+    timeline: [],
+    rate_cards: [],
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  }
+
+  it('routes internal.subscriptions.createAddon() to the subscription addons collection', async () => {
     fetchMock.route('*', {
-      body: {
-        id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
-        name: 'Addon',
-        addon: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAW' },
-        quantity: 1,
-        quantity_at: '2024-01-01T00:00:00Z',
-        active_from: '2024-01-01T00:00:00Z',
-        rate_cards: [],
-        created_at: '2024-01-01T00:00:00Z',
-        updated_at: '2024-01-01T00:00:00Z',
-      },
+      body: addon,
       headers: { 'Content-Type': 'application/json' },
     })
     await client().internal.subscriptions.createAddon({
       subscriptionId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
       body: {
-        addon: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAW' },
+        addon: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAX' },
         quantity: 1,
         timing: 'immediate',
       },
@@ -60,12 +62,18 @@ describe('internal sub-client', () => {
     )
   })
 
-  it('routes internal.currencies.list() to the currencies resource', async () => {
+  it('routes internal.subscriptions.updateAddon() to the subscription addon resource', async () => {
     fetchMock.route('*', {
-      body: { data: [], meta: { page: { number: 1, size: 10, total: 0 } } },
+      body: addon,
       headers: { 'Content-Type': 'application/json' },
     })
-    await client().internal.currencies.list()
-    expect(lastUrl()).toBe('https://eu.api.konghq.com/v3/openmeter/currencies')
+    await client().internal.subscriptions.updateAddon({
+      subscriptionId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      subscriptionAddonId: '01ARZ3NDEKTSV4RRFFQ69G5FAW',
+      body: { quantity: 2, timing: 'immediate' },
+    })
+    expect(lastUrl()).toBe(
+      'https://eu.api.konghq.com/v3/openmeter/subscriptions/01ARZ3NDEKTSV4RRFFQ69G5FAV/addons/01ARZ3NDEKTSV4RRFFQ69G5FAW',
+    )
   })
 })

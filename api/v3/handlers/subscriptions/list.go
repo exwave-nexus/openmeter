@@ -66,6 +66,7 @@ func (h *handler) ListSubscriptions() ListSubscriptionsHandler {
 						{Field: "filter[customer_id]", Reason: err.Error(), Source: apierrors.InvalidParamSourceQuery},
 					})
 				}
+
 				req.CustomerID = customerID
 
 				id, err := filters.FromAPIFilterULID(params.Filter.Id)
@@ -74,6 +75,7 @@ func (h *handler) ListSubscriptions() ListSubscriptionsHandler {
 						{Field: "filter[id]", Reason: err.Error(), Source: apierrors.InvalidParamSourceQuery},
 					})
 				}
+
 				req.ID = id
 
 				status, err := filters.FromAPIStatusFilter[subscription.SubscriptionStatus](ctx, params.Filter.Status)
@@ -82,6 +84,7 @@ func (h *handler) ListSubscriptions() ListSubscriptionsHandler {
 						{Field: "filter[status]", Reason: err.Error(), Source: apierrors.InvalidParamSourceQuery},
 					})
 				}
+
 				req.Status = status
 
 				planID, err := filters.FromAPIFilterULID(params.Filter.PlanId)
@@ -90,6 +93,7 @@ func (h *handler) ListSubscriptions() ListSubscriptionsHandler {
 						{Field: "filter[plan_id]", Reason: err.Error(), Source: apierrors.InvalidParamSourceQuery},
 					})
 				}
+
 				req.PlanID = planID
 
 				planKey, err := filters.FromAPIFilterStringExact(params.Filter.PlanKey)
@@ -98,6 +102,7 @@ func (h *handler) ListSubscriptions() ListSubscriptionsHandler {
 						{Field: "filter[plan_key]", Reason: err.Error(), Source: apierrors.InvalidParamSourceQuery},
 					})
 				}
+
 				req.PlanKey = planKey
 			}
 
@@ -109,10 +114,12 @@ func (h *handler) ListSubscriptions() ListSubscriptionsHandler {
 						{Field: "sort", Reason: err.Error(), Source: apierrors.InvalidParamSourceQuery},
 					})
 				}
+
 				orderBy, err := FromAPISubscriptionSortField(ctx, sort.Field)
 				if err != nil {
 					return ListSubscriptionsRequest{}, err
 				}
+
 				req.OrderBy = orderBy
 				req.Order = sort.Order.ToSortxOrder()
 			}
@@ -120,14 +127,23 @@ func (h *handler) ListSubscriptions() ListSubscriptionsHandler {
 			return req, nil
 		},
 		func(ctx context.Context, request ListSubscriptionsRequest) (ListSubscriptionsResponse, error) {
-			resp, err := h.subscriptionService.List(ctx, request)
+			// Every subscription surfaces its phases, so the list is resolved to full
+			// views. ListViews batches the expansion (multi-customer aware) and keeps
+			// List's order and total count.
+			resp, err := h.subscriptionService.ListViews(ctx, request)
 			if err != nil {
 				return ListSubscriptionsResponse{}, err
 			}
 
-			subscriptions := lo.Map(resp.Items, func(item subscription.Subscription, _ int) api.BillingSubscription {
-				return ToAPIBillingSubscription(item)
-			})
+			subscriptions := make([]api.BillingSubscription, 0, len(resp.Items))
+			for _, view := range resp.Items {
+				sub, err := ToAPIBillingSubscription(view)
+				if err != nil {
+					return ListSubscriptionsResponse{}, err
+				}
+
+				subscriptions = append(subscriptions, sub)
+			}
 
 			r := response.NewPagePaginationResponse(subscriptions, response.PageMetaPage{
 				Size:   request.Page.PageSize,

@@ -15,7 +15,7 @@ type CustomersChargesService struct {
 	client *Client
 }
 
-type ChargeFilter struct {
+type ListCustomerChargesFilter struct {
 	// Filter charges by status.
 	//
 	// Supported statuses are:
@@ -27,16 +27,24 @@ type ChargeFilter struct {
 	//
 	// If omitted, all statuses are returned except for `deleted`.
 	Status *StringExactFilter
+	// Filter charges by the ID of their associated feature.
+	FeatureID *StringExactFilter
+	// Filter charges by the key of their associated feature.
+	FeatureKey *StringExactFilter
+	// Filter charges by the start of their service period.
+	ServicePeriodFrom *DateTimeFilter
+	// Filter charges by the end of their service period.
+	ServicePeriodTo *DateTimeFilter
 }
 
-type ChargeListParams struct {
+type ListCustomerChargesParams struct {
 	Page   *PageParams
 	Sort   *Sort
-	Filter *ChargeFilter
+	Filter *ListCustomerChargesFilter
 	Expand []ChargesExpand
 }
 
-func (p ChargeListParams) values() url.Values {
+func (p ListCustomerChargesParams) values() url.Values {
 	q := url.Values{}
 
 	addPageParams(q, p.Page)
@@ -45,6 +53,10 @@ func (p ChargeListParams) values() url.Values {
 
 	if p.Filter != nil {
 		addStringExactFilter(q, "filter[status]", p.Filter.Status)
+		addStringExactFilter(q, "filter[feature_id]", p.Filter.FeatureID)
+		addStringExactFilter(q, "filter[feature_key]", p.Filter.FeatureKey)
+		addDateTimeFilter(q, "filter[service_period_from]", p.Filter.ServicePeriodFrom)
+		addDateTimeFilter(q, "filter[service_period_to]", p.Filter.ServicePeriodTo)
 	}
 
 	if len(p.Expand) > 0 {
@@ -62,7 +74,7 @@ func (p ChargeListParams) values() url.Values {
 //
 // Returns the customer's charges that are represented as either flat fee or
 // usage-based charges.
-func (s *CustomersChargesService) List(ctx context.Context, customerID string, params ChargeListParams) (*ChargePagePaginatedResponse, error) {
+func (s *CustomersChargesService) List(ctx context.Context, customerID string, params ListCustomerChargesParams) (*ChargePagePaginatedResponse, error) {
 	if customerID == "" {
 		return nil, fmt.Errorf("openmeter: %s must not be empty: %w", "customerID", ErrEmptyID)
 	}
@@ -85,7 +97,7 @@ func (s *CustomersChargesService) List(ctx context.Context, customerID string, p
 }
 
 // ListAll returns an iterator over all Charge results, fetching pages of List transparently. Iteration stops at the first error, which is yielded as the second value.
-func (s *CustomersChargesService) ListAll(ctx context.Context, customerID string, params ChargeListParams) iter.Seq2[Charge, error] {
+func (s *CustomersChargesService) ListAll(ctx context.Context, customerID string, params ListCustomerChargesParams) iter.Seq2[Charge, error] {
 	return paginate(params.Page, func(page, size int) ([]Charge, int, error) {
 		pageParams := params
 		pageParams.Page = &PageParams{Size: Int(size), Number: Int(page)}

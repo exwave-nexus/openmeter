@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/creditrealization"
@@ -20,9 +21,14 @@ type Adapter interface {
 	RealizationRunInvoiceUsageAdapter
 	RealizationRunPaymentAdapter
 	ChargeAdapter
+	SubscriptionReferenceAdapter
 	ChargeCostBasisAdapter
 
 	entutils.TxCreator
+}
+
+type SubscriptionReferenceAdapter interface {
+	UpdateSubscriptionReference(ctx context.Context, input meta.UpdateSubscriptionReferenceInput) error
 }
 
 type ChargeCostBasisAdapter interface {
@@ -30,21 +36,105 @@ type ChargeCostBasisAdapter interface {
 }
 
 type ChargeAdapter interface {
-	CreateCharges(ctx context.Context, charges CreateChargesInput) ([]Charge, error)
+	CreateCharges(ctx context.Context, charges CreateChargesAdapterInput) ([]Charge, error)
 	UpdateCharge(ctx context.Context, charge ChargeBase) (ChargeBase, error)
+	UpdateChargeValidationIssues(ctx context.Context, input UpdateChargeValidationIssuesInput) error
 	CreateChargeOverride(ctx context.Context, charge ChargeBase, override IntentMutableFields) (ChargeBase, error)
 	DeleteChargeOverride(ctx context.Context, charge ChargeBase) (ChargeBase, error)
-	UpdateSubscriptionItemID(ctx context.Context, charge Charge, newSubscriptionItemID string) (Charge, error)
 	DeleteCharge(ctx context.Context, charge Charge) error
 	GetByIDs(ctx context.Context, input GetByIDsInput) ([]Charge, error)
 	GetByID(ctx context.Context, input GetByIDInput) (Charge, error)
 }
 
+type CreateIntentAdapterInput struct {
+	Intent      OverridableIntent
+	Annotations models.Annotations `json:"annotations"`
+
+	FeatureID         string
+	RatingEngine      RatingEngine
+	ResolvedCostBasis *costbasis.State
+	ValidationIssues  billing.ValidationIssues
+}
+
+func (i CreateIntentAdapterInput) Validate() error {
+	var errs []error
+
+	if err := i.Intent.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := i.RatingEngine.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("rating engine: %w", err))
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
+type CreateChargesAdapterInput struct {
+	Namespace string
+	Intents   []CreateIntentAdapterInput
+}
+
+func (i CreateChargesAdapterInput) Validate() error {
+	var errs []error
+
+	if i.Namespace == "" {
+		errs = append(errs, errors.New("namespace is required"))
+	}
+
+	for idx, intent := range i.Intents {
+		if err := intent.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("intent [%d]: %w", idx, err))
+		}
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
+type UpdateChargeValidationIssuesInput struct {
+	ChargeID         meta.ChargeID
+	ValidationIssues billing.ValidationIssues
+}
+
+func (i UpdateChargeValidationIssuesInput) Validate() error {
+	var errs []error
+
+	if err := i.ChargeID.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("charge ID: %w", err))
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
 type RealizationRunAdapter interface {
-	CreateRealizationRun(ctx context.Context, chargeID meta.ChargeID, input CreateRealizationRunInput) (RealizationRunBase, error)
+	CreateRealizationRun(ctx context.Context, chargeID meta.ChargeID, input CreateRealizationRunAdapterInput) (RealizationRunBase, error)
 	UpdateRealizationRun(ctx context.Context, input UpdateRealizationRunInput) (RealizationRunBase, error)
 	UpsertRunDetailedLines(ctx context.Context, input UpsertRunDetailedLinesInput) error
 	FetchDetailedLines(ctx context.Context, charge Charge) (Charge, error)
+}
+
+type CreateRealizationRunAdapterInput struct {
+	CreateRealizationRunInput
+
+	PriorRunID *RealizationRunID
+}
+
+var _ models.Validator = (*CreateRealizationRunAdapterInput)(nil)
+
+func (i CreateRealizationRunAdapterInput) Validate() error {
+	var errs []error
+
+	if err := i.CreateRealizationRunInput.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+
+	if i.PriorRunID != nil {
+		if err := i.PriorRunID.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("prior run id: %w", err))
+		}
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
 }
 
 type RealizationRunCreditAllocationAdapter interface {
@@ -73,6 +163,7 @@ func (i CreateCreditRealizationsInput) Validate() error {
 
 type RealizationRunInvoiceUsageAdapter interface {
 	CreateRunInvoicedUsage(ctx context.Context, runID RealizationRunID, invoicedUsage invoicedusage.AccruedUsage) (invoicedusage.AccruedUsage, error)
+	DeleteRunInvoicedUsage(ctx context.Context, id models.NamespacedID) error
 }
 
 type RealizationRunPaymentAdapter interface {

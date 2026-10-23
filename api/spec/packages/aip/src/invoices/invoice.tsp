@@ -6,6 +6,7 @@ import "../productcatalog/unitconfig.tsp";
 import "../billing/profile.tsp";
 import "../billing/totals.tsp";
 import "../billing/tax.tsp";
+import "../billing/validationissue.tsp";
 import "../subscriptions/index.tsp";
 
 namespace Invoices;
@@ -131,7 +132,7 @@ model InvoiceBase {
    */
   @visibility(Lifecycle.Read)
   @summary("Validation issues")
-  validation_issues?: InvoiceValidationIssue[];
+  validation_issues?: global.Billing.ValidationIssue[];
 
   /**
    * External identifiers assigned to this invoice by third-party systems.
@@ -608,48 +609,6 @@ model InvoiceExternalReferences {
 }
 
 /**
- * Severity level of an invoice validation issue.
- */
-@friendlyName("BillingInvoiceValidationIssueSeverity")
-enum InvoiceValidationIssueSeverity {
-  /**
-   * A critical issue that prevents the invoice from being finalized.
-   */
-  Critical: "critical",
-
-  /**
-   * A warning that does not block finalization but should be reviewed.
-   */
-  Warning: "warning",
-}
-
-/**
- * A validation issue found during invoice processing.
- *
- * Converges on the same structure used by plan and subscription validation errors:
- * a machine-readable `code`, a human-readable `message`, optional structured
- * `attributes`, plus a `severity` and optional `field` path.
- */
-@friendlyName("BillingInvoiceValidationIssue")
-model InvoiceValidationIssue is Shared.BaseError<string> {
-  /**
-   * Severity of the validation issue.
-   */
-  @visibility(Lifecycle.Read)
-  @summary("Severity")
-  severity: InvoiceValidationIssueSeverity;
-
-  /**
-   * JSON path to the field that caused this validation issue, if applicable.
-   *
-   * For example: `lines/0/rate_card/price`.
-   */
-  @visibility(Lifecycle.Read)
-  @summary("Field path")
-  field?: string;
-}
-
-/**
  * Line item type discriminator.
  */
 @friendlyName("BillingInvoiceLineType")
@@ -798,7 +757,7 @@ model InvoiceLineRateCard {
    */
   @visibility(Lifecycle.Read, Lifecycle.Update)
   @summary("Tax config")
-  tax_config?: ProductCatalog.RateCardTaxConfig;
+  tax_config?: Tax.TaxCodeConfig;
 
   /**
    * The feature key associated with this line's rate card.

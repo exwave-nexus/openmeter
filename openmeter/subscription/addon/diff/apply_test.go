@@ -299,7 +299,7 @@ func TestApply(t *testing.T) {
 
 	t.Run("Should add multiple instances of new item to the subscription", func(t *testing.T) {
 		runWithDeps(t, func(t *testing.T, deps *tcDeps) {
-			exampleAddonRateCard3, ok := (subscriptiontestutils.ExampleAddonRateCard3.Clone()).(*productcatalog.FlatFeeRateCard)
+			exampleAddonRateCard3, ok := subscriptiontestutils.ExampleAddonRateCard3.Clone().(*productcatalog.FlatFeeRateCard)
 			require.True(t, ok, "expected FlatFeeRateCard, got %T", exampleAddonRateCard3)
 
 			p, a := subscriptiontestutils.CreatePlanWithAddon(
@@ -1097,10 +1097,23 @@ func withTaxCodeIDAndCurrency(rc *productcatalog.FlatFeeRateCard, taxCodeID *str
 	if clone.TaxConfig != nil {
 		clone.TaxConfig.TaxCodeID = taxCodeID
 	}
+
 	currencyReference := currencies.NewCurrencyReference(currencyx.Code(currencyCode))
 	clone.Currency = &currencyReference
 
 	return clone
+}
+
+func featureReferenceWithoutID(meta productcatalog.RateCardMeta) (productcatalog.RateCardMeta, error) {
+	if meta.Feature == nil || meta.Feature.Key == nil {
+		return meta, nil
+	}
+
+	feature := meta.Feature.Clone()
+	feature.ID = nil
+	meta.Feature = &feature
+
+	return meta, nil
 }
 
 func compareRateCardsWithAmountChange(t *testing.T, baseTarget *productcatalog.FlatFeeRateCard, targetAmount int, value productcatalog.RateCard, msgAndArgs ...interface{}) {
@@ -1124,10 +1137,10 @@ func compareRateCardsWithAmountChange(t *testing.T, baseTarget *productcatalog.F
 	msgX := fmt.Sprintf("item %s not equal to target %s", b1, b2)
 
 	left := target.Clone()
-	left.SetFeature(nil, left.GetFeatureKey())
+	require.NoError(t, left.ChangeMeta(featureReferenceWithoutID))
 
 	right := value.Clone()
-	right.SetFeature(nil, right.GetFeatureKey())
+	require.NoError(t, right.ChangeMeta(featureReferenceWithoutID))
 
 	if len(msgAndArgs) > 0 {
 		customMsg := fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)

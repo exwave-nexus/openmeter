@@ -8,6 +8,7 @@ import (
 	"github.com/openmeterio/openmeter/app/config"
 	"github.com/openmeterio/openmeter/openmeter/billing/creditgrant"
 	creditgrantservice "github.com/openmeterio/openmeter/openmeter/billing/creditgrant/service"
+	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
 	entdb "github.com/openmeterio/openmeter/openmeter/ent/db"
 	enttx "github.com/openmeterio/openmeter/openmeter/ent/tx"
@@ -68,6 +69,7 @@ func NewCreditGrantService(
 	billingRegistry BillingRegistry,
 	customerService customer.Service,
 	creditVoidService creditvoid.Service,
+	currencyResolver currencies.CurrencyResolver,
 ) (creditgrant.Service, error) {
 	if billingRegistry.Charges == nil {
 		return nil, nil
@@ -80,6 +82,7 @@ func NewCreditGrantService(
 		CustomerService:       customerService,
 		CreditVoidService:     creditVoidService,
 		TransactionManager:    enttx.NewCreator(db),
+		CurrencyResolver:      currencyResolver,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create credit grant service: %w", err)

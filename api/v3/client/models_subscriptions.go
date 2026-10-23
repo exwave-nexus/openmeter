@@ -8,47 +8,6 @@ import (
 	"time"
 )
 
-// Subscription.
-type BillingSubscription struct {
-	ID     string            `json:"id"`
-	Labels map[string]string `json:"labels,omitempty"`
-	// An ISO-8601 timestamp representation of entity creation date.
-	CreatedAt time.Time `json:"created_at"`
-	// An ISO-8601 timestamp representation of entity last update date.
-	UpdatedAt time.Time `json:"updated_at"`
-	// An ISO-8601 timestamp representation of entity deletion date.
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
-	// The customer ID of the subscription.
-	CustomerID string `json:"customer_id"`
-	// The plan ID of the subscription. Set if subscription is created from a plan.
-	PlanID *string `json:"plan_id,omitempty"`
-	// The fiat currency in which the subscription is invoiced.
-	InvoiceCurrency string `json:"invoice_currency"`
-	// Controls whether custom-currency cost bases are resolved dynamically or pinned
-	// when their currency pair is introduced to the subscription.
-	CostBasisMode SubscriptionCostBasisMode `json:"cost_basis_mode"`
-	// Cost bases pinned to custom-currency pairs for this subscription.
-	CostBasisPins []SubscriptionCostBasisPin `json:"cost_basis_pins"`
-	// A billing anchor is the fixed point in time that determines the subscription's
-	// recurring billing cycle. It affects when charges occur and how prorations are
-	// calculated. Common anchors:
-	//
-	// - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
-	// - Subscription anniversary (day customer signed up)
-	// - Custom date (customer-specified day)
-	BillingAnchor time.Time `json:"billing_anchor"`
-	// The status of the subscription.
-	Status SubscriptionStatus `json:"status"`
-	// Settlement mode for billing.
-	//
-	// Values:
-	//
-	// - `credit_then_invoice`: Credits are applied first, then any remainder is
-	// invoiced.
-	// - `credit_only`: Usage is settled exclusively against credits.
-	SettlementMode *SettlementMode `json:"settlement_mode,omitempty"`
-}
-
 // SubscriptionAddon create request.
 type CreateSubscriptionAddonRequest struct {
 	Labels *map[string]string `json:"labels,omitempty"`
@@ -120,6 +79,78 @@ type SubscriptionAddonTimelineSegment struct {
 	Quantity int64 `json:"quantity"`
 }
 
+// Request for updating a subscription add-on. Only the quantity can be changed;
+// the timing controls when the new quantity takes effect.
+type SubscriptionAddonUpdate struct {
+	// The new quantity of the add-on. Must be at least 0. A quantity of 0 removes the
+	// add-on from the point the timing resolves to.
+	Quantity int64 `json:"quantity"`
+	// The timing of the update. A new entry is appended to the add-on's timeline at
+	// this point.
+	Timing SubscriptionEditTiming `json:"timing"`
+}
+
+// Subscription fields without phases or the current billing period.
+type SubscriptionBase struct {
+	ID     string            `json:"id"`
+	Labels map[string]string `json:"labels,omitempty"`
+	// An ISO-8601 timestamp representation of entity creation date.
+	CreatedAt time.Time `json:"created_at"`
+	// An ISO-8601 timestamp representation of entity last update date.
+	UpdatedAt time.Time `json:"updated_at"`
+	// An ISO-8601 timestamp representation of entity deletion date.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// Display name of the subscription. Defaults to the plan name when the
+	// subscription is created from a plan.
+	Name string `json:"name"`
+	// Optional description of the subscription.
+	Description *string `json:"description,omitempty"`
+	// An ISO-8601 timestamp representation of when the subscription became (or will
+	// become) active.
+	ActiveFrom time.Time `json:"active_from"`
+	// An ISO-8601 timestamp representation of when the subscription stops being
+	// active. Open-ended when not set.
+	ActiveTo *time.Time `json:"active_to,omitempty"`
+	// The customer ID of the subscription.
+	CustomerID string `json:"customer_id"`
+	// The plan ID of the subscription. Set if subscription is created from a plan.
+	PlanID *string `json:"plan_id,omitempty"`
+	// The plan the subscription was created from, if any. Includes the plan key and
+	// version so clients can resolve the exact plan revision.
+	Plan *SubscriptionPlanReference `json:"plan,omitempty"`
+	// The fiat currency in which the subscription is invoiced.
+	InvoiceCurrency string `json:"invoice_currency"`
+	// Controls whether custom-currency cost bases are resolved dynamically or pinned
+	// when their currency pair is introduced to the subscription.
+	CostBasisMode SubscriptionCostBasisMode `json:"cost_basis_mode"`
+	// Cost bases pinned to custom-currency pairs for this subscription.
+	CostBasisPins []SubscriptionCostBasisPin `json:"cost_basis_pins"`
+	// The billing cadence of the subscription in ISO-8601 duration format. Defines how
+	// often the customer is billed. Examples: `P1M` (monthly), `P3M` (quarterly),
+	// `P1Y` (annually).
+	BillingCadence string `json:"billing_cadence"`
+	// The pro-rating configuration of the subscription.
+	ProRatingConfig *SubscriptionProRatingConfig `json:"pro_rating_config,omitempty"`
+	// A billing anchor is the fixed point in time that determines the subscription's
+	// recurring billing cycle. It affects when charges occur and how prorations are
+	// calculated. Common anchors:
+	//
+	// - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
+	// - Subscription anniversary (day customer signed up)
+	// - Custom date (customer-specified day)
+	BillingAnchor time.Time `json:"billing_anchor"`
+	// The status of the subscription.
+	Status SubscriptionStatus `json:"status"`
+	// Settlement mode for billing.
+	//
+	// Values:
+	//
+	// - `credit_then_invoice`: Credits are applied first, then any remainder is
+	// invoiced.
+	// - `credit_only`: Usage is settled exclusively against credits.
+	SettlementMode *SettlementMode `json:"settlement_mode,omitempty"`
+}
+
 // Request for canceling a subscription.
 type SubscriptionCancel struct {
 	// If not provided the subscription is canceled immediately.
@@ -139,8 +170,24 @@ type SubscriptionChange struct {
 	SettlementMode *SettlementMode `json:"settlement_mode,omitempty"`
 	// The customer to create the subscription for.
 	Customer SubscriptionChangeCustomer `json:"customer"`
-	// The plan reference of the subscription.
-	Plan SubscriptionChangePlan `json:"plan"`
+	// A reference to a published plan the subscription is created from.
+	//
+	// Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the
+	// subscription on an existing published plan; use `custom_plan` to define the plan
+	// inline.
+	Plan *SubscriptionChangePlan `json:"plan,omitempty"`
+	// An inline plan definition to create the subscription from, without referencing a
+	// published plan.
+	//
+	// Exactly one of `plan` or `custom_plan` must be provided. The subscription is not
+	// linked to a persisted plan, so the response omits the `plan` reference.
+	CustomPlan *SubscriptionCustomPlan `json:"custom_plan,omitempty"`
+	// The key of the phase to start the subscription in. If not provided, the
+	// subscription starts in the first phase of the plan.
+	//
+	// Only applies when creating from a published `plan`; custom plans define their
+	// own phases inline.
+	StartingPhase *string `json:"starting_phase,omitempty"`
 	// A billing anchor is the fixed point in time that determines the subscription's
 	// recurring billing cycle. It affects when charges occur and how prorations are
 	// calculated. Common anchors:
@@ -198,34 +245,6 @@ type SubscriptionChangeResponse struct {
 	Next BillingSubscription `json:"next"`
 }
 
-// Controls how custom-currency cost bases are selected for the subscription.
-type SubscriptionCostBasisMode string
-
-const (
-	SubscriptionCostBasisModeDynamic SubscriptionCostBasisMode = "dynamic"
-	SubscriptionCostBasisModePinned  SubscriptionCostBasisMode = "pinned"
-)
-
-func (value SubscriptionCostBasisMode) Valid() bool {
-	switch value {
-	case SubscriptionCostBasisModeDynamic, SubscriptionCostBasisModePinned:
-		return true
-	default:
-		return false
-	}
-}
-
-// A cost basis pinned to a custom-currency pair for the subscription.
-type SubscriptionCostBasisPin struct {
-	// The managed custom currency ID.
-	CustomCurrencyID string `json:"custom_currency_id"`
-	// The fiat currency in which the subscription is invoiced.
-	InvoiceCurrency string `json:"invoice_currency"`
-	// The pinned cost basis resource ID.
-	CostBasisID string `json:"cost_basis_id"`
-}
-
-// Subscription create request.
 type SubscriptionCreate struct {
 	Labels *map[string]string `json:"labels,omitempty"`
 	// Settlement mode for billing.
@@ -238,8 +257,29 @@ type SubscriptionCreate struct {
 	SettlementMode *SettlementMode `json:"settlement_mode,omitempty"`
 	// The customer to create the subscription for.
 	Customer SubscriptionChangeCustomer `json:"customer"`
-	// The plan reference of the subscription.
-	Plan SubscriptionChangePlan `json:"plan"`
+	// A reference to a published plan the subscription is created from.
+	//
+	// Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the
+	// subscription on an existing published plan; use `custom_plan` to define the plan
+	// inline.
+	Plan *SubscriptionChangePlan `json:"plan,omitempty"`
+	// An inline plan definition to create the subscription from, without referencing a
+	// published plan.
+	//
+	// Exactly one of `plan` or `custom_plan` must be provided. The subscription is not
+	// linked to a persisted plan, so the response omits the `plan` reference.
+	CustomPlan *SubscriptionCustomPlan `json:"custom_plan,omitempty"`
+	// The key of the phase to start the subscription in. If not provided, the
+	// subscription starts in the first phase of the plan.
+	//
+	// Only applies when creating from a published `plan`; custom plans define their
+	// own phases inline.
+	StartingPhase *string `json:"starting_phase,omitempty"`
+	// When the subscription should start. If not provided, the subscription starts
+	// immediately. Provide a future timestamp to schedule the subscription to start
+	// later — this creates a not-yet-active, scheduled subscription. A timestamp in
+	// the past is rejected.
+	Timing *SubscriptionCreateTiming `json:"timing,omitempty"`
 	// A billing anchor is the fixed point in time that determines the subscription's
 	// recurring billing cycle. It affects when charges occur and how prorations are
 	// calculated. Common anchors:
@@ -253,6 +293,381 @@ type SubscriptionCreate struct {
 	BillingAnchor *time.Time `json:"billing_anchor,omitempty"`
 	// Controls how custom-currency cost bases are selected for the subscription.
 	CostBasisMode *SubscriptionCostBasisMode `json:"cost_basis_mode,omitempty"`
+}
+
+// When a subscription should start: immediate (the default) or a custom timestamp
+// to schedule a future start.
+//
+// SubscriptionCreateTiming is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the SubscriptionCreateTimingFrom* constructors.
+type SubscriptionCreateTiming struct {
+	raw json.RawMessage
+}
+
+func (u *SubscriptionCreateTiming) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	return nil
+}
+
+func (u SubscriptionCreateTiming) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u SubscriptionCreateTiming) AsEnum() (*SubscriptionCreateTimingEnum, error) {
+	var value SubscriptionCreateTimingEnum
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	if !value.Valid() {
+		return nil, fmt.Errorf("SubscriptionCreateTiming: value %q is not Enum", value)
+	}
+	return &value, nil
+}
+
+func SubscriptionCreateTimingFromEnum(value SubscriptionCreateTimingEnum) (SubscriptionCreateTiming, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return SubscriptionCreateTiming{}, err
+	}
+	var result SubscriptionCreateTiming
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return SubscriptionCreateTiming{}, err
+	}
+	return result, nil
+}
+
+func (u SubscriptionCreateTiming) AsCustom() (*time.Time, error) {
+	var value time.Time
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func SubscriptionCreateTimingFromCustom(value time.Time) (SubscriptionCreateTiming, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return SubscriptionCreateTiming{}, err
+	}
+	var result SubscriptionCreateTiming
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return SubscriptionCreateTiming{}, err
+	}
+	return result, nil
+}
+
+// Subscription create timing. Only immediate is supported as an enum value —
+// unlike edit timing, next_billing_cycle is not accepted on create, since a new
+// subscription has no current billing cycle to schedule against.
+type SubscriptionCreateTimingEnum string
+
+const (
+	SubscriptionCreateTimingEnumImmediate SubscriptionCreateTimingEnum = "immediate"
+)
+
+func (value SubscriptionCreateTimingEnum) Valid() bool {
+	switch value {
+	case SubscriptionCreateTimingEnumImmediate:
+		return true
+	default:
+		return false
+	}
+}
+
+// An inline (custom) plan definition used to create or change a subscription
+// without referencing a published plan. Mirrors the plan create shape without a
+// key or version, since a custom plan is not persisted or versioned on its own.
+//
+// `settlement_mode` is also omitted: it is a subscription-level concern set via
+// the `settlement_mode` field on the create/change request, not on the inline
+// plan.
+type SubscriptionCustomPlan struct {
+	// Display name of the resource.
+	//
+	// Between 1 and 256 characters.
+	Name string `json:"name"`
+	// Optional description of the resource.
+	//
+	// Maximum 1024 characters.
+	Description *string            `json:"description,omitempty"`
+	Labels      *map[string]string `json:"labels,omitempty"`
+	// The currency code of the plan.
+	Currency BillingCurrencyCode `json:"currency"`
+	// The billing cadence for subscriptions using this plan.
+	BillingCadence string `json:"billing_cadence"`
+	// Whether pro-rating is enabled for this plan.
+	ProRatingEnabled *bool `json:"pro_rating_enabled,omitempty"`
+	// The plan phases define the pricing ramp for a subscription. A phase switch
+	// occurs only at the end of a billing period. At least one phase is required.
+	Phases []PlanPhaseInput `json:"phases"`
+}
+
+// Request for editing a running subscription. Applies an ordered batch of
+// customizations to the subscription's phases and items. A later customization
+// observes the state produced by earlier ones.
+type SubscriptionEdit struct {
+	// The ordered batch of customizations to apply to the running subscription.
+	Customizations []SubscriptionEditOperation `json:"customizations"`
+	// When the requested changes should take effect. Defaults to immediate.
+	Timing *SubscriptionEditTiming `json:"timing,omitempty"`
+}
+
+// Add a new rate card to a phase. Adding an item to the current phase closes the
+// active version of the same item key and appends a new version.
+type SubscriptionEditAddItem struct {
+	// Discriminator for the add-item operation.
+	Type SubscriptionEditOperationType `json:"type"`
+	// The key of the phase to add the item to.
+	PhaseKey string `json:"phase_key"`
+	// The rate card describing what the customer gets and pays for the new item.
+	RateCard RateCardInput `json:"rate_card"`
+}
+
+// Add a new phase to the subscription. The phase is created without items; use
+// add-item operations to populate it.
+type SubscriptionEditAddPhase struct {
+	// Discriminator for the add-phase operation.
+	Type SubscriptionEditOperationType `json:"type"`
+	// The phase to add.
+	Phase SubscriptionPhaseCreate `json:"phase"`
+}
+
+// A single customization to apply to a running subscription. The `type` field
+// discriminates which operation is performed.
+//
+// SubscriptionEditOperation is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the SubscriptionEditOperationFrom* constructors.
+// The exported Type field is decode-side metadata; MarshalJSON round-trips the original payload and ignores writes to it.
+type SubscriptionEditOperation struct {
+	Type string `json:"type"`
+	raw  json.RawMessage
+}
+
+func (u *SubscriptionEditOperation) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	if string(data) == "null" {
+		u.Type = ""
+		return nil
+	}
+
+	var envelope struct {
+		Value string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	u.Type = envelope.Value
+	return nil
+}
+
+func (u SubscriptionEditOperation) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u SubscriptionEditOperation) AsSubscriptionEditAddItem() (*SubscriptionEditAddItem, error) {
+	if u.Type != "add_item" {
+		return nil, fmt.Errorf("SubscriptionEditOperation: expected type %q, got %q", "add_item", u.Type)
+	}
+	var value SubscriptionEditAddItem
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func SubscriptionEditOperationFromSubscriptionEditAddItem(value SubscriptionEditAddItem) (SubscriptionEditOperation, error) {
+	value.Type = "add_item"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	var result SubscriptionEditOperation
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	return result, nil
+}
+
+func (u SubscriptionEditOperation) AsSubscriptionEditRemoveItem() (*SubscriptionEditRemoveItem, error) {
+	if u.Type != "remove_item" {
+		return nil, fmt.Errorf("SubscriptionEditOperation: expected type %q, got %q", "remove_item", u.Type)
+	}
+	var value SubscriptionEditRemoveItem
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func SubscriptionEditOperationFromSubscriptionEditRemoveItem(value SubscriptionEditRemoveItem) (SubscriptionEditOperation, error) {
+	value.Type = "remove_item"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	var result SubscriptionEditOperation
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	return result, nil
+}
+
+func (u SubscriptionEditOperation) AsSubscriptionEditAddPhase() (*SubscriptionEditAddPhase, error) {
+	if u.Type != "add_phase" {
+		return nil, fmt.Errorf("SubscriptionEditOperation: expected type %q, got %q", "add_phase", u.Type)
+	}
+	var value SubscriptionEditAddPhase
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func SubscriptionEditOperationFromSubscriptionEditAddPhase(value SubscriptionEditAddPhase) (SubscriptionEditOperation, error) {
+	value.Type = "add_phase"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	var result SubscriptionEditOperation
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	return result, nil
+}
+
+func (u SubscriptionEditOperation) AsSubscriptionEditRemovePhase() (*SubscriptionEditRemovePhase, error) {
+	if u.Type != "remove_phase" {
+		return nil, fmt.Errorf("SubscriptionEditOperation: expected type %q, got %q", "remove_phase", u.Type)
+	}
+	var value SubscriptionEditRemovePhase
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func SubscriptionEditOperationFromSubscriptionEditRemovePhase(value SubscriptionEditRemovePhase) (SubscriptionEditOperation, error) {
+	value.Type = "remove_phase"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	var result SubscriptionEditOperation
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	return result, nil
+}
+
+func (u SubscriptionEditOperation) AsSubscriptionEditStretchPhase() (*SubscriptionEditStretchPhase, error) {
+	if u.Type != "stretch_phase" {
+		return nil, fmt.Errorf("SubscriptionEditOperation: expected type %q, got %q", "stretch_phase", u.Type)
+	}
+	var value SubscriptionEditStretchPhase
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func SubscriptionEditOperationFromSubscriptionEditStretchPhase(value SubscriptionEditStretchPhase) (SubscriptionEditOperation, error) {
+	value.Type = "stretch_phase"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	var result SubscriptionEditOperation
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	return result, nil
+}
+
+func (u SubscriptionEditOperation) AsSubscriptionEditUnscheduleEdit() (*SubscriptionEditUnscheduleEdit, error) {
+	if u.Type != "unschedule_edit" {
+		return nil, fmt.Errorf("SubscriptionEditOperation: expected type %q, got %q", "unschedule_edit", u.Type)
+	}
+	var value SubscriptionEditUnscheduleEdit
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func SubscriptionEditOperationFromSubscriptionEditUnscheduleEdit(value SubscriptionEditUnscheduleEdit) (SubscriptionEditOperation, error) {
+	value.Type = "unschedule_edit"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	var result SubscriptionEditOperation
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return SubscriptionEditOperation{}, err
+	}
+	return result, nil
+}
+
+// The type of a subscription edit operation.
+//
+// - `add_item`: Add a rate card to a phase.
+// - `remove_item`: Remove a rate card from a phase.
+// - `add_phase`: Add a new phase to the subscription.
+// - `remove_phase`: Remove a phase from the subscription.
+// - `stretch_phase`: Extend the duration of a phase.
+// - `unschedule_edit`: Discard scheduled edits on the current phase.
+type SubscriptionEditOperationType string
+
+const (
+	SubscriptionEditOperationTypeAddItem        SubscriptionEditOperationType = "add_item"
+	SubscriptionEditOperationTypeRemoveItem     SubscriptionEditOperationType = "remove_item"
+	SubscriptionEditOperationTypeAddPhase       SubscriptionEditOperationType = "add_phase"
+	SubscriptionEditOperationTypeRemovePhase    SubscriptionEditOperationType = "remove_phase"
+	SubscriptionEditOperationTypeStretchPhase   SubscriptionEditOperationType = "stretch_phase"
+	SubscriptionEditOperationTypeUnscheduleEdit SubscriptionEditOperationType = "unschedule_edit"
+)
+
+func (value SubscriptionEditOperationType) Valid() bool {
+	switch value {
+	case SubscriptionEditOperationTypeAddItem, SubscriptionEditOperationTypeRemoveItem, SubscriptionEditOperationTypeAddPhase, SubscriptionEditOperationTypeRemovePhase, SubscriptionEditOperationTypeStretchPhase, SubscriptionEditOperationTypeUnscheduleEdit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Remove a rate card from a phase.
+type SubscriptionEditRemoveItem struct {
+	// Discriminator for the remove-item operation.
+	Type SubscriptionEditOperationType `json:"type"`
+	// The key of the phase to remove the item from.
+	PhaseKey string `json:"phase_key"`
+	// The key of the item to remove.
+	ItemKey string `json:"item_key"`
+}
+
+// Remove a phase from the subscription.
+type SubscriptionEditRemovePhase struct {
+	// Discriminator for the remove-phase operation.
+	Type SubscriptionEditOperationType `json:"type"`
+	// The key of the phase to remove.
+	PhaseKey string `json:"phase_key"`
+	// The direction to shift surrounding phases to fill the removed phase's span.
+	Shift SubscriptionRemovePhaseShifting `json:"shift"`
+}
+
+// Extend the duration of a phase, shifting later phases by the same amount.
+type SubscriptionEditStretchPhase struct {
+	// Discriminator for the stretch-phase operation.
+	Type SubscriptionEditOperationType `json:"type"`
+	// The key of the phase to stretch.
+	PhaseKey string `json:"phase_key"`
+	// The ISO-8601 duration to extend the phase by.
+	ExtendBy string `json:"extend_by"`
 }
 
 // Subscription edit timing defined when the changes should take effect. If the
@@ -338,25 +753,79 @@ func (value SubscriptionEditTimingEnum) Valid() bool {
 	}
 }
 
+// Discard any scheduled edits on the current phase, reverting it to its previously
+// persisted state.
+type SubscriptionEditUnscheduleEdit struct {
+	// Discriminator for the unschedule-edit operation.
+	Type SubscriptionEditOperationType `json:"type"`
+}
+
+// Request for migrating to a later version of the subscription's current plan.
+type SubscriptionMigrate struct {
+	// When the migration takes effect: immediately (default), at the next billing
+	// cycle, or at an explicit billing-aligned timestamp. In-place migrations may
+	// target a later phase when the phase timelines match. The target plan reference
+	// is saved now; changed items take effect at the requested time.
+	Timing *SubscriptionEditTiming `json:"timing,omitempty"`
+	// A strictly later version of the current plan. Omit to use its latest version.
+	TargetVersion *int64 `json:"target_version,omitempty"`
+	// Explicitly replace the subscription, starting in this target plan phase. Always
+	// selects replacement, even when the phase matches the current one. Replacement
+	// may produce billing adjustments and does not transfer addons.
+	StartingPhase *string `json:"starting_phase,omitempty"`
+	// Providing a different billing anchor explicitly replaces the subscription. The
+	// supplied anchor is preserved and may be before or after the replacement's start
+	// time. Omit to retain the existing anchor.
+	BillingAnchor *time.Time `json:"billing_anchor,omitempty"`
+}
+
+// Response for migrating a subscription.
+type SubscriptionMigrateResponse struct {
+	// The original subscription's own fields returned by the migration. For an
+	// in-place migration this is the before snapshot; for replacement it includes the
+	// cancellation. Does not include phases or the current billing period.
+	Current SubscriptionBase `json:"current"`
+	// The resulting subscription, including its phases and items.
+	Next BillingSubscription `json:"next"`
+}
+
 // Page paginated response.
 type SubscriptionPagePaginatedResponse struct {
 	Data []BillingSubscription `json:"data"`
 	Meta PaginatedMeta         `json:"meta"`
 }
 
-// Subscription status.
-type SubscriptionStatus string
+// The definition of a new subscription phase to add via an edit.
+type SubscriptionPhaseCreate struct {
+	// A locally unique identifier for the phase.
+	Key string `json:"key"`
+	// The name of the phase.
+	Name string `json:"name"`
+	// An optional description of the phase.
+	Description *string `json:"description,omitempty"`
+	// The ISO-8601 interval after the subscription start at which the phase begins.
+	// When null, the phase starts immediately after the subscription starts.
+	StartAfter Nullable[string] `json:"start_after"`
+	// The intended ISO-8601 duration of the phase. Required unless the phase will be
+	// the last phase of the subscription.
+	Duration *string `json:"duration,omitempty"`
+}
+
+// The direction to shift surrounding phases when a phase is removed.
+//
+// - `next`: Shift all subsequent phases to start sooner by the removed phase's
+// length.
+// - `prev`: Extend the previous phase to end later by the removed phase's length.
+type SubscriptionRemovePhaseShifting string
 
 const (
-	SubscriptionStatusActive    SubscriptionStatus = "active"
-	SubscriptionStatusInactive  SubscriptionStatus = "inactive"
-	SubscriptionStatusCanceled  SubscriptionStatus = "canceled"
-	SubscriptionStatusScheduled SubscriptionStatus = "scheduled"
+	SubscriptionRemovePhaseShiftingNext SubscriptionRemovePhaseShifting = "next"
+	SubscriptionRemovePhaseShiftingPrev SubscriptionRemovePhaseShifting = "prev"
 )
 
-func (value SubscriptionStatus) Valid() bool {
+func (value SubscriptionRemovePhaseShifting) Valid() bool {
 	switch value {
-	case SubscriptionStatusActive, SubscriptionStatusInactive, SubscriptionStatusCanceled, SubscriptionStatusScheduled:
+	case SubscriptionRemovePhaseShiftingNext, SubscriptionRemovePhaseShiftingPrev:
 		return true
 	default:
 		return false

@@ -27,6 +27,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/ent/db/subscriptionitem"
 	"github.com/openmeterio/openmeter/openmeter/ent/db/subscriptionphase"
 	dbtaxcode "github.com/openmeterio/openmeter/openmeter/ent/db/taxcode"
+	"github.com/openmeterio/openmeter/openmeter/ledger"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -61,6 +62,8 @@ type ChargeCreditPurchase struct {
 	CustomCurrencyID *string `json:"custom_currency_id,omitempty"`
 	// ManagedBy holds the value of the "managed_by" field.
 	ManagedBy billing.InvoiceLineManagedBy `json:"managed_by,omitempty"`
+	// SubscriptionPlan holds the value of the "subscription_plan" field.
+	SubscriptionPlan *meta.SubscriptionPlan `json:"subscription_plan,omitempty"`
 	// SubscriptionID holds the value of the "subscription_id" field.
 	SubscriptionID *string `json:"subscription_id,omitempty"`
 	// SubscriptionPhaseID holds the value of the "subscription_phase_id" field.
@@ -89,6 +92,8 @@ type ChargeCreditPurchase struct {
 	Name string `json:"name,omitempty"`
 	// Description holds the value of the "description" field.
 	Description *string `json:"description,omitempty"`
+	// ValidationIssues holds the value of the "validation_issues" field.
+	ValidationIssues billing.ValidationIssues `json:"validation_issues,omitempty"`
 	// SchemaLevel holds the value of the "schema_level" field.
 	SchemaLevel int `json:"schema_level,omitempty"`
 	// FiatCostBasis holds the value of the "fiat_cost_basis" field.
@@ -105,6 +110,8 @@ type ChargeCreditPurchase struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	// Priority holds the value of the "priority" field.
 	Priority *int `json:"priority,omitempty"`
+	// Filters holds the value of the "filters" field.
+	Filters *ledger.CreditFilters `json:"filters,omitempty"`
 	// FeatureFilters holds the value of the "feature_filters" field.
 	FeatureFilters pq.StringArray `json:"feature_filters,omitempty"`
 	// Settlement holds the value of the "settlement" field.
@@ -282,7 +289,7 @@ func (*ChargeCreditPurchase) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case chargecreditpurchase.FieldFiatCostBasis:
 			values[i] = &sql.NullScanner{S: new(alpacadecimal.Decimal)}
-		case chargecreditpurchase.FieldAnnotations, chargecreditpurchase.FieldMetadata:
+		case chargecreditpurchase.FieldAnnotations, chargecreditpurchase.FieldMetadata, chargecreditpurchase.FieldValidationIssues:
 			values[i] = new([]byte)
 		case chargecreditpurchase.FieldCreditAmount:
 			values[i] = new(alpacadecimal.Decimal)
@@ -294,6 +301,10 @@ func (*ChargeCreditPurchase) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullString)
 		case chargecreditpurchase.FieldServicePeriodFrom, chargecreditpurchase.FieldServicePeriodTo, chargecreditpurchase.FieldBillingPeriodFrom, chargecreditpurchase.FieldBillingPeriodTo, chargecreditpurchase.FieldFullServicePeriodFrom, chargecreditpurchase.FieldFullServicePeriodTo, chargecreditpurchase.FieldAdvanceAfter, chargecreditpurchase.FieldCreatedAt, chargecreditpurchase.FieldUpdatedAt, chargecreditpurchase.FieldDeletedAt, chargecreditpurchase.FieldEffectiveAt, chargecreditpurchase.FieldExpiresAt, chargecreditpurchase.FieldVoidedAt:
 			values[i] = new(sql.NullTime)
+		case chargecreditpurchase.FieldSubscriptionPlan:
+			values[i] = chargecreditpurchase.ValueScanner.SubscriptionPlan.ScanValue()
+		case chargecreditpurchase.FieldFilters:
+			values[i] = chargecreditpurchase.ValueScanner.Filters.ScanValue()
 		default:
 			values[i] = new(sql.UnknownType)
 		}
@@ -390,6 +401,12 @@ func (_m *ChargeCreditPurchase) assignValues(columns []string, values []any) err
 			} else if value.Valid {
 				_m.ManagedBy = billing.InvoiceLineManagedBy(value.String)
 			}
+		case chargecreditpurchase.FieldSubscriptionPlan:
+			if value, err := chargecreditpurchase.ValueScanner.SubscriptionPlan.FromValue(values[i]); err != nil {
+				return err
+			} else {
+				_m.SubscriptionPlan = value
+			}
 		case chargecreditpurchase.FieldSubscriptionID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field subscription_id", values[i])
@@ -485,6 +502,14 @@ func (_m *ChargeCreditPurchase) assignValues(columns []string, values []any) err
 				_m.Description = new(string)
 				*_m.Description = value.String
 			}
+		case chargecreditpurchase.FieldValidationIssues:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field validation_issues", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.ValidationIssues); err != nil {
+					return fmt.Errorf("unmarshal field validation_issues: %w", err)
+				}
+			}
 		case chargecreditpurchase.FieldSchemaLevel:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
 				return fmt.Errorf("unexpected type %T for field schema_level", values[i])
@@ -538,6 +563,12 @@ func (_m *ChargeCreditPurchase) assignValues(columns []string, values []any) err
 			} else if value.Valid {
 				_m.Priority = new(int)
 				*_m.Priority = int(value.Int64)
+			}
+		case chargecreditpurchase.FieldFilters:
+			if value, err := chargecreditpurchase.ValueScanner.Filters.FromValue(values[i]); err != nil {
+				return err
+			} else {
+				_m.Filters = value
 			}
 		case chargecreditpurchase.FieldFeatureFilters:
 			if value, ok := values[i].(*pq.StringArray); !ok {
@@ -712,6 +743,11 @@ func (_m *ChargeCreditPurchase) String() string {
 	builder.WriteString("managed_by=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ManagedBy))
 	builder.WriteString(", ")
+	if v := _m.SubscriptionPlan; v != nil {
+		builder.WriteString("subscription_plan=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
 	if v := _m.SubscriptionID; v != nil {
 		builder.WriteString("subscription_id=")
 		builder.WriteString(*v)
@@ -768,6 +804,9 @@ func (_m *ChargeCreditPurchase) String() string {
 		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
+	builder.WriteString("validation_issues=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ValidationIssues))
+	builder.WriteString(", ")
 	builder.WriteString("schema_level=")
 	builder.WriteString(fmt.Sprintf("%v", _m.SchemaLevel))
 	builder.WriteString(", ")
@@ -803,6 +842,9 @@ func (_m *ChargeCreditPurchase) String() string {
 		builder.WriteString("priority=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("filters=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Filters))
 	builder.WriteString(", ")
 	builder.WriteString("feature_filters=")
 	builder.WriteString(fmt.Sprintf("%v", _m.FeatureFilters))

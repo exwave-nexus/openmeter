@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/samber/lo"
@@ -11,7 +12,6 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/framework/transaction"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -20,6 +20,11 @@ import (
 )
 
 func (s *service) Create(ctx context.Context, input usagebased.CreateInput) ([]usagebased.ChargeWithGatheringLine, error) {
+	input.Intents = slices.Clone(input.Intents)
+	for idx := range input.Intents {
+		input.Intents[idx].Discounts = input.Intents[idx].Discounts.UpsertCorrelationIDs()
+	}
+
 	if err := input.Validate(); err != nil {
 		return nil, err
 	}
@@ -28,10 +33,15 @@ func (s *service) Create(ctx context.Context, input usagebased.CreateInput) ([]u
 		return nil, nil
 	}
 
+	featureMeters, err := s.featureMeterResolver.Resolve(ctx, input.Namespace, input.Intents.AsIntents()...)
+	if err != nil {
+		return nil, err
+	}
+
 	return transaction.Run(ctx, s.adapter, func(ctx context.Context) ([]usagebased.ChargeWithGatheringLine, error) {
 		now := clock.Now().UTC()
-		createIntents, err := slicesx.MapWithErr(input.Intents, func(intent usagebased.Intent) (usagebased.CreateIntent, error) {
-			chargeIntent := intent.Normalized()
+		createIntents, err := slicesx.MapWithErr(input.Intents, func(createIntent usagebased.CreateIntent) (usagebased.CreateIntentAdapterInput, error) {
+			chargeIntent := createIntent.Intent.Normalized()
 			chargeIntent.Discounts = chargeIntent.Discounts.UpsertCorrelationIDs()
 
 			var resolvedCostBasis *costbasis.State
@@ -44,36 +54,58 @@ func (s *service) Create(ctx context.Context, input usagebased.CreateInput) ([]u
 					ResolvedAt: now,
 				})
 				if err != nil {
-					return usagebased.CreateIntent{}, fmt.Errorf("resolving cost basis: %w", err)
+					return usagebased.CreateIntentAdapterInput{}, fmt.Errorf("resolving cost basis: %w", err)
 				}
 			}
 
-			featureMeter, err := input.FeatureMeters.Resolve(feature.FeatureMeterRef{
-				IDOrKey:      chargeIntent.GetFeatureRef(),
-				RequireMeter: true,
-			})
+			featureMeter, err := featureMeters.Get(chargeIntent)
+			var validationIssues billing.ValidationIssues
 			if err != nil {
-				return usagebased.CreateIntent{}, fmt.Errorf("resolve usage based feature for key %+v: %w", chargeIntent.GetFeatureRef(), err)
+				if !billing.IsValidationIssueOnly(err) {
+					return usagebased.CreateIntentAdapterInput{}, fmt.Errorf("resolve usage based feature %+v: %w", chargeIntent.GetFeatureRef(), err)
+				}
+
+				if !createIntent.Options.BypassFeatureMeterValidation {
+					return usagebased.CreateIntentAdapterInput{}, fmt.Errorf("resolve usage based feature %+v: %w", chargeIntent.GetFeatureRef(), err)
+				}
+
+				validationIssues, _ = billing.ToValidationIssues(
+					billing.ValidationWithComponent(billing.ValidationComponentProductCatalog, err),
+				)
 			}
 
-			// note: we must set the feature key on the intent, because no other place is setting it
-			// and we want to persist it
-			chargeIntent.FeatureKey = featureMeter.Feature.Key
+			if featureMeter.Feature.ID != "" && chargeIntent.FeatureID != "" && chargeIntent.FeatureKey != "" && chargeIntent.FeatureKey != featureMeter.Feature.Key {
+				return usagebased.CreateIntentAdapterInput{}, models.NewGenericValidationError(fmt.Errorf(
+					"feature key %q does not match key %q resolved from feature id %q",
+					chargeIntent.FeatureKey,
+					featureMeter.Feature.Key,
+					chargeIntent.FeatureID,
+				))
+			}
 
-			return usagebased.CreateIntent{
+			featureID := chargeIntent.FeatureID
+			if featureMeter.Feature.ID != "" {
+				chargeIntent.FeatureKey = featureMeter.Feature.Key
+			}
+
+			if chargeIntent.FeatureID != "" && featureMeter.Feature.ID != "" {
+				featureID = featureMeter.Feature.ID
+			}
+
+			return usagebased.CreateIntentAdapterInput{
 				Intent:            chargeIntent.AsOverridableIntent(),
 				Annotations:       chargeIntent.Annotations,
-				FeatureID:         featureMeter.Feature.ID,
+				FeatureID:         featureID,
 				RatingEngine:      s.rater.GetPreferredRatingEngineFor(chargeIntent),
 				ResolvedCostBasis: resolvedCostBasis,
+				ValidationIssues:  validationIssues,
 			}, nil
 		})
 		if err != nil {
 			return nil, err
 		}
 
-		// Let's create all the flat fee charges in bulk
-		charges, err := s.adapter.CreateCharges(ctx, usagebased.CreateChargesInput{
+		charges, err := s.adapter.CreateCharges(ctx, usagebased.CreateChargesAdapterInput{
 			Namespace: input.Namespace,
 			Intents:   createIntents,
 		})
@@ -120,6 +152,7 @@ func gatheringLineFromUsageBasedChargeForPeriod(charge usagebased.Charge, servic
 		if clonedAnnotations == nil {
 			clonedAnnotations = models.Annotations{}
 		}
+
 		clonedAnnotations[billing.AnnotationKeyReason] = lo.ToPtr(billing.AnnotationValueReasonOveragePlaceholder)
 	}
 

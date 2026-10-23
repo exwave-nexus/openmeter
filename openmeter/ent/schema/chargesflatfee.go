@@ -29,6 +29,7 @@ type ChargeFlatFee struct {
 func (ChargeFlatFee) Mixin() []ent.Mixin {
 	return []ent.Mixin{
 		ChargesMetaMixin{},
+		ChargeValidationIssuesMixin{},
 	}
 }
 
@@ -131,7 +132,6 @@ func (ChargeFlatFee) Edges() []ent.Edge {
 		edge.From("subscription_phase", SubscriptionPhase.Type).
 			Ref("charges_flat_fee").
 			Field("subscription_phase_id").
-			Immutable().
 			Unique(),
 		edge.From("subscription_item", SubscriptionItem.Type).
 			Ref("charges_flat_fee").
@@ -370,6 +370,9 @@ func (ChargeFlatFeeRun) Fields() []ent.Field {
 			}),
 
 		field.Bool("no_fiat_transaction_required"),
+
+		field.Bool("fiat_overage_credit_allocation_completed").
+			Default(false),
 
 		field.Bool("immutable"),
 	}

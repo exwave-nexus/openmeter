@@ -832,6 +832,16 @@ func ManagedByNotIn(vs ...billing.InvoiceLineManagedBy) predicate.ChargeFlatFee 
 	return predicate.ChargeFlatFee(sql.FieldNotIn(FieldManagedBy, v...))
 }
 
+// SubscriptionPlanIsNil applies the IsNil predicate on the "subscription_plan" field.
+func SubscriptionPlanIsNil() predicate.ChargeFlatFee {
+	return predicate.ChargeFlatFee(sql.FieldIsNull(FieldSubscriptionPlan))
+}
+
+// SubscriptionPlanNotNil applies the NotNil predicate on the "subscription_plan" field.
+func SubscriptionPlanNotNil() predicate.ChargeFlatFee {
+	return predicate.ChargeFlatFee(sql.FieldNotNull(FieldSubscriptionPlan))
+}
+
 // SubscriptionIDEQ applies the EQ predicate on the "subscription_id" field.
 func SubscriptionIDEQ(v string) predicate.ChargeFlatFee {
 	return predicate.ChargeFlatFee(sql.FieldEQ(FieldSubscriptionID, v))
@@ -1565,6 +1575,16 @@ func DescriptionEqualFold(v string) predicate.ChargeFlatFee {
 // DescriptionContainsFold applies the ContainsFold predicate on the "description" field.
 func DescriptionContainsFold(v string) predicate.ChargeFlatFee {
 	return predicate.ChargeFlatFee(sql.FieldContainsFold(FieldDescription, v))
+}
+
+// ValidationIssuesIsNil applies the IsNil predicate on the "validation_issues" field.
+func ValidationIssuesIsNil() predicate.ChargeFlatFee {
+	return predicate.ChargeFlatFee(sql.FieldIsNull(FieldValidationIssues))
+}
+
+// ValidationIssuesNotNil applies the NotNil predicate on the "validation_issues" field.
+func ValidationIssuesNotNil() predicate.ChargeFlatFee {
+	return predicate.ChargeFlatFee(sql.FieldNotNull(FieldValidationIssues))
 }
 
 // PaymentTermEQ applies the EQ predicate on the "payment_term" field.

@@ -23,14 +23,24 @@ import type {
   CancelSubscriptionResponse,
   UnscheduleCancelationRequest,
   UnscheduleCancelationResponse,
+  UnscheduleSubscriptionRequest,
+  UnscheduleSubscriptionResponse,
+  RestoreSubscriptionRequest,
+  RestoreSubscriptionResponse,
   ChangeSubscriptionRequest,
   ChangeSubscriptionResponse,
+  MigrateSubscriptionRequest,
+  MigrateSubscriptionResponse,
+  EditSubscriptionRequest,
+  EditSubscriptionResponse,
   CreateSubscriptionAddonRequest,
   CreateSubscriptionAddonResponse,
   ListSubscriptionAddonsRequest,
   ListSubscriptionAddonsResponse,
   GetSubscriptionAddonRequest,
   GetSubscriptionAddonResponse,
+  UpdateSubscriptionAddonRequest,
+  UpdateSubscriptionAddonResponse,
 } from '../models/operations/subscriptions.js'
 
 /**
@@ -222,6 +232,85 @@ export function unscheduleCancelation(
 }
 
 /**
+ * Unschedule subscription
+ *
+ * Deletes a scheduled subscription that has not yet become active, removing it and
+ * resolving any scheduling conflict it was holding. This is distinct from
+ * canceling: cancel ends a running subscription, whereas unscheduling removes a
+ * not-yet-active one. Only scheduled subscriptions can be unscheduled;
+ * unscheduling an active or already-started subscription is rejected.
+ *
+ * POST /openmeter/subscriptions/{subscriptionId}/unschedule
+ */
+export function unscheduleSubscription(
+  client: Client,
+  req: UnscheduleSubscriptionRequest,
+  options?: RequestOptions,
+): Promise<Result<UnscheduleSubscriptionResponse>> {
+  return request(async () => {
+    const pathParamsInput = {
+      subscriptionId: req.subscriptionId,
+    }
+    const pathParams = client._options.validate
+      ? toPathWire(pathParamsInput, schemas.unscheduleSubscriptionPathParams)
+      : pathParamsInput
+    if (client._options.validate) {
+      assertValid(schemas.unscheduleSubscriptionPathParamsWire, pathParams)
+    }
+    const path = `openmeter/subscriptions/${(() => {
+      if (pathParams.subscriptionId === undefined) {
+        throw new Error('missing path parameter: subscriptionId')
+      }
+      return encodeURIComponent(String(pathParams.subscriptionId))
+    })()}/unschedule`
+    await http(client).post(path, options)
+  })
+}
+
+/**
+ * Restore subscription
+ *
+ * Restores the subscription by deleting any later-scheduled successor
+ * subscriptions and continuing this one indefinitely. This is the inverse of a
+ * future-dated change, which schedules a successor. Restore is not available when
+ * multi-subscription is enabled.
+ *
+ * POST /openmeter/subscriptions/{subscriptionId}/restore
+ */
+export function restoreSubscription(
+  client: Client,
+  req: RestoreSubscriptionRequest,
+  options?: RequestOptions,
+): Promise<Result<RestoreSubscriptionResponse>> {
+  return request(() => {
+    const pathParamsInput = {
+      subscriptionId: req.subscriptionId,
+    }
+    const pathParams = client._options.validate
+      ? toPathWire(pathParamsInput, schemas.restoreSubscriptionPathParams)
+      : pathParamsInput
+    if (client._options.validate) {
+      assertValid(schemas.restoreSubscriptionPathParamsWire, pathParams)
+    }
+    const path = `openmeter/subscriptions/${(() => {
+      if (pathParams.subscriptionId === undefined) {
+        throw new Error('missing path parameter: subscriptionId')
+      }
+      return encodeURIComponent(String(pathParams.subscriptionId))
+    })()}/restore`
+    return http(client)
+      .post(path, options)
+      .json()
+      .then((data) => {
+        if (client._options.validate) {
+          assertValid(schemas.restoreSubscriptionResponseWire, data)
+        }
+        return fromWire(data, schemas.restoreSubscriptionResponse)
+      })
+  })
+}
+
+/**
  * Change subscription
  *
  * Closes a running subscription and starts a new one according to the
@@ -262,6 +351,104 @@ export function changeSubscription(
           assertValid(schemas.changeSubscriptionResponseWire, data)
         }
         return fromWire(data, schemas.changeSubscriptionResponse)
+      })
+  })
+}
+
+/**
+ * Migrate subscription
+ *
+ * Migrates to a later version of the current plan. With starting_phase omitted and
+ * billing_anchor omitted or unchanged, migration amends the subscription in place:
+ * unchanged items retain their service periods and both response entries have the
+ * same ID. Existing addons must remain compatible with the target plan.
+ * Incompatible phase timelines or billing settings return an error. Providing
+ * starting_phase or a different billing_anchor explicitly requests replacement,
+ * which resets the phase timeline, may produce billing adjustments, and does not
+ * transfer addons. Custom subscriptions cannot be migrated.
+ *
+ * POST /openmeter/subscriptions/{subscriptionId}/migrate
+ */
+export function migrateSubscription(
+  client: Client,
+  req: MigrateSubscriptionRequest,
+  options?: RequestOptions,
+): Promise<Result<MigrateSubscriptionResponse>> {
+  return request(() => {
+    const pathParamsInput = {
+      subscriptionId: req.subscriptionId,
+    }
+    const pathParams = client._options.validate
+      ? toPathWire(pathParamsInput, schemas.migrateSubscriptionPathParams)
+      : pathParamsInput
+    if (client._options.validate) {
+      assertValid(schemas.migrateSubscriptionPathParamsWire, pathParams)
+    }
+    const path = `openmeter/subscriptions/${(() => {
+      if (pathParams.subscriptionId === undefined) {
+        throw new Error('missing path parameter: subscriptionId')
+      }
+      return encodeURIComponent(String(pathParams.subscriptionId))
+    })()}/migrate`
+    const body = toWire(req.body, schemas.migrateSubscriptionBody)
+    if (client._options.validate) {
+      assertValid(schemas.migrateSubscriptionBodyWire, body)
+    }
+    return http(client)
+      .post(path, { ...options, json: body })
+      .json()
+      .then((data) => {
+        if (client._options.validate) {
+          assertValid(schemas.migrateSubscriptionResponseWire, data)
+        }
+        return fromWire(data, schemas.migrateSubscriptionResponse)
+      })
+  })
+}
+
+/**
+ * Edit subscription
+ *
+ * Edits a running subscription by applying an ordered batch of customizations
+ * (adding or removing items, adding, removing, or stretching phases, or
+ * unscheduling a pending edit). The changes may take effect immediately or at the
+ * next billing cycle. Subscriptions that have add-ons cannot be edited.
+ *
+ * POST /openmeter/subscriptions/{subscriptionId}/edit
+ */
+export function editSubscription(
+  client: Client,
+  req: EditSubscriptionRequest,
+  options?: RequestOptions,
+): Promise<Result<EditSubscriptionResponse>> {
+  return request(() => {
+    const pathParamsInput = {
+      subscriptionId: req.subscriptionId,
+    }
+    const pathParams = client._options.validate
+      ? toPathWire(pathParamsInput, schemas.editSubscriptionPathParams)
+      : pathParamsInput
+    if (client._options.validate) {
+      assertValid(schemas.editSubscriptionPathParamsWire, pathParams)
+    }
+    const path = `openmeter/subscriptions/${(() => {
+      if (pathParams.subscriptionId === undefined) {
+        throw new Error('missing path parameter: subscriptionId')
+      }
+      return encodeURIComponent(String(pathParams.subscriptionId))
+    })()}/edit`
+    const body = toWire(req.body, schemas.editSubscriptionBody)
+    if (client._options.validate) {
+      assertValid(schemas.editSubscriptionBodyWire, body)
+    }
+    return http(client)
+      .post(path, { ...options, json: body })
+      .json()
+      .then((data) => {
+        if (client._options.validate) {
+          assertValid(schemas.editSubscriptionResponseWire, data)
+        }
+        return fromWire(data, schemas.editSubscriptionResponse)
       })
   })
 }
@@ -409,6 +596,58 @@ export function getSubscriptionAddon(
           assertValid(schemas.getSubscriptionAddonResponseWire, data)
         }
         return fromWire(data, schemas.getSubscriptionAddonResponse)
+      })
+  })
+}
+
+/**
+ * Update subscription addon
+ *
+ * Update a subscription add-on. Only the quantity is mutable; the timing controls
+ * when the new quantity takes effect. A new entry is appended to the add-on's
+ * timeline.
+ *
+ * PATCH /openmeter/subscriptions/{subscriptionId}/addons/{subscriptionAddonId}
+ */
+export function updateSubscriptionAddon(
+  client: Client,
+  req: UpdateSubscriptionAddonRequest,
+  options?: RequestOptions,
+): Promise<Result<UpdateSubscriptionAddonResponse>> {
+  return request(() => {
+    const pathParamsInput = {
+      subscriptionId: req.subscriptionId,
+      subscriptionAddonId: req.subscriptionAddonId,
+    }
+    const pathParams = client._options.validate
+      ? toPathWire(pathParamsInput, schemas.updateSubscriptionAddonPathParams)
+      : pathParamsInput
+    if (client._options.validate) {
+      assertValid(schemas.updateSubscriptionAddonPathParamsWire, pathParams)
+    }
+    const path = `openmeter/subscriptions/${(() => {
+      if (pathParams.subscriptionId === undefined) {
+        throw new Error('missing path parameter: subscriptionId')
+      }
+      return encodeURIComponent(String(pathParams.subscriptionId))
+    })()}/addons/${(() => {
+      if (pathParams.subscriptionAddonId === undefined) {
+        throw new Error('missing path parameter: subscriptionAddonId')
+      }
+      return encodeURIComponent(String(pathParams.subscriptionAddonId))
+    })()}`
+    const body = toWire(req.body, schemas.updateSubscriptionAddonBody)
+    if (client._options.validate) {
+      assertValid(schemas.updateSubscriptionAddonBodyWire, body)
+    }
+    return http(client)
+      .patch(path, { ...options, json: body })
+      .json()
+      .then((data) => {
+        if (client._options.validate) {
+          assertValid(schemas.updateSubscriptionAddonResponseWire, data)
+        }
+        return fromWire(data, schemas.updateSubscriptionAddonResponse)
       })
   })
 }

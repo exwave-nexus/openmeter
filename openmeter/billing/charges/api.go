@@ -8,19 +8,64 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/flatfee"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/payment"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	"github.com/openmeterio/openmeter/openmeter/subscription"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/models"
+	"github.com/openmeterio/openmeter/pkg/pagination"
 )
 
 // CustomerChargeAPIService is the API-facing facade for customer-scoped charge operations.
 type CustomerChargeAPIService interface {
-	CreateCustomerCharge(ctx context.Context, input CreateCustomerChargeInput) (Charge, error)
+	CreateCustomerCharge(ctx context.Context, input CreateCustomerChargeInput) (CustomerCharge, error)
 	DeleteCustomerCharge(ctx context.Context, input DeleteCustomerChargeInput) error
 	SetCustomerChargeOverride(ctx context.Context, input SetCustomerChargeOverrideInput) (Charge, error)
 	ClearCustomerChargeOverride(ctx context.Context, input ClearCustomerChargeOverrideInput) (Charge, error)
+	ListCustomerCharges(ctx context.Context, input ListCustomerChargesInput) (ListCustomerChargesResult, error)
+}
+
+// SubscriptionService is the narrow subscription dependency of the
+// customer-charge API facade; subscription.Service satisfies it.
+type SubscriptionService interface {
+	List(ctx context.Context, input subscription.ListSubscriptionsInput) (subscription.SubscriptionList, error)
+}
+
+type ListCustomerChargesInput struct {
+	ListChargesInput
+}
+
+func (i ListCustomerChargesInput) Validate() error {
+	var errs []error
+
+	if err := i.ListChargesInput.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+
+	// The customer-charge API only serves flat fee and usage based charges;
+	// credit purchases belong to the credit grants API. Rejecting other types
+	// here avoids failing a whole page at conversion time.
+	if len(i.ChargeTypes) == 0 {
+		errs = append(errs, errors.New("at least one charge type is required"))
+	}
+
+	for _, chargeType := range i.ChargeTypes {
+		if chargeType != meta.ChargeTypeFlatFee && chargeType != meta.ChargeTypeUsageBased {
+			errs = append(errs, fmt.Errorf("unsupported charge type for customer charge listing: %s", chargeType))
+		}
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
+// ListCustomerChargesResult is the paginated charges together with the
+// expands the facade applied; expanded entities are carried by each
+// CustomerCharge.
+type ListCustomerChargesResult struct {
+	Charges pagination.Result[CustomerCharge]
+	Expands meta.Expands
 }
 
 type CreditPurchaseFacadeService interface {
@@ -31,6 +76,7 @@ type CreateCustomerChargeInput struct {
 	Namespace         string
 	CustomerID        string
 	CurrencyCode      currencyx.Code
+	CostBasis         *costbasis.Intent
 	TaxConfig         productcatalog.TaxCodeConfig
 	UniqueReferenceID *string
 
@@ -65,11 +111,33 @@ func (i CreateCustomerChargeInput) Validate() error {
 		errs = append(errs, fmt.Errorf("currency code: %w", err))
 	}
 
+	if i.CostBasis != nil {
+		if err := i.CostBasis.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("cost basis: %w", err))
+		}
+
+		if fiatCurrency, err := i.CostBasis.GetFiatCurrency(); err != nil || fiatCurrency == nil {
+			errs = append(errs, errors.New("cost basis: fiat currency is required"))
+		}
+	}
+
 	if (i.FlatFee == nil) == (i.UsageBased == nil) {
 		errs = append(errs, errors.New("exactly one charge type is required"))
 	}
 
 	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
+func (i CreateCustomerChargeInput) GetSettlementMode() productcatalog.SettlementMode {
+	if i.FlatFee != nil {
+		return i.FlatFee.SettlementMode
+	}
+
+	if i.UsageBased != nil {
+		return i.UsageBased.SettlementMode
+	}
+
+	return ""
 }
 
 type DeleteCustomerChargeInput struct {

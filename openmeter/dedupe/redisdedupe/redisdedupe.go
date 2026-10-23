@@ -26,6 +26,7 @@ func (m DedupeMode) Validate() error {
 	case DedupeModeRawKey, DedupeModeKeyHash, DedupeModeKeyHashMigration:
 		return nil
 	}
+
 	return fmt.Errorf("invalid dedupe mode: %s", m)
 }
 
@@ -95,6 +96,7 @@ func (d Deduplicator) setKey(ctx context.Context, key string) (bool, error) {
 	if status == "" {
 		return false, nil
 	}
+
 	// Key did not exist before, so it's unique
 	if status == "OK" {
 		return true, nil
@@ -145,6 +147,7 @@ func (d Deduplicator) Set(ctx context.Context, items ...dedupe.Item) ([]dedupe.I
 				return err
 			}
 		}
+
 		return nil
 	})
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -183,13 +186,20 @@ func (d Deduplicator) CheckUniqueBatch(ctx context.Context, items []dedupe.Item)
 		return dedupe.CheckUniqueBatchResult{}, ErrNoDedupItems
 	}
 
-	keys := make([]string, 0, len(items))
+	keysPerItem := 1
+	if d.Mode == DedupeModeKeyHashMigration {
+		keysPerItem = 2
+	}
+
+	keys := make([]string, 0, len(items)*keysPerItem)
 	for _, item := range items {
 		switch d.Mode {
 		case DedupeModeRawKey:
 			keys = append(keys, item.Key())
-		case DedupeModeKeyHash, DedupeModeKeyHashMigration:
+		case DedupeModeKeyHash:
 			keys = append(keys, GetKeyHash(item.Key()))
+		case DedupeModeKeyHashMigration:
+			keys = append(keys, item.Key(), GetKeyHash(item.Key()))
 		}
 	}
 
@@ -198,7 +208,7 @@ func (d Deduplicator) CheckUniqueBatch(ctx context.Context, items []dedupe.Item)
 		return dedupe.CheckUniqueBatchResult{}, fmt.Errorf("failed to get multiple keys in redis: %w", err)
 	}
 
-	if len(cmdResults) != len(items) {
+	if len(cmdResults) != len(items)*keysPerItem {
 		return dedupe.CheckUniqueBatchResult{}, fmt.Errorf("failed to get all keys in redis")
 	}
 
@@ -207,13 +217,20 @@ func (d Deduplicator) CheckUniqueBatch(ctx context.Context, items []dedupe.Item)
 		AlreadyProcessedItems: make(dedupe.ItemSet, len(items)),
 	}
 
-	for i, cmdResult := range cmdResults {
-		if cmdResult != nil {
-			result.AlreadyProcessedItems[items[i]] = struct{}{}
-			continue
+	for i, item := range items {
+		unique := true
+		for _, value := range cmdResults[i*keysPerItem : (i+1)*keysPerItem] {
+			if value != nil {
+				unique = false
+				break
+			}
 		}
 
-		result.UniqueItems[items[i]] = struct{}{}
+		if unique {
+			result.UniqueItems[item] = struct{}{}
+		} else {
+			result.AlreadyProcessedItems[item] = struct{}{}
+		}
 	}
 
 	return result, nil

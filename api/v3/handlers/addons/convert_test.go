@@ -12,6 +12,7 @@ import (
 	apiv3 "github.com/openmeterio/openmeter/api/v3"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog/addon"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/datetime"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -174,17 +175,6 @@ func TestFromToAPIBillingRateCardEntitlement(t *testing.T) {
 		metered, err := domain.AsMetered()
 		require.NoError(t, err)
 		assert.Equal(t, "P3M", metered.UsagePeriod.ISOString().String())
-	})
-
-	t.Run("metered — missing usage period with no billing cadence is a validation error", func(t *testing.T) {
-		var apiEnt apiv3.BillingRateCardEntitlement
-		require.NoError(t, apiEnt.FromBillingRateCardMeteredEntitlement(apiv3.BillingRateCardMeteredEntitlement{
-			Type: "metered",
-		}))
-
-		domain, err := FromAPIBillingRateCardEntitlement(apiEnt, nil)
-		require.Error(t, err)
-		assert.Nil(t, domain)
 	})
 
 	t.Run("metered — malformed usage period is a validation error", func(t *testing.T) {
@@ -530,5 +520,164 @@ func TestUnitConfigMapping(t *testing.T) {
 		assert.Equal(t, productcatalog.UnitConfigRoundingModeCeiling, uc.Rounding)
 		assert.Equal(t, 0, uc.Precision)
 		assert.Equal(t, lo.ToPtr("GB"), uc.DisplayUnit)
+	})
+}
+
+func TestFromAPIBillingRateCardPriceTypeErrors(t *testing.T) {
+	t.Run("unknown price type is a validation error", func(t *testing.T) {
+		var price apiv3.BillingPrice
+		require.NoError(t, json.Unmarshal([]byte(`{"type":"bogus"}`), &price))
+
+		bc := apiv3.ISO8601Duration("P1M")
+		_, err := FromAPIBillingRateCard(apiv3.BillingRateCard{
+			Key:            "storage",
+			Name:           "Storage",
+			Price:          price,
+			BillingCadence: &bc,
+		})
+		require.Error(t, err)
+		assert.True(t, models.IsGenericValidationError(err))
+	})
+}
+
+func TestToAPIBillingRateCards_EmptyInput(t *testing.T) {
+	result, err := ToAPIBillingRateCards(nil)
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Empty(t, result)
+
+	// The v3 schema declares rateCards as a required, non-nullable array: an
+	// empty slice must marshal to [] and not null.
+	out, err := json.Marshal(result)
+	require.NoError(t, err)
+	assert.Equal(t, "[]", string(out))
+}
+
+func TestToAPIAddon_EmptyRateCards(t *testing.T) {
+	// A freshly created draft add-on has zero rate cards; the API must report
+	// rateCards as [] so typed clients relying on the required array type (e.g.
+	// rateCards.length) do not crash on null.
+	source := addon.Addon{
+		NamespacedID: models.NamespacedID{ID: "addon-1"},
+		AddonMeta: productcatalog.AddonMeta{
+			Key:          "extra-support",
+			Name:         "Extra Support",
+			Currency:     currencies.NewCurrencyReference(currencyx.Code("USD")),
+			InstanceType: productcatalog.AddonInstanceTypeSingle,
+		},
+		RateCards: addon.RateCards{},
+	}
+
+	result, err := ToAPIAddon(source)
+	require.NoError(t, err)
+
+	require.NotNil(t, result.RateCards)
+	assert.Empty(t, result.RateCards)
+
+	out, err := json.Marshal(result)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"rate_cards":[]`)
+}
+
+func TestFromAPITaxCodeConfig(t *testing.T) {
+	t.Run("nil when tax config is nil", func(t *testing.T) {
+		result, err := FromAPITaxCodeConfig(nil)
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("maps code ID", func(t *testing.T) {
+		tc := &apiv3.TaxCodeConfig{
+			Code: &apiv3.TaxCodeReference{Id: "01TAXCODE000"},
+		}
+
+		result, err := FromAPITaxCodeConfig(tc)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.TaxCodeID)
+		assert.Equal(t, "01TAXCODE000", *result.TaxCodeID)
+		assert.Nil(t, result.Behavior)
+	})
+
+	t.Run("maps behavior", func(t *testing.T) {
+		tc := &apiv3.TaxCodeConfig{
+			Code:     &apiv3.TaxCodeReference{Id: "01TAXCODE000"},
+			Behavior: lo.ToPtr(apiv3.BillingTaxBehavior("inclusive")),
+		}
+
+		result, err := FromAPITaxCodeConfig(tc)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.Behavior)
+		assert.Equal(t, productcatalog.InclusiveTaxBehavior, *result.Behavior)
+	})
+
+	t.Run("maps behavior-only config", func(t *testing.T) {
+		result, err := FromAPITaxCodeConfig(&apiv3.TaxCodeConfig{
+			Behavior: lo.ToPtr(apiv3.BillingTaxBehavior("inclusive")),
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Nil(t, result.TaxCodeID)
+		require.NotNil(t, result.Behavior)
+		assert.Equal(t, productcatalog.InclusiveTaxBehavior, *result.Behavior)
+	})
+
+	t.Run("rejects empty code ID", func(t *testing.T) {
+		result, err := FromAPITaxCodeConfig(&apiv3.TaxCodeConfig{
+			Code: &apiv3.TaxCodeReference{Id: ""},
+		})
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.True(t, models.IsGenericValidationError(err), "an explicit code reference without an id must surface as a validation error")
+	})
+
+	t.Run("rejects empty code ID even with behavior", func(t *testing.T) {
+		result, err := FromAPITaxCodeConfig(&apiv3.TaxCodeConfig{
+			Code:     &apiv3.TaxCodeReference{Id: ""},
+			Behavior: lo.ToPtr(apiv3.BillingTaxBehavior("inclusive")),
+		})
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.True(t, models.IsGenericValidationError(err), "an explicit code reference without an id must surface as a validation error")
+	})
+
+	t.Run("rejects empty tax config", func(t *testing.T) {
+		result, err := FromAPITaxCodeConfig(&apiv3.TaxCodeConfig{})
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.True(t, models.IsGenericValidationError(err), "tax config without code or behavior must surface as a validation error")
+	})
+}
+
+func TestToAPITaxCodeConfig(t *testing.T) {
+	t.Run("nil when tax config is nil", func(t *testing.T) {
+		assert.Nil(t, ToAPITaxCodeConfig(nil))
+	})
+
+	t.Run("nil when tax config has no shared fields", func(t *testing.T) {
+		assert.Nil(t, ToAPITaxCodeConfig(&productcatalog.TaxConfig{}))
+	})
+
+	t.Run("maps normalized tax code ID", func(t *testing.T) {
+		result := ToAPITaxCodeConfig(&productcatalog.TaxConfig{
+			TaxCodeID: lo.ToPtr("01TAXCODE000"),
+		})
+
+		require.NotNil(t, result)
+		require.NotNil(t, result.Code)
+		assert.Equal(t, "01TAXCODE000", result.Code.Id)
+		assert.Nil(t, result.Behavior)
+	})
+
+	t.Run("maps behavior-only config", func(t *testing.T) {
+		result := ToAPITaxCodeConfig(&productcatalog.TaxConfig{
+			Behavior: lo.ToPtr(productcatalog.ExclusiveTaxBehavior),
+		})
+
+		require.NotNil(t, result)
+		assert.Nil(t, result.Code)
+		require.NotNil(t, result.Behavior)
+		assert.Equal(t, apiv3.BillingTaxBehavior("exclusive"), *result.Behavior)
 	})
 }

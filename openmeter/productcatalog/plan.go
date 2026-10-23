@@ -38,6 +38,7 @@ func (s PlanStatus) Validate() error {
 	if !slices.Contains(s.Values(), s) {
 		return fmt.Errorf("invalid plan status: %s", s)
 	}
+
 	return nil
 }
 
@@ -78,6 +79,23 @@ func (p Plan) HasUnitConfig() bool {
 func (p Plan) HasCurrencyOverrides() bool {
 	return lo.SomeBy(p.Phases, func(ph Phase) bool {
 		return ph.RateCards.HasCurrencyOverride()
+	})
+}
+
+// UsesCustomCurrency reports whether the plan is priced in a custom (non-fiat)
+// currency, either at the plan level or through a rate card currency override.
+// Custom-currency support is gated behind the credits feature, so callers use this
+// to reject custom-currency plans when credits are not enabled.
+func (p Plan) UsesCustomCurrency() bool {
+	if p.Currency.IsCustom() {
+		return true
+	}
+
+	return lo.SomeBy(p.Phases, func(ph Phase) bool {
+		return lo.SomeBy(ph.RateCards, func(rc RateCard) bool {
+			c := rc.AsMeta().Currency
+			return c != nil && c.IsCustom()
+		})
 	})
 }
 
@@ -129,6 +147,7 @@ func ValidatePlanPhases() models.ValidatorFunc[Plan] {
 
 				errs = append(errs, models.ErrorWithFieldPrefix(selector, ErrPlanPhaseDuplicatedKey))
 			}
+
 			phaseKeys[phase.Key] = struct{}{}
 
 			if err := phase.Validate(); err != nil {
@@ -249,6 +268,7 @@ func ValidatePlanWithCurrencies() models.ValidatorFunc[Plan] {
 		if p.SettlementMode == CreditOnlySettlementMode {
 			validationOption = ValidationOptionCostBasisRequiredFalse
 		}
+
 		validateCurrencyOverride := ValidateCurrencyWithOverride(p.Currency, validationOption)
 		for _, phase := range p.Phases {
 			for _, rateCard := range phase.RateCards {
@@ -450,6 +470,28 @@ func (p PlanMeta) StatusAt(t time.Time) PlanStatus {
 	}
 
 	return PlanStatusInvalid
+}
+
+// ValidatePlanWithResolvedFeatures verifies that feature references in every
+// phase have their feature representations sideloaded.
+func ValidatePlanWithResolvedFeatures() models.ValidatorFunc[Plan] {
+	return func(p Plan) error {
+		var errs []error
+
+		for _, phase := range p.Phases {
+			phaseFieldSelector := models.NewFieldSelectorGroup(
+				models.NewFieldSelector("phases").WithExpression(
+					models.NewFieldAttrValue("key", phase.Key),
+				),
+			)
+
+			if err := ValidateRateCardsWithResolvedFeatures()(phase.RateCards); err != nil {
+				errs = append(errs, models.ErrorWithFieldPrefix(phaseFieldSelector, err))
+			}
+		}
+
+		return errors.Join(errs...)
+	}
 }
 
 func ValidatePlanWithFeatures(ctx context.Context, resolver NamespacedFeatureResolver) models.ValidatorFunc[Plan] {

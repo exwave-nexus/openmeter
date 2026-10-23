@@ -20,6 +20,7 @@ import (
 
 type Adapter interface {
 	ChargeAdapter
+	SubscriptionReferenceAdapter
 	ChargeDetailedLineAdapter
 	ChargeCreditAllocationAdapter
 	ChargeRunAdapter
@@ -40,10 +41,13 @@ type ChargeAdapter interface {
 	UpdateCharge(ctx context.Context, charge ChargeBase) (ChargeBase, error)
 	CreateChargeOverride(ctx context.Context, charge ChargeBase, override IntentMutableFields) (ChargeBase, error)
 	DeleteChargeOverride(ctx context.Context, charge ChargeBase) (ChargeBase, error)
-	UpdateSubscriptionItemID(ctx context.Context, charge Charge, newSubscriptionItemID string) (Charge, error)
 	DeleteCharge(ctx context.Context, charge Charge) error
 	GetByIDs(ctx context.Context, ids GetByIDsInput) ([]Charge, error)
 	GetByID(ctx context.Context, id GetByIDInput) (Charge, error)
+}
+
+type SubscriptionReferenceAdapter interface {
+	UpdateSubscriptionReference(ctx context.Context, input meta.UpdateSubscriptionReferenceInput) error
 }
 
 type ChargeDetailedLineAdapter interface {
@@ -53,6 +57,7 @@ type ChargeDetailedLineAdapter interface {
 
 type ChargeInvoicedUsageAdapter interface {
 	CreateInvoicedUsage(ctx context.Context, input CreateInvoicedUsageInput) (invoicedusage.AccruedUsage, error)
+	DeleteInvoicedUsage(ctx context.Context, id models.NamespacedID) error
 }
 
 type ChargeRunAdapter interface {

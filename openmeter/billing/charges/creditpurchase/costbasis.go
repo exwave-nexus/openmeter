@@ -131,6 +131,7 @@ func (c CostBasis) MarshalJSON() ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("getting custom-currency fiat currency: %w", err)
 		}
+
 		serde.FiatCurrency = lo.ToPtr(fiatCurrency.GetFiatCode())
 
 		switch serde.Mode {
@@ -140,12 +141,14 @@ func (c CostBasis) MarshalJSON() ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
+
 			serde.CurrencyCostBasisID = &intent.CurrencyCostBasisID
 		case chargecostbasis.ModeManual:
 			intent, err := c.customCurrency.AsManual()
 			if err != nil {
 				return nil, err
 			}
+
 			serde.Rate = &intent.Rate
 		default:
 			return nil, fmt.Errorf("unsupported custom-currency cost basis mode: %s", serde.Mode)
@@ -176,6 +179,7 @@ func (c *CostBasis) UnmarshalJSON(data []byte) error {
 		if serde.Rate == nil {
 			return errors.New("fiat cost basis rate is required")
 		}
+
 		if serde.Mode != "" || serde.FiatCurrency != nil || serde.CurrencyCostBasisID != nil {
 			return errors.New("fiat cost basis contains custom-currency fields")
 		}
@@ -244,6 +248,43 @@ func (c CostBasis) Validate() error {
 	default:
 		return models.NewGenericValidationError(fmt.Errorf("invalid credit purchase cost basis type: %s", c.kind))
 	}
+}
+
+// ValidateWith lets a fiat grant omit the cost basis fiat currency, since it
+// settles in its own currency, while a custom-currency grant needs it to know
+// what it settles in.
+func (c CostBasis) ValidateWith(creditCurrency, purchaseCurrency currencyx.Code) error {
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("purchase.cost_basis: %w", err)
+	}
+
+	if c.Type() != CostBasisTypeCustomCurrency {
+		return nil
+	}
+
+	customCurrency, err := c.AsCustomCurrency()
+	if err != nil {
+		return fmt.Errorf("purchase.cost_basis custom currency parse error: %w", err)
+	}
+
+	fiat, err := customCurrency.GetFiatCurrency()
+	if err != nil {
+		return fmt.Errorf("purchase.cost_basis error getting fiat currency: %w", err)
+	}
+
+	if fiat == nil {
+		if creditCurrency.IsCustom() {
+			return errors.New("purchase.cost_basis fiat currency is required for custom currency credit grants")
+		}
+
+		return nil
+	}
+
+	if fiat.Details().Code != purchaseCurrency {
+		return fmt.Errorf("purchase currency %q must match purchase.cost_basis fiat currency %q", purchaseCurrency, fiat.Details().Code)
+	}
+
+	return nil
 }
 
 func (c CostBasis) AsFiat() (FiatCostBasis, error) {

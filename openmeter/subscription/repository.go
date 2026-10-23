@@ -64,6 +64,31 @@ type SubscriptionRepository interface {
 	UpdateAnnotations(ctx context.Context, id models.NamespacedID, annotations models.Annotations) (*Subscription, error)
 
 	CreateCostBasisPins(ctx context.Context, inputs []CreateCostBasisPinEntityInput) error
+	// AdvancePlanReference only persists a later version of the same plan. It
+	// checks the expected current reference; it does not amend subscription items.
+	AdvancePlanReference(ctx context.Context, input AdvancePlanReferenceInput) error
+}
+
+type AdvancePlanReferenceInput struct {
+	SubscriptionID models.NamespacedID
+	CurrentPlan    PlanRef
+	TargetPlan     PlanRef
+}
+
+// Validate enforces forward movement within one plan, independently of the
+// calling workflow. Sync and the repository both enforce this contract.
+func (i AdvancePlanReferenceInput) Validate() error {
+	var errs []error
+	if i.SubscriptionID.Namespace == "" || i.SubscriptionID.ID == "" {
+		errs = append(errs, errors.New("subscription namespace and ID are required"))
+	}
+
+	if i.CurrentPlan.Id == "" || i.TargetPlan.Id == "" || i.CurrentPlan.Key == "" ||
+		i.CurrentPlan.Key != i.TargetPlan.Key || i.TargetPlan.Version <= i.CurrentPlan.Version {
+		errs = append(errs, errors.New("migration requires a later version of the same plan"))
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
 }
 
 type CreateCostBasisPinEntityInput struct {
@@ -82,15 +107,19 @@ func (i CreateCostBasisPinEntityInput) Validate() error {
 	if i.Namespace == "" {
 		errs = append(errs, errors.New("namespace is required"))
 	}
+
 	if i.SubscriptionID == "" {
 		errs = append(errs, errors.New("subscription ID is required"))
 	}
+
 	if i.CustomCurrencyID == "" {
 		errs = append(errs, errors.New("custom currency ID is required"))
 	}
+
 	if i.CostBasisID == "" {
 		errs = append(errs, errors.New("cost basis ID is required"))
 	}
+
 	if err := i.InvoiceCurrency.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("invalid invoice currency %q: %w", i.InvoiceCurrency, err))
 	} else if !i.InvoiceCurrency.IsFiat() {
@@ -176,15 +205,23 @@ type CreateSubscriptionItemEntityInput struct {
 }
 
 func (i CreateSubscriptionItemEntityInput) Equal(other CreateSubscriptionItemEntityInput) bool {
+	if (i.RateCard == nil) != (other.RateCard == nil) {
+		return false
+	}
+
+	rateCardsEqual := i.RateCard == nil || i.RateCard.Equal(other.RateCard)
+
 	a := i
 	a.MetadataModel = models.MetadataModel{}
 	a.Annotations = models.Annotations{}
+	a.RateCard = nil
 	b := other
 	b.MetadataModel = models.MetadataModel{}
 	b.Annotations = models.Annotations{}
+	b.RateCard = nil
 
 	// we don't compare annotations
-	return reflect.DeepEqual(a, b) && maps.Equal(i.Metadata, other.Metadata)
+	return rateCardsEqual && reflect.DeepEqual(a, b) && maps.Equal(i.Metadata, other.Metadata)
 }
 
 type SubscriptionItemRepository interface {

@@ -20,11 +20,15 @@
   clean them up separately after confirming no active shell uses them.
 - `.nvmrc` is the GitHub Actions source of truth for Node. Keep it aligned with
   `node -v` in the Nix `.#ci` shell.
+- For slow or noisy commands, save complete output to a temporary log outside the repository, preserve and report the exit status and log path, inspect bounded slices, and never rerun solely because displayed output was truncated.
 
 ## Repository invariants
 
-- The repository has three Go modules: the production root, the publishable
-  `api/v3/client` SDK, and the test-only `e2e` module.
+- The repository has four Go modules: the production root, `collector`, the
+  publishable `api/v3/client` SDK, and the test-only `e2e` module.
+- Shared package imports can expand nested module dependency graphs. Run
+  `make mod` and module-aware checks for affected consumers; root-module checks
+  do not validate `collector` or `e2e` dependency metadata.
 - The root module must never require `api/v3/client`. The nested SDK is not
   independently tagged, and local `replace` directives are invisible to
   downstream consumers.
@@ -41,9 +45,6 @@
   no natural receiver.
 - Do not extract trivial or single-use helpers unless the name captures
   non-obvious domain intent. Inline pass-through wrappers.
-- Do not hide type switching, validation, persistence mapping, or meaningful
-  domain translation inside local closures. Use a named helper; reserve inline
-  callbacks for obvious, tiny logic.
 - For non-trivial operations with multiple related parameters, define a named
   `<Operation>Input` struct that implements `models.Validator` through
   `Validate() error`. Put field and cross-field validation on the input and

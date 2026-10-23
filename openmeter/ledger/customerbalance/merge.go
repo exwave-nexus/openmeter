@@ -46,6 +46,7 @@ func (h *mergeHeap) Pop() any {
 	last := len(old) - 1
 	node := old[last]
 	h.nodes = old[:last]
+
 	return node
 }
 
@@ -98,6 +99,10 @@ func mergeSortedLists(lists [][]CreditTransaction, limit int, cmp func(a, b Cred
 }
 
 func creditTransactionCursor(tx CreditTransaction) ledger.TransactionCursor {
+	if tx.balanceCursor != nil {
+		return *tx.balanceCursor
+	}
+
 	return ledger.TransactionCursor{
 		BookedAt:  tx.BookedAt,
 		CreatedAt: tx.CreatedAt,

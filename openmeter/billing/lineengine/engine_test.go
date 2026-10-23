@@ -1,6 +1,10 @@
 package lineengine
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -10,8 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/openmeterio/openmeter/openmeter/billing"
+	featuremeterservice "github.com/openmeterio/openmeter/openmeter/billing/featuremeter/service"
+	"github.com/openmeterio/openmeter/openmeter/billing/rating"
+	"github.com/openmeterio/openmeter/openmeter/meter"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
+	streamingtestutils "github.com/openmeterio/openmeter/openmeter/streaming/testutils"
 	"github.com/openmeterio/openmeter/pkg/models"
+	"github.com/openmeterio/openmeter/pkg/pagination"
 	"github.com/openmeterio/openmeter/pkg/timeutil"
 )
 
@@ -21,9 +31,328 @@ func TestConfigValidateReturnsAllErrors(t *testing.T) {
 	require.True(t, models.IsGenericValidationError(err))
 	require.ErrorContains(t, err, "split line group adapter is required")
 	require.ErrorContains(t, err, "rating service is required")
-	require.ErrorContains(t, err, "feature service is required")
+	require.ErrorContains(t, err, "feature meter resolver is required")
 	require.ErrorContains(t, err, "streaming connector is required")
 	require.ErrorContains(t, err, "max parallel quantity snapshots must be greater than 0")
+}
+
+func TestSnapshotLineQuantityRejectsNonLegacyLinesBeforeSnapshotting(t *testing.T) {
+	for _, engineType := range []billing.LineEngineType{
+		billing.LineEngineTypeChargeFlatFee,
+		billing.LineEngineTypeChargeUsageBased,
+		billing.LineEngineTypeChargeCreditPurchase,
+	} {
+		t.Run(string(engineType), func(t *testing.T) {
+			// Given a charge-owned line and no legacy snapshot dependencies.
+			line := standardLineForLineEngineOverrideTest(t, lineEngineOverrideTestPeriod())
+			line.Engine = engineType
+			invoice := quantitySnapshotTestInvoice()
+			before, err := json.Marshal(line)
+			require.NoError(t, err)
+
+			// When the legacy engine is asked to snapshot that line.
+			result, err := (&Engine{}).SnapshotLineQuantity(t.Context(), SnapshotLineQuantityInput{
+				Invoice: &invoice,
+				Line:    line,
+			})
+
+			// Then ownership validation rejects it before any snapshot or mutation.
+			require.ErrorAs(t, err, &billing.ValidationError{})
+			require.ErrorContains(t, err, "line must be owned by the legacy invoice engine")
+			require.Nil(t, result)
+			after, err := json.Marshal(line)
+			require.NoError(t, err)
+			require.JSONEq(t, string(before), string(after))
+		})
+	}
+}
+
+type quantitySnapshotFeatureServiceStub struct {
+	features []feature.Feature
+	err      error
+}
+
+func (s quantitySnapshotFeatureServiceStub) ListFeatures(context.Context, feature.ListFeaturesParams) (pagination.Result[feature.Feature], error) {
+	return pagination.Result[feature.Feature]{Items: s.features}, s.err
+}
+
+type quantitySnapshotMeterServiceStub struct {
+	meters []meter.Meter
+	err    error
+}
+
+func (s quantitySnapshotMeterServiceStub) ListMeters(context.Context, meter.ListMetersParams) (pagination.Result[meter.Meter], error) {
+	return pagination.Result[meter.Meter]{Items: s.meters}, s.err
+}
+
+func TestSnapshotLineQuantitiesContinuesWithPartialFeatureMeters(t *testing.T) {
+	period := lineEngineOverrideTestPeriod()
+	meterID := "valid-meter-id"
+	validMeter := meter.Meter{
+		ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
+			Namespace: "namespace",
+			ID:        meterID,
+			Name:      "Valid meter",
+			CreatedAt: period.From,
+			UpdatedAt: period.From,
+		}),
+		Key:         "valid-meter",
+		Aggregation: meter.MeterAggregationSum,
+	}
+	engine, streamingConnector := newQuantitySnapshotTestEngine(t,
+		[]feature.Feature{
+			{Namespace: "namespace", ID: "valid-feature-id", Key: "valid-feature", MeterID: &meterID},
+			{Namespace: "namespace", ID: "meterless-feature-id", Key: "meterless-feature"},
+		},
+		[]meter.Meter{validMeter},
+		nil,
+	)
+	streamingConnector.AddRow(validMeter.Key, meter.MeterQueryRow{
+		Value:       7,
+		WindowStart: period.From,
+		WindowEnd:   period.To,
+	})
+
+	validLine := quantitySnapshotTestLine("line-valid", "valid-feature", productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+		Amount: alpacadecimal.NewFromInt(1),
+	}))
+	meterlessLine := quantitySnapshotTestLine("line-meterless", "meterless-feature", productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+		Amount: alpacadecimal.NewFromInt(1),
+	}))
+	missingFlatLine := quantitySnapshotTestLine("line-missing-flat", "missing-feature", productcatalog.NewPriceFrom(productcatalog.FlatPrice{
+		Amount:      alpacadecimal.NewFromInt(1),
+		PaymentTerm: productcatalog.InAdvancePaymentTerm,
+	}))
+	featurelessLine := quantitySnapshotTestLine("line-featureless", "", productcatalog.NewPriceFrom(productcatalog.FlatPrice{
+		Amount:      alpacadecimal.NewFromInt(1),
+		PaymentTerm: productcatalog.InAdvancePaymentTerm,
+	}))
+
+	// Given valid, meterless, missing-feature, and featureless lines.
+	lines := billing.StandardLines{validLine, meterlessLine, missingFlatLine, featurelessLine}
+
+	// When their quantities are snapshotted from a partial feature-meter result.
+	err := engine.SnapshotLineQuantities(t.Context(), quantitySnapshotTestInvoice(), lines)
+
+	// Then metered lines retain feature validation, while flat lines snapshot without resolving their feature.
+	issues, systemErr := billing.ToValidationIssues(err)
+	require.NoError(t, systemErr)
+	require.ElementsMatch(t, billing.ValidationIssues{
+		{
+			Severity: billing.ValidationIssueSeverityCritical,
+			Code:     billing.ErrInvoiceLineFeatureHasNoMeters.Code,
+			Message:  "usage based invoice line: feature has no meters",
+			Path:     "/lines/line-meterless",
+			Attributes: models.Annotations{
+				"feature_id":  "meterless-feature-id",
+				"feature_key": "meterless-feature",
+			},
+		},
+	}, issues)
+	require.Equal(t, 7.0, validLine.UsageBased.Quantity.InexactFloat64())
+	require.Nil(t, meterlessLine.UsageBased.Quantity)
+	require.Equal(t, 1.0, missingFlatLine.UsageBased.Quantity.InexactFloat64())
+	require.Equal(t, 1.0, featurelessLine.UsageBased.Quantity.InexactFloat64())
+}
+
+func TestSnapshotLineQuantitiesRejectsResolverSystemErrors(t *testing.T) {
+	resolverErr := errors.New("feature service unavailable")
+	engine, _ := newQuantitySnapshotTestEngine(t, nil, nil, resolverErr)
+	line := quantitySnapshotTestLine("line-valid", "valid-feature", productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+		Amount: alpacadecimal.NewFromInt(1),
+	}))
+
+	// Given a feature service that cannot resolve any requested features.
+	// When quantity snapshotting attempts to resolve the line's feature meter.
+	err := engine.SnapshotLineQuantities(t.Context(), quantitySnapshotTestInvoice(), billing.StandardLines{line})
+
+	// Then the operational failure aborts snapshotting instead of becoming a validation issue.
+	issues, systemErr := billing.ToValidationIssues(err)
+	require.Nil(t, issues)
+	require.ErrorIs(t, systemErr, resolverErr)
+	require.Nil(t, line.UsageBased.Quantity)
+}
+
+func TestAreLinesBillableAsOfLocalizesFeatureMeterValidationIssues(t *testing.T) {
+	period := lineEngineOverrideTestPeriod()
+	engine, _ := newQuantitySnapshotTestEngine(t, nil, nil, nil)
+	ratingService := &lineEngineBillabilityRatingService{}
+	engine.ratingService = ratingService
+
+	lines := billing.GatheringLines{
+		billabilityGatheringLine("line-1", "missing-feature-1", period),
+		billabilityGatheringLine("line-2", "missing-feature-2", period),
+	}
+
+	// Given multiple legacy lines whose feature references cannot be resolved.
+	// When their billability is evaluated from the resolver's partial result.
+	results, err := engine.AreLinesBillableAsOf(t.Context(), billing.AreLinesBillableAsOfInput{
+		Invoice: billing.GatheringInvoice{GatheringInvoiceBase: billing.GatheringInvoiceBase{
+			ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
+				Namespace: "namespace",
+				ID:        "invoice-id",
+				Name:      "invoice",
+				CreatedAt: period.From,
+				UpdatedAt: period.From,
+			}),
+		}},
+		AsOf:               period.From,
+		ProgressiveBilling: true,
+		Lines:              lines,
+	})
+
+	// Then every line receives a fallback result and its own localized validation issue.
+	issues, systemErr := billing.ToValidationIssues(err)
+	require.NoError(t, systemErr)
+	require.ElementsMatch(t, billing.ValidationIssues{
+		{
+			Severity:   billing.ValidationIssueSeverityCritical,
+			Code:       billing.ErrInvoiceLineFeatureNotFound.Code,
+			Message:    "invoice line: feature not found",
+			Path:       "/lines/line-1",
+			Attributes: models.Annotations{"feature_key": "missing-feature-1"},
+		},
+		{
+			Severity:   billing.ValidationIssueSeverityCritical,
+			Code:       billing.ErrInvoiceLineFeatureNotFound.Code,
+			Message:    "invoice line: feature not found",
+			Path:       "/lines/line-2",
+			Attributes: models.Annotations{"feature_key": "missing-feature-2"},
+		},
+	}, issues)
+	require.Len(t, results, len(lines))
+	require.Len(t, ratingService.inputs, len(lines))
+	for index := range lines {
+		require.True(t, results[index].Billable)
+		require.Equal(t, period, results[index].BillablePeriod)
+		require.Nil(t, ratingService.inputs[index].Feature)
+		require.Nil(t, ratingService.inputs[index].Meter)
+	}
+}
+
+type lineEngineBillabilityRatingService struct {
+	inputs []rating.ResolveBillablePeriodInput
+}
+
+func (s *lineEngineBillabilityRatingService) ResolveBillablePeriod(input rating.ResolveBillablePeriodInput) (billing.IsLineBillableAsOfResult, error) {
+	s.inputs = append(s.inputs, input)
+
+	return billing.IsLineBillableAsOfResult{
+		Billable:       true,
+		BillablePeriod: input.Line.GetServicePeriod(),
+	}, nil
+}
+
+func (*lineEngineBillabilityRatingService) GenerateDetailedLines(rating.StandardLineAccessor, ...rating.GenerateDetailedLinesOption) (rating.GenerateDetailedLinesResult, error) {
+	return rating.GenerateDetailedLinesResult{}, nil
+}
+
+func billabilityGatheringLine(id, featureKey string, period timeutil.ClosedPeriod) billing.GatheringLine {
+	return billing.GatheringLine{GatheringLineBase: billing.GatheringLineBase{
+		ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
+			Namespace: "namespace",
+			ID:        id,
+			Name:      id,
+			CreatedAt: period.From,
+			UpdatedAt: period.From,
+		}),
+		ManagedBy:     billing.SystemManagedLine,
+		Engine:        billing.LineEngineTypeInvoice,
+		InvoiceID:     "invoice-id",
+		Currency:      "USD",
+		ServicePeriod: period,
+		InvoiceAt:     period.From,
+		Price: *productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+			Amount: alpacadecimal.NewFromInt(1),
+		}),
+		FeatureKey: featureKey,
+	}}
+}
+
+func TestLineEngineValidationErrorOwnsValidationIssues(t *testing.T) {
+	// Given a line-scoped validation issue without a component owner.
+	err := billing.ValidationError{
+		Err: billing.ValidationWithFieldPrefix("lines/line-id", billing.ErrInvoiceLineFeatureHasNoMeters),
+	}
+
+	// When it crosses the line-engine boundary.
+	wrappedErr := billing.NewLineEngineValidationError(&Engine{}, err)
+	issues, systemErr := billing.ToValidationIssues(wrappedErr)
+
+	// Then the line engine becomes the owning component without losing the original error chain or issue details.
+	require.ErrorAs(t, wrappedErr, &billing.ValidationError{})
+	require.NoError(t, systemErr)
+	require.Equal(t, billing.ValidationIssues{
+		{
+			Severity:  billing.ValidationIssueSeverityCritical,
+			Code:      billing.ErrInvoiceLineFeatureHasNoMeters.Code,
+			Message:   billing.ErrInvoiceLineFeatureHasNoMeters.Message,
+			Component: billing.LineEngineValidationComponent(billing.LineEngineTypeInvoice),
+			Path:      "/lines/line-id",
+		},
+	}, issues)
+}
+
+func TestLineEngineValidationErrorPreservesSystemErrors(t *testing.T) {
+	systemErr := errors.New("database unavailable")
+	wrappedErr := billing.NewLineEngineValidationError(&Engine{}, systemErr)
+
+	issues, extractionErr := billing.ToValidationIssues(wrappedErr)
+	require.Nil(t, issues)
+	require.Equal(t, wrappedErr, extractionErr)
+	require.ErrorIs(t, wrappedErr, systemErr)
+}
+
+func newQuantitySnapshotTestEngine(t *testing.T, features []feature.Feature, meters []meter.Meter, featureServiceErr error) (*Engine, *streamingtestutils.MockStreamingConnector) {
+	t.Helper()
+
+	featureMeterResolver, err := featuremeterservice.New(featuremeterservice.Config{
+		FeatureService: quantitySnapshotFeatureServiceStub{features: features, err: featureServiceErr},
+		MeterService:   quantitySnapshotMeterServiceStub{meters: meters},
+		Logger:         slog.Default(),
+	})
+	require.NoError(t, err)
+
+	streamingConnector := streamingtestutils.NewMockStreamingConnector(t)
+
+	return &Engine{
+		featureMeterResolver:         featureMeterResolver,
+		streamingConnector:           streamingConnector,
+		maxParallelQuantitySnapshots: 4,
+	}, streamingConnector
+}
+
+func quantitySnapshotTestInvoice() billing.StandardInvoice {
+	return billing.StandardInvoice{
+		StandardInvoiceBase: billing.StandardInvoiceBase{
+			Namespace: "namespace",
+			Customer: billing.InvoiceCustomer{
+				CustomerID: "customer-id",
+				Name:       "Customer",
+			},
+		},
+	}
+}
+
+func quantitySnapshotTestLine(id, featureKey string, price *productcatalog.Price) *billing.StandardLine {
+	period := lineEngineOverrideTestPeriod()
+
+	return &billing.StandardLine{
+		StandardLineBase: billing.StandardLineBase{
+			ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
+				Namespace: "namespace",
+				ID:        id,
+				Name:      id,
+				CreatedAt: period.From,
+				UpdatedAt: period.From,
+			}),
+			Period: period,
+		},
+		UsageBased: &billing.UsageBasedLine{
+			Price:      price,
+			FeatureKey: featureKey,
+		},
+	}
 }
 
 func TestValidateLegacyLineOverrideRejectsSplitLinePeriodChange(t *testing.T) {

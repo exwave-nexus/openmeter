@@ -137,6 +137,12 @@ func (_c *ChargeFlatFeeCreate) SetManagedBy(v billing.InvoiceLineManagedBy) *Cha
 	return _c
 }
 
+// SetSubscriptionPlan sets the "subscription_plan" field.
+func (_c *ChargeFlatFeeCreate) SetSubscriptionPlan(v *meta.SubscriptionPlan) *ChargeFlatFeeCreate {
+	_c.mutation.SetSubscriptionPlan(v)
+	return _c
+}
+
 // SetSubscriptionID sets the "subscription_id" field.
 func (_c *ChargeFlatFeeCreate) SetSubscriptionID(v string) *ChargeFlatFeeCreate {
 	_c.mutation.SetSubscriptionID(v)
@@ -290,6 +296,12 @@ func (_c *ChargeFlatFeeCreate) SetNillableDescription(v *string) *ChargeFlatFeeC
 	if v != nil {
 		_c.SetDescription(*v)
 	}
+	return _c
+}
+
+// SetValidationIssues sets the "validation_issues" field.
+func (_c *ChargeFlatFeeCreate) SetValidationIssues(v billing.ValidationIssues) *ChargeFlatFeeCreate {
+	_c.mutation.SetValidationIssues(v)
 	return _c
 }
 
@@ -640,6 +652,11 @@ func (_c *ChargeFlatFeeCreate) check() error {
 			return &ValidationError{Name: "managed_by", err: fmt.Errorf(`db: validator failed for field "ChargeFlatFee.managed_by": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.SubscriptionPlan(); ok {
+		if err := v.Validate(); err != nil {
+			return &ValidationError{Name: "subscription_plan", err: fmt.Errorf(`db: validator failed for field "ChargeFlatFee.subscription_plan": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.TaxCodeID(); !ok {
 		return &ValidationError{Name: "tax_code_id", err: errors.New(`db: missing required field "ChargeFlatFee.tax_code_id"`)}
 	}
@@ -806,6 +823,14 @@ func (_c *ChargeFlatFeeCreate) createSpec() (*ChargeFlatFee, *sqlgraph.CreateSpe
 		_spec.SetField(chargeflatfee.FieldManagedBy, field.TypeEnum, value)
 		_node.ManagedBy = value
 	}
+	if value, ok := _c.mutation.SubscriptionPlan(); ok {
+		vv, err := chargeflatfee.ValueScanner.SubscriptionPlan.Value(value)
+		if err != nil {
+			return nil, nil, err
+		}
+		_spec.SetField(chargeflatfee.FieldSubscriptionPlan, field.TypeString, vv)
+		_node.SubscriptionPlan = value
+	}
 	if value, ok := _c.mutation.AdvanceAfter(); ok {
 		_spec.SetField(chargeflatfee.FieldAdvanceAfter, field.TypeTime, value)
 		_node.AdvanceAfter = &value
@@ -845,6 +870,10 @@ func (_c *ChargeFlatFeeCreate) createSpec() (*ChargeFlatFee, *sqlgraph.CreateSpe
 	if value, ok := _c.mutation.Description(); ok {
 		_spec.SetField(chargeflatfee.FieldDescription, field.TypeString, value)
 		_node.Description = &value
+	}
+	if value, ok := _c.mutation.ValidationIssues(); ok {
+		_spec.SetField(chargeflatfee.FieldValidationIssues, field.TypeJSON, value)
+		_node.ValidationIssues = value
 	}
 	if value, ok := _c.mutation.PaymentTerm(); ok {
 		_spec.SetField(chargeflatfee.FieldPaymentTerm, field.TypeString, value)
@@ -1227,6 +1256,24 @@ func (u *ChargeFlatFeeUpsert) UpdateStatus() *ChargeFlatFeeUpsert {
 	return u
 }
 
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (u *ChargeFlatFeeUpsert) SetSubscriptionPhaseID(v string) *ChargeFlatFeeUpsert {
+	u.Set(chargeflatfee.FieldSubscriptionPhaseID, v)
+	return u
+}
+
+// UpdateSubscriptionPhaseID sets the "subscription_phase_id" field to the value that was provided on create.
+func (u *ChargeFlatFeeUpsert) UpdateSubscriptionPhaseID() *ChargeFlatFeeUpsert {
+	u.SetExcluded(chargeflatfee.FieldSubscriptionPhaseID)
+	return u
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (u *ChargeFlatFeeUpsert) ClearSubscriptionPhaseID() *ChargeFlatFeeUpsert {
+	u.SetNull(chargeflatfee.FieldSubscriptionPhaseID)
+	return u
+}
+
 // SetSubscriptionItemID sets the "subscription_item_id" field.
 func (u *ChargeFlatFeeUpsert) SetSubscriptionItemID(v string) *ChargeFlatFeeUpsert {
 	u.Set(chargeflatfee.FieldSubscriptionItemID, v)
@@ -1356,6 +1403,24 @@ func (u *ChargeFlatFeeUpsert) UpdateDescription() *ChargeFlatFeeUpsert {
 // ClearDescription clears the value of the "description" field.
 func (u *ChargeFlatFeeUpsert) ClearDescription() *ChargeFlatFeeUpsert {
 	u.SetNull(chargeflatfee.FieldDescription)
+	return u
+}
+
+// SetValidationIssues sets the "validation_issues" field.
+func (u *ChargeFlatFeeUpsert) SetValidationIssues(v billing.ValidationIssues) *ChargeFlatFeeUpsert {
+	u.Set(chargeflatfee.FieldValidationIssues, v)
+	return u
+}
+
+// UpdateValidationIssues sets the "validation_issues" field to the value that was provided on create.
+func (u *ChargeFlatFeeUpsert) UpdateValidationIssues() *ChargeFlatFeeUpsert {
+	u.SetExcluded(chargeflatfee.FieldValidationIssues)
+	return u
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (u *ChargeFlatFeeUpsert) ClearValidationIssues() *ChargeFlatFeeUpsert {
+	u.SetNull(chargeflatfee.FieldValidationIssues)
 	return u
 }
 
@@ -1535,11 +1600,11 @@ func (u *ChargeFlatFeeUpsertOne) UpdateNewValues() *ChargeFlatFeeUpsertOne {
 		if _, exists := u.create.mutation.ManagedBy(); exists {
 			s.SetIgnore(chargeflatfee.FieldManagedBy)
 		}
+		if _, exists := u.create.mutation.SubscriptionPlan(); exists {
+			s.SetIgnore(chargeflatfee.FieldSubscriptionPlan)
+		}
 		if _, exists := u.create.mutation.SubscriptionID(); exists {
 			s.SetIgnore(chargeflatfee.FieldSubscriptionID)
-		}
-		if _, exists := u.create.mutation.SubscriptionPhaseID(); exists {
-			s.SetIgnore(chargeflatfee.FieldSubscriptionPhaseID)
 		}
 		if _, exists := u.create.mutation.TaxCodeID(); exists {
 			s.SetIgnore(chargeflatfee.FieldTaxCodeID)
@@ -1688,6 +1753,27 @@ func (u *ChargeFlatFeeUpsertOne) SetStatus(v meta.ChargeStatus) *ChargeFlatFeeUp
 func (u *ChargeFlatFeeUpsertOne) UpdateStatus() *ChargeFlatFeeUpsertOne {
 	return u.Update(func(s *ChargeFlatFeeUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (u *ChargeFlatFeeUpsertOne) SetSubscriptionPhaseID(v string) *ChargeFlatFeeUpsertOne {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.SetSubscriptionPhaseID(v)
+	})
+}
+
+// UpdateSubscriptionPhaseID sets the "subscription_phase_id" field to the value that was provided on create.
+func (u *ChargeFlatFeeUpsertOne) UpdateSubscriptionPhaseID() *ChargeFlatFeeUpsertOne {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.UpdateSubscriptionPhaseID()
+	})
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (u *ChargeFlatFeeUpsertOne) ClearSubscriptionPhaseID() *ChargeFlatFeeUpsertOne {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.ClearSubscriptionPhaseID()
 	})
 }
 
@@ -1842,6 +1928,27 @@ func (u *ChargeFlatFeeUpsertOne) UpdateDescription() *ChargeFlatFeeUpsertOne {
 func (u *ChargeFlatFeeUpsertOne) ClearDescription() *ChargeFlatFeeUpsertOne {
 	return u.Update(func(s *ChargeFlatFeeUpsert) {
 		s.ClearDescription()
+	})
+}
+
+// SetValidationIssues sets the "validation_issues" field.
+func (u *ChargeFlatFeeUpsertOne) SetValidationIssues(v billing.ValidationIssues) *ChargeFlatFeeUpsertOne {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.SetValidationIssues(v)
+	})
+}
+
+// UpdateValidationIssues sets the "validation_issues" field to the value that was provided on create.
+func (u *ChargeFlatFeeUpsertOne) UpdateValidationIssues() *ChargeFlatFeeUpsertOne {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.UpdateValidationIssues()
+	})
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (u *ChargeFlatFeeUpsertOne) ClearValidationIssues() *ChargeFlatFeeUpsertOne {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.ClearValidationIssues()
 	})
 }
 
@@ -2214,11 +2321,11 @@ func (u *ChargeFlatFeeUpsertBulk) UpdateNewValues() *ChargeFlatFeeUpsertBulk {
 			if _, exists := b.mutation.ManagedBy(); exists {
 				s.SetIgnore(chargeflatfee.FieldManagedBy)
 			}
+			if _, exists := b.mutation.SubscriptionPlan(); exists {
+				s.SetIgnore(chargeflatfee.FieldSubscriptionPlan)
+			}
 			if _, exists := b.mutation.SubscriptionID(); exists {
 				s.SetIgnore(chargeflatfee.FieldSubscriptionID)
-			}
-			if _, exists := b.mutation.SubscriptionPhaseID(); exists {
-				s.SetIgnore(chargeflatfee.FieldSubscriptionPhaseID)
 			}
 			if _, exists := b.mutation.TaxCodeID(); exists {
 				s.SetIgnore(chargeflatfee.FieldTaxCodeID)
@@ -2368,6 +2475,27 @@ func (u *ChargeFlatFeeUpsertBulk) SetStatus(v meta.ChargeStatus) *ChargeFlatFeeU
 func (u *ChargeFlatFeeUpsertBulk) UpdateStatus() *ChargeFlatFeeUpsertBulk {
 	return u.Update(func(s *ChargeFlatFeeUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (u *ChargeFlatFeeUpsertBulk) SetSubscriptionPhaseID(v string) *ChargeFlatFeeUpsertBulk {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.SetSubscriptionPhaseID(v)
+	})
+}
+
+// UpdateSubscriptionPhaseID sets the "subscription_phase_id" field to the value that was provided on create.
+func (u *ChargeFlatFeeUpsertBulk) UpdateSubscriptionPhaseID() *ChargeFlatFeeUpsertBulk {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.UpdateSubscriptionPhaseID()
+	})
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (u *ChargeFlatFeeUpsertBulk) ClearSubscriptionPhaseID() *ChargeFlatFeeUpsertBulk {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.ClearSubscriptionPhaseID()
 	})
 }
 
@@ -2522,6 +2650,27 @@ func (u *ChargeFlatFeeUpsertBulk) UpdateDescription() *ChargeFlatFeeUpsertBulk {
 func (u *ChargeFlatFeeUpsertBulk) ClearDescription() *ChargeFlatFeeUpsertBulk {
 	return u.Update(func(s *ChargeFlatFeeUpsert) {
 		s.ClearDescription()
+	})
+}
+
+// SetValidationIssues sets the "validation_issues" field.
+func (u *ChargeFlatFeeUpsertBulk) SetValidationIssues(v billing.ValidationIssues) *ChargeFlatFeeUpsertBulk {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.SetValidationIssues(v)
+	})
+}
+
+// UpdateValidationIssues sets the "validation_issues" field to the value that was provided on create.
+func (u *ChargeFlatFeeUpsertBulk) UpdateValidationIssues() *ChargeFlatFeeUpsertBulk {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.UpdateValidationIssues()
+	})
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (u *ChargeFlatFeeUpsertBulk) ClearValidationIssues() *ChargeFlatFeeUpsertBulk {
+	return u.Update(func(s *ChargeFlatFeeUpsert) {
+		s.ClearValidationIssues()
 	})
 }
 

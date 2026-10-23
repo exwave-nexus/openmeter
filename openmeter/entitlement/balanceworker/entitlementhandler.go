@@ -98,6 +98,7 @@ func (w *Worker) handleEntitlementEvent(ctx context.Context, entitlementID pkgmo
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if entitlement is in scope: %w", err)
 	}
+
 	if !inScope {
 		return nil, nil
 	}
@@ -132,9 +133,11 @@ func (w *Worker) handleEntitlementEvent(ctx context.Context, entitlementID pkgmo
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if entitlement is in scope: %w", err)
 	}
+
 	if !inScope {
 		return nil, nil
 	}
+
 	return w.processEntitlementEntity(ctx, &entitlementEntity, calculatedAt, options...)
 }
 
@@ -153,7 +156,6 @@ func (w *Worker) processEntitlementEntity(ctx context.Context, entitlementEntity
 	if entitlementEntity.DeletedAt != nil ||
 		(entitlementEntity.ActiveTo != nil && entitlementEntity.ActiveTo.Before(calculatedAt)) {
 		// entitlement got deleted while processing changes => let's create a delete event so that we are not working
-
 		snap, err := w.createDeletedSnapshotEvent(ctx, entitlementEntity, calculatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create entitlement delete snapshot event: %w", err)
@@ -303,7 +305,7 @@ func (w *Worker) createSnapshotEvent(ctx context.Context, entitlementEntity *ent
 	return w.snapshotToEvent(ctx, snapshotToEventInput{
 		Entitlement:       entitlementEntity,
 		Feature:           feat,
-		Value:             convert.ToPointer((snapshot.EntitlementValue)(mappedValues)),
+		Value:             convert.ToPointer(snapshot.EntitlementValue(mappedValues)),
 		CalculatedAt:      calculatedAt,
 		Source:            opts.source,
 		OverrideOperation: opts.sourceOperation,

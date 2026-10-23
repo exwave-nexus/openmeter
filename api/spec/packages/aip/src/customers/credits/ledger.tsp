@@ -105,6 +105,12 @@ model CreditTransaction {
   currency: Currencies.CurrencyCode;
 
   /**
+   * Managed currency reference. Present only for custom currencies.
+   */
+  @visibility(Lifecycle.Read)
+  custom_currency?: Shared.ResourceReference<Currencies.CurrencyCustom>;
+
+  /**
    * Signed amount of the credit movement. Positive values add balance, negative
    * values reduce balance.
    */

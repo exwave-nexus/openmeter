@@ -60,6 +60,8 @@ type ChargeFlatFee struct {
 	CustomCurrencyID *string `json:"custom_currency_id,omitempty"`
 	// ManagedBy holds the value of the "managed_by" field.
 	ManagedBy billing.InvoiceLineManagedBy `json:"managed_by,omitempty"`
+	// SubscriptionPlan holds the value of the "subscription_plan" field.
+	SubscriptionPlan *meta.SubscriptionPlan `json:"subscription_plan,omitempty"`
 	// SubscriptionID holds the value of the "subscription_id" field.
 	SubscriptionID *string `json:"subscription_id,omitempty"`
 	// SubscriptionPhaseID holds the value of the "subscription_phase_id" field.
@@ -88,6 +90,8 @@ type ChargeFlatFee struct {
 	Name string `json:"name,omitempty"`
 	// Description holds the value of the "description" field.
 	Description *string `json:"description,omitempty"`
+	// ValidationIssues holds the value of the "validation_issues" field.
+	ValidationIssues billing.ValidationIssues `json:"validation_issues,omitempty"`
 	// PaymentTerm holds the value of the "payment_term" field.
 	PaymentTerm productcatalog.PaymentTermType `json:"payment_term,omitempty"`
 	// InvoiceAt holds the value of the "invoice_at" field.
@@ -286,7 +290,7 @@ func (*ChargeFlatFee) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case chargeflatfee.FieldAnnotations, chargeflatfee.FieldMetadata:
+		case chargeflatfee.FieldAnnotations, chargeflatfee.FieldMetadata, chargeflatfee.FieldValidationIssues:
 			values[i] = new([]byte)
 		case chargeflatfee.FieldAmountBeforeProration, chargeflatfee.FieldAmountAfterProration:
 			values[i] = new(alpacadecimal.Decimal)
@@ -294,6 +298,8 @@ func (*ChargeFlatFee) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullString)
 		case chargeflatfee.FieldServicePeriodFrom, chargeflatfee.FieldServicePeriodTo, chargeflatfee.FieldBillingPeriodFrom, chargeflatfee.FieldBillingPeriodTo, chargeflatfee.FieldFullServicePeriodFrom, chargeflatfee.FieldFullServicePeriodTo, chargeflatfee.FieldAdvanceAfter, chargeflatfee.FieldCreatedAt, chargeflatfee.FieldUpdatedAt, chargeflatfee.FieldDeletedAt, chargeflatfee.FieldInvoiceAt, chargeflatfee.FieldIntentDeletedAt:
 			values[i] = new(sql.NullTime)
+		case chargeflatfee.FieldSubscriptionPlan:
+			values[i] = chargeflatfee.ValueScanner.SubscriptionPlan.ScanValue()
 		case chargeflatfee.FieldDiscounts:
 			values[i] = chargeflatfee.ValueScanner.Discounts.ScanValue()
 		default:
@@ -392,6 +398,12 @@ func (_m *ChargeFlatFee) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ManagedBy = billing.InvoiceLineManagedBy(value.String)
 			}
+		case chargeflatfee.FieldSubscriptionPlan:
+			if value, err := chargeflatfee.ValueScanner.SubscriptionPlan.FromValue(values[i]); err != nil {
+				return err
+			} else {
+				_m.SubscriptionPlan = value
+			}
 		case chargeflatfee.FieldSubscriptionID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field subscription_id", values[i])
@@ -486,6 +498,14 @@ func (_m *ChargeFlatFee) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.Description = new(string)
 				*_m.Description = value.String
+			}
+		case chargeflatfee.FieldValidationIssues:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field validation_issues", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.ValidationIssues); err != nil {
+					return fmt.Errorf("unmarshal field validation_issues: %w", err)
+				}
 			}
 		case chargeflatfee.FieldPaymentTerm:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -708,6 +728,11 @@ func (_m *ChargeFlatFee) String() string {
 	builder.WriteString("managed_by=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ManagedBy))
 	builder.WriteString(", ")
+	if v := _m.SubscriptionPlan; v != nil {
+		builder.WriteString("subscription_plan=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
 	if v := _m.SubscriptionID; v != nil {
 		builder.WriteString("subscription_id=")
 		builder.WriteString(*v)
@@ -763,6 +788,9 @@ func (_m *ChargeFlatFee) String() string {
 		builder.WriteString("description=")
 		builder.WriteString(*v)
 	}
+	builder.WriteString(", ")
+	builder.WriteString("validation_issues=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ValidationIssues))
 	builder.WriteString(", ")
 	builder.WriteString("payment_term=")
 	builder.WriteString(fmt.Sprintf("%v", _m.PaymentTerm))

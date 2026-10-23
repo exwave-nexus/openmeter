@@ -7,7 +7,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
+	"github.com/samber/lo"
+
+	"github.com/openmeterio/openmeter/pkg/models"
 	"github.com/openmeterio/openmeter/pkg/timeutil"
 )
 
@@ -80,13 +82,6 @@ func (b LineEngineType) IsCharge() bool {
 	}
 }
 
-type LineBillability struct {
-	IsBillable      bool
-	ValidationError error
-}
-
-type LineBillabilities []LineBillability
-
 type BuildStandardInvoiceLinesInput struct {
 	// Invoice is the target standard invoice that will own the built lines.
 	Invoice StandardInvoice
@@ -107,31 +102,6 @@ func (i BuildStandardInvoiceLinesInput) Validate() error {
 
 	if err := i.GatheringLines.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("gathering lines: %w", err))
-	}
-
-	return errors.Join(errs...)
-}
-
-type CalculateLinesInput struct {
-	// Invoice is the standard invoice owning the lines being recalculated.
-	Invoice StandardInvoice
-	// Lines are the standard invoice lines already assigned to this engine.
-	Lines StandardLines
-}
-
-func (i CalculateLinesInput) Validate() error {
-	var errs []error
-
-	if i.Invoice.ID == "" {
-		errs = append(errs, fmt.Errorf("invoice id is required"))
-	}
-
-	if len(i.Lines) == 0 {
-		errs = append(errs, fmt.Errorf("lines are required"))
-	}
-
-	if err := i.Lines.Validate(); err != nil {
-		errs = append(errs, fmt.Errorf("lines: %w", err))
 	}
 
 	return errors.Join(errs...)
@@ -173,30 +143,110 @@ type (
 	OnPaymentSettledInput              = StandardLineEventInput
 )
 
-type IsLineBillableAsOfInput struct {
-	Line                   GatheringLine
-	AsOf                   time.Time
-	ProgressiveBilling     bool
-	FeatureMeters          feature.FeatureMeters
-	ResolvedBillablePeriod timeutil.ClosedPeriod
+type AreLinesBillableAsOfInput struct {
+	Invoice            GatheringInvoice
+	AsOf               time.Time
+	ProgressiveBilling bool
+	Lines              GatheringLines
 }
 
-func (i IsLineBillableAsOfInput) Validate() error {
-	if err := i.ResolvedBillablePeriod.Validate(); err != nil {
-		return fmt.Errorf("validating resolved billable period: %w", err)
+func (i AreLinesBillableAsOfInput) Validate() error {
+	var errs []error
+
+	if err := i.Invoice.GetInvoiceID().Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("invoice: %w", err))
 	}
 
 	if i.AsOf.IsZero() {
-		return fmt.Errorf("as of is required")
+		errs = append(errs, errors.New("as of is required"))
 	}
 
-	return nil
+	if err := i.Lines.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("lines: %w", err))
+	}
+
+	for index, line := range i.Lines {
+		if line.Namespace != i.Invoice.Namespace {
+			errs = append(errs, fmt.Errorf("line[%d]: namespace %s does not match invoice namespace %s", index, line.Namespace, i.Invoice.Namespace))
+		}
+
+		if line.InvoiceID != i.Invoice.ID {
+			errs = append(errs, fmt.Errorf("line[%d]: invoice ID %s does not match invoice ID %s", index, line.InvoiceID, i.Invoice.ID))
+		}
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
+type IsLineBillableAsOfResult struct {
+	Billable       bool
+	BillablePeriod timeutil.ClosedPeriod
+}
+
+func (r IsLineBillableAsOfResult) Validate() error {
+	var errs []error
+
+	if r.Billable {
+		if err := r.BillablePeriod.ValidateAsRequired(); err != nil {
+			errs = append(errs, fmt.Errorf("billable period: %w", err))
+		}
+	} else if !lo.IsEmpty(r.BillablePeriod) {
+		errs = append(errs, errors.New("billable period must be empty when line is not billable"))
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
+type GateInvoiceAssignmentInput struct {
+	Lines GatheringLines
+}
+
+func (i GateInvoiceAssignmentInput) Validate() error {
+	var errs []error
+
+	if len(i.Lines) == 0 {
+		errs = append(errs, errors.New("lines are required"))
+	}
+
+	if err := i.Lines.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("lines: %w", err))
+	}
+
+	lineIDs := lo.Map(i.Lines, func(line GatheringLine, _ int) LineID {
+		return line.GetLineID()
+	})
+	if len(lo.Uniq(lineIDs)) != len(lineIDs) {
+		errs = append(errs, errors.New("line IDs must be unique"))
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
+type InvoiceAssignmentGateResponse struct {
+	ExcludeFromInvoice bool
+}
+
+type GateInvoiceAssignmentResult map[LineID]InvoiceAssignmentGateResponse
+
+func (r GateInvoiceAssignmentResult) Validate(input GateInvoiceAssignmentInput) error {
+	var errs []error
+
+	expectedLineIDs := lo.SliceToMap(input.Lines, func(line GatheringLine) (LineID, struct{}) {
+		return line.GetLineID(), struct{}{}
+	})
+
+	for lineID := range r {
+		if _, ok := expectedLineIDs[lineID]; !ok {
+			errs = append(errs, fmt.Errorf("unknown line ID: %s/%s", lineID.Namespace, lineID.ID))
+		}
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
 }
 
 type SplitGatheringLineInput struct {
-	Line          GatheringLine
-	FeatureMeters feature.FeatureMeters
-	SplitAt       time.Time
+	Line    GatheringLine
+	SplitAt time.Time
 }
 
 func (i SplitGatheringLineInput) Validate() error {
@@ -208,10 +258,6 @@ func (i SplitGatheringLineInput) Validate() error {
 
 	if i.SplitAt.IsZero() {
 		errs = append(errs, fmt.Errorf("split at is required"))
-	}
-
-	if i.FeatureMeters == nil {
-		errs = append(errs, fmt.Errorf("feature meters are required"))
 	}
 
 	return errors.Join(errs...)
@@ -242,13 +288,20 @@ type LineEngine interface {
 	// GetLineEngineType returns the discriminator owned by this engine implementation.
 	GetLineEngineType() LineEngineType
 
-	// IsLineBillableAsOf returns true if the line is billable as of the given time.
-	IsLineBillableAsOf(ctx context.Context, input IsLineBillableAsOfInput) (bool, error)
+	// AreLinesBillableAsOf returns one result for each line in the same order. Implementations may return usable
+	// results together with validation issues. Operational errors make the returned results unusable.
+	AreLinesBillableAsOf(ctx context.Context, input AreLinesBillableAsOfInput) ([]IsLineBillableAsOfResult, error)
+	// GateInvoiceAssignment decides which otherwise billable gathering lines may be assigned to an invoice.
+	// Implementations may persist engine-owned state explaining blocked decisions. Returning an error aborts
+	// invoice creation and rolls back those writes.
+	GateInvoiceAssignment(ctx context.Context, input GateInvoiceAssignmentInput) (GateInvoiceAssignmentResult, error)
 
 	// SplitGatheringLine splits a gathering line on an engine-specific boundary if required.
 	SplitGatheringLine(ctx context.Context, input SplitGatheringLineInput) (SplitGatheringLineResult, error)
 	// BuildStandardInvoiceLines materializes gathering lines into standard lines for a target invoice.
-	// Returned standard lines must reuse the exact same line IDs as the input gathering lines.
+	// Returned standard lines must reuse the exact same line IDs as the input gathering lines. When the lines can be
+	// persisted with validation issues, implementations return both the materialized lines and an error tree composed
+	// entirely of ValidationIssue values. Operational errors abort invoice creation and make returned lines unusable.
 	BuildStandardInvoiceLines(ctx context.Context, input BuildStandardInvoiceLinesInput) (StandardLines, error)
 	// BuildStandardLinesForGatheringPreview materializes gathering lines from BuildStandardInvoiceLinesInput
 	// into transient StandardLines for a read-only standard invoice preview. Implementations must be
@@ -266,15 +319,17 @@ type LineEngine interface {
 	// Can be used to reject edits that are not supported by the engine (including deletion, etc.) to prevent the
 	// invoice from entering an invalid state without recovery.
 	//
-	// Additional checks can be performed in OnMutableInvoiceLinesEditedViaAPI but those errors will become
-	// validation issues, thus alter the invoice state.
-	//
-	// For API requests it is better to reject and edit before, the existing validation issue logic is geared
-	// towards state machine failures.
+	// For API requests it is better to reject an edit here before any mutation. Business-rule failures
+	// discovered later by OnMutableInvoiceLinesEditedViaAPI must be returned as validation issues, while
+	// operational failures must remain ordinary errors.
 	//
 	// Implementations must not mutate invoice, charge, ledger, or external state from this hook.
 	ValidateMutableInvoiceLineEditViaAPI(ctx context.Context, input OnMutableInvoiceUpdateInput) error
 	// OnMutableInvoiceLinesEditedViaAPI is invoked after mutable invoice lines are edited through the API.
+	// Implementations must return business-rule failures as validation issues and operational failures as
+	// ordinary errors. Standard invoice edits accept usable output accompanied only by
+	// warnings; critical issues and system errors reject the entire edit. Gathering
+	// edits and invoice-deletion cleanup reject every non-nil error.
 	// Implementations must return exactly one CreatedLines entry for each input Created line and
 	// exactly one UpdatedLines entry for each input Updated override, even when they only accept
 	// the line unchanged.
@@ -287,17 +342,13 @@ type LineEngine interface {
 	// Implementations may persist retry-safe engine-owned effects and must return fully calculated
 	// lines with exactly the same IDs as the input.
 	OnInvoiceFinalizing(ctx context.Context, input OnInvoiceFinalizingInput) (StandardLines, error)
-	// OnInvoiceIssued is invoked when a standard invoice reaches the issued state.
+	// OnInvoiceIssued is invoked after external invoice issuance succeeds, while
+	// billing books charge effects, and before entering the issued state.
 	OnInvoiceIssued(ctx context.Context, input OnInvoiceIssuedInput) error
 	// OnPaymentAuthorized is invoked when a standard invoice reaches the payment authorized state.
 	OnPaymentAuthorized(ctx context.Context, input OnPaymentAuthorizedInput) error
 	// OnPaymentSettled is invoked when a standard invoice reaches the paid state.
 	OnPaymentSettled(ctx context.Context, input OnPaymentSettledInput) error
-}
-
-type LineCalculator interface {
-	// CalculateLines recalculates detailed lines and totals for standard-invoice lines owned by this engine.
-	CalculateLines(input CalculateLinesInput) (StandardLines, error)
 }
 
 func LineEngineValidationComponent(engineType LineEngineType) ComponentName {
@@ -310,25 +361,10 @@ func NewLineEngineValidationError(engine LineEngine, err error) error {
 	}
 
 	if engine == nil {
-		return fmt.Errorf("line engine is required")
+		return errors.New("line engine is required")
 	}
 
-	component := LineEngineValidationComponent(engine.GetLineEngineType())
-	validationErr := ValidationWithComponent(component, err)
-
-	if _, convertErr := ToValidationIssues(validationErr); convertErr == nil {
-		return validationErr
-	}
-
-	return ValidationWithComponent(
-		component,
-		ValidationIssue{
-			Severity:  ValidationIssueSeverityCritical,
-			Code:      ValidationIssueCodeLineEngineCollectionCompletedFailed,
-			Message:   err.Error(),
-			Component: component,
-		},
-	)
+	return ValidationWithComponent(LineEngineValidationComponent(engine.GetLineEngineType()), err)
 }
 
 type CreateLineRouter interface {

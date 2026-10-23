@@ -10,6 +10,7 @@ import (
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
@@ -21,6 +22,7 @@ import (
 	dbfeature "github.com/openmeterio/openmeter/openmeter/ent/db/feature"
 	"github.com/openmeterio/openmeter/openmeter/ent/db/predicate"
 	"github.com/openmeterio/openmeter/openmeter/ent/db/subscriptionitem"
+	"github.com/openmeterio/openmeter/openmeter/ent/db/subscriptionphase"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/unitconfig"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -134,6 +136,26 @@ func (_u *ChargeUsageBasedUpdate) SetNillableStatus(v *meta.ChargeStatus) *Charg
 	if v != nil {
 		_u.SetStatus(*v)
 	}
+	return _u
+}
+
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (_u *ChargeUsageBasedUpdate) SetSubscriptionPhaseID(v string) *ChargeUsageBasedUpdate {
+	_u.mutation.SetSubscriptionPhaseID(v)
+	return _u
+}
+
+// SetNillableSubscriptionPhaseID sets the "subscription_phase_id" field if the given value is not nil.
+func (_u *ChargeUsageBasedUpdate) SetNillableSubscriptionPhaseID(v *string) *ChargeUsageBasedUpdate {
+	if v != nil {
+		_u.SetSubscriptionPhaseID(*v)
+	}
+	return _u
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (_u *ChargeUsageBasedUpdate) ClearSubscriptionPhaseID() *ChargeUsageBasedUpdate {
+	_u.mutation.ClearSubscriptionPhaseID()
 	return _u
 }
 
@@ -261,6 +283,24 @@ func (_u *ChargeUsageBasedUpdate) ClearDescription() *ChargeUsageBasedUpdate {
 	return _u
 }
 
+// SetValidationIssues sets the "validation_issues" field.
+func (_u *ChargeUsageBasedUpdate) SetValidationIssues(v billing.ValidationIssues) *ChargeUsageBasedUpdate {
+	_u.mutation.SetValidationIssues(v)
+	return _u
+}
+
+// AppendValidationIssues appends value to the "validation_issues" field.
+func (_u *ChargeUsageBasedUpdate) AppendValidationIssues(v billing.ValidationIssues) *ChargeUsageBasedUpdate {
+	_u.mutation.AppendValidationIssues(v)
+	return _u
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (_u *ChargeUsageBasedUpdate) ClearValidationIssues() *ChargeUsageBasedUpdate {
+	_u.mutation.ClearValidationIssues()
+	return _u
+}
+
 // SetInvoiceAt sets the "invoice_at" field.
 func (_u *ChargeUsageBasedUpdate) SetInvoiceAt(v time.Time) *ChargeUsageBasedUpdate {
 	_u.mutation.SetInvoiceAt(v)
@@ -318,6 +358,12 @@ func (_u *ChargeUsageBasedUpdate) SetNillableFeatureID(v *string) *ChargeUsageBa
 	if v != nil {
 		_u.SetFeatureID(*v)
 	}
+	return _u
+}
+
+// ClearFeatureID clears the value of the "feature_id" field.
+func (_u *ChargeUsageBasedUpdate) ClearFeatureID() *ChargeUsageBasedUpdate {
+	_u.mutation.ClearFeatureID()
 	return _u
 }
 
@@ -455,6 +501,11 @@ func (_u *ChargeUsageBasedUpdate) SetIntentOverride(v *ChargeUsageBasedOverride)
 	return _u.SetIntentOverrideID(v.ID)
 }
 
+// SetSubscriptionPhase sets the "subscription_phase" edge to the SubscriptionPhase entity.
+func (_u *ChargeUsageBasedUpdate) SetSubscriptionPhase(v *SubscriptionPhase) *ChargeUsageBasedUpdate {
+	return _u.SetSubscriptionPhaseID(v.ID)
+}
+
 // SetSubscriptionItem sets the "subscription_item" edge to the SubscriptionItem entity.
 func (_u *ChargeUsageBasedUpdate) SetSubscriptionItem(v *SubscriptionItem) *ChargeUsageBasedUpdate {
 	return _u.SetSubscriptionItemID(v.ID)
@@ -521,6 +572,12 @@ func (_u *ChargeUsageBasedUpdate) ClearCurrentRun() *ChargeUsageBasedUpdate {
 // ClearIntentOverride clears the "intent_override" edge to the ChargeUsageBasedOverride entity.
 func (_u *ChargeUsageBasedUpdate) ClearIntentOverride() *ChargeUsageBasedUpdate {
 	_u.mutation.ClearIntentOverride()
+	return _u
+}
+
+// ClearSubscriptionPhase clears the "subscription_phase" edge to the SubscriptionPhase entity.
+func (_u *ChargeUsageBasedUpdate) ClearSubscriptionPhase() *ChargeUsageBasedUpdate {
+	_u.mutation.ClearSubscriptionPhase()
 	return _u
 }
 
@@ -612,9 +669,6 @@ func (_u *ChargeUsageBasedUpdate) check() error {
 	if _u.mutation.CustomerCleared() && len(_u.mutation.CustomerIDs()) > 0 {
 		return errors.New(`db: clearing a required unique edge "ChargeUsageBased.customer"`)
 	}
-	if _u.mutation.FeatureCleared() && len(_u.mutation.FeatureIDs()) > 0 {
-		return errors.New(`db: clearing a required unique edge "ChargeUsageBased.feature"`)
-	}
 	if _u.mutation.TaxCodeCleared() && len(_u.mutation.TaxCodeIDs()) > 0 {
 		return errors.New(`db: clearing a required unique edge "ChargeUsageBased.tax_code"`)
 	}
@@ -660,6 +714,9 @@ func (_u *ChargeUsageBasedUpdate) sqlSave(ctx context.Context) (_node int, err e
 	if _u.mutation.FiatCurrencyCodeCleared() {
 		_spec.ClearField(chargeusagebased.FieldFiatCurrencyCode, field.TypeString)
 	}
+	if _u.mutation.SubscriptionPlanCleared() {
+		_spec.ClearField(chargeusagebased.FieldSubscriptionPlan, field.TypeString)
+	}
 	if value, ok := _u.mutation.AdvanceAfter(); ok {
 		_spec.SetField(chargeusagebased.FieldAdvanceAfter, field.TypeTime, value)
 	}
@@ -698,6 +755,17 @@ func (_u *ChargeUsageBasedUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if _u.mutation.DescriptionCleared() {
 		_spec.ClearField(chargeusagebased.FieldDescription, field.TypeString)
+	}
+	if value, ok := _u.mutation.ValidationIssues(); ok {
+		_spec.SetField(chargeusagebased.FieldValidationIssues, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedValidationIssues(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, chargeusagebased.FieldValidationIssues, value)
+		})
+	}
+	if _u.mutation.ValidationIssuesCleared() {
+		_spec.ClearField(chargeusagebased.FieldValidationIssues, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.InvoiceAt(); ok {
 		_spec.SetField(chargeusagebased.FieldInvoiceAt, field.TypeTime, value)
@@ -882,6 +950,35 @@ func (_u *ChargeUsageBasedUpdate) sqlSave(ctx context.Context) (_node int, err e
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(chargeusagebasedoverride.FieldID, field.TypeString),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.SubscriptionPhaseCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   chargeusagebased.SubscriptionPhaseTable,
+			Columns: []string{chargeusagebased.SubscriptionPhaseColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionphase.FieldID, field.TypeString),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.SubscriptionPhaseIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   chargeusagebased.SubscriptionPhaseTable,
+			Columns: []string{chargeusagebased.SubscriptionPhaseColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionphase.FieldID, field.TypeString),
 			},
 		}
 		for _, k := range nodes {
@@ -1065,6 +1162,26 @@ func (_u *ChargeUsageBasedUpdateOne) SetNillableStatus(v *meta.ChargeStatus) *Ch
 	return _u
 }
 
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (_u *ChargeUsageBasedUpdateOne) SetSubscriptionPhaseID(v string) *ChargeUsageBasedUpdateOne {
+	_u.mutation.SetSubscriptionPhaseID(v)
+	return _u
+}
+
+// SetNillableSubscriptionPhaseID sets the "subscription_phase_id" field if the given value is not nil.
+func (_u *ChargeUsageBasedUpdateOne) SetNillableSubscriptionPhaseID(v *string) *ChargeUsageBasedUpdateOne {
+	if v != nil {
+		_u.SetSubscriptionPhaseID(*v)
+	}
+	return _u
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (_u *ChargeUsageBasedUpdateOne) ClearSubscriptionPhaseID() *ChargeUsageBasedUpdateOne {
+	_u.mutation.ClearSubscriptionPhaseID()
+	return _u
+}
+
 // SetSubscriptionItemID sets the "subscription_item_id" field.
 func (_u *ChargeUsageBasedUpdateOne) SetSubscriptionItemID(v string) *ChargeUsageBasedUpdateOne {
 	_u.mutation.SetSubscriptionItemID(v)
@@ -1189,6 +1306,24 @@ func (_u *ChargeUsageBasedUpdateOne) ClearDescription() *ChargeUsageBasedUpdateO
 	return _u
 }
 
+// SetValidationIssues sets the "validation_issues" field.
+func (_u *ChargeUsageBasedUpdateOne) SetValidationIssues(v billing.ValidationIssues) *ChargeUsageBasedUpdateOne {
+	_u.mutation.SetValidationIssues(v)
+	return _u
+}
+
+// AppendValidationIssues appends value to the "validation_issues" field.
+func (_u *ChargeUsageBasedUpdateOne) AppendValidationIssues(v billing.ValidationIssues) *ChargeUsageBasedUpdateOne {
+	_u.mutation.AppendValidationIssues(v)
+	return _u
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (_u *ChargeUsageBasedUpdateOne) ClearValidationIssues() *ChargeUsageBasedUpdateOne {
+	_u.mutation.ClearValidationIssues()
+	return _u
+}
+
 // SetInvoiceAt sets the "invoice_at" field.
 func (_u *ChargeUsageBasedUpdateOne) SetInvoiceAt(v time.Time) *ChargeUsageBasedUpdateOne {
 	_u.mutation.SetInvoiceAt(v)
@@ -1246,6 +1381,12 @@ func (_u *ChargeUsageBasedUpdateOne) SetNillableFeatureID(v *string) *ChargeUsag
 	if v != nil {
 		_u.SetFeatureID(*v)
 	}
+	return _u
+}
+
+// ClearFeatureID clears the value of the "feature_id" field.
+func (_u *ChargeUsageBasedUpdateOne) ClearFeatureID() *ChargeUsageBasedUpdateOne {
+	_u.mutation.ClearFeatureID()
 	return _u
 }
 
@@ -1383,6 +1524,11 @@ func (_u *ChargeUsageBasedUpdateOne) SetIntentOverride(v *ChargeUsageBasedOverri
 	return _u.SetIntentOverrideID(v.ID)
 }
 
+// SetSubscriptionPhase sets the "subscription_phase" edge to the SubscriptionPhase entity.
+func (_u *ChargeUsageBasedUpdateOne) SetSubscriptionPhase(v *SubscriptionPhase) *ChargeUsageBasedUpdateOne {
+	return _u.SetSubscriptionPhaseID(v.ID)
+}
+
 // SetSubscriptionItem sets the "subscription_item" edge to the SubscriptionItem entity.
 func (_u *ChargeUsageBasedUpdateOne) SetSubscriptionItem(v *SubscriptionItem) *ChargeUsageBasedUpdateOne {
 	return _u.SetSubscriptionItemID(v.ID)
@@ -1449,6 +1595,12 @@ func (_u *ChargeUsageBasedUpdateOne) ClearCurrentRun() *ChargeUsageBasedUpdateOn
 // ClearIntentOverride clears the "intent_override" edge to the ChargeUsageBasedOverride entity.
 func (_u *ChargeUsageBasedUpdateOne) ClearIntentOverride() *ChargeUsageBasedUpdateOne {
 	_u.mutation.ClearIntentOverride()
+	return _u
+}
+
+// ClearSubscriptionPhase clears the "subscription_phase" edge to the SubscriptionPhase entity.
+func (_u *ChargeUsageBasedUpdateOne) ClearSubscriptionPhase() *ChargeUsageBasedUpdateOne {
+	_u.mutation.ClearSubscriptionPhase()
 	return _u
 }
 
@@ -1553,9 +1705,6 @@ func (_u *ChargeUsageBasedUpdateOne) check() error {
 	if _u.mutation.CustomerCleared() && len(_u.mutation.CustomerIDs()) > 0 {
 		return errors.New(`db: clearing a required unique edge "ChargeUsageBased.customer"`)
 	}
-	if _u.mutation.FeatureCleared() && len(_u.mutation.FeatureIDs()) > 0 {
-		return errors.New(`db: clearing a required unique edge "ChargeUsageBased.feature"`)
-	}
 	if _u.mutation.TaxCodeCleared() && len(_u.mutation.TaxCodeIDs()) > 0 {
 		return errors.New(`db: clearing a required unique edge "ChargeUsageBased.tax_code"`)
 	}
@@ -1618,6 +1767,9 @@ func (_u *ChargeUsageBasedUpdateOne) sqlSave(ctx context.Context) (_node *Charge
 	if _u.mutation.FiatCurrencyCodeCleared() {
 		_spec.ClearField(chargeusagebased.FieldFiatCurrencyCode, field.TypeString)
 	}
+	if _u.mutation.SubscriptionPlanCleared() {
+		_spec.ClearField(chargeusagebased.FieldSubscriptionPlan, field.TypeString)
+	}
 	if value, ok := _u.mutation.AdvanceAfter(); ok {
 		_spec.SetField(chargeusagebased.FieldAdvanceAfter, field.TypeTime, value)
 	}
@@ -1656,6 +1808,17 @@ func (_u *ChargeUsageBasedUpdateOne) sqlSave(ctx context.Context) (_node *Charge
 	}
 	if _u.mutation.DescriptionCleared() {
 		_spec.ClearField(chargeusagebased.FieldDescription, field.TypeString)
+	}
+	if value, ok := _u.mutation.ValidationIssues(); ok {
+		_spec.SetField(chargeusagebased.FieldValidationIssues, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedValidationIssues(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, chargeusagebased.FieldValidationIssues, value)
+		})
+	}
+	if _u.mutation.ValidationIssuesCleared() {
+		_spec.ClearField(chargeusagebased.FieldValidationIssues, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.InvoiceAt(); ok {
 		_spec.SetField(chargeusagebased.FieldInvoiceAt, field.TypeTime, value)
@@ -1840,6 +2003,35 @@ func (_u *ChargeUsageBasedUpdateOne) sqlSave(ctx context.Context) (_node *Charge
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(chargeusagebasedoverride.FieldID, field.TypeString),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.SubscriptionPhaseCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   chargeusagebased.SubscriptionPhaseTable,
+			Columns: []string{chargeusagebased.SubscriptionPhaseColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionphase.FieldID, field.TypeString),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.SubscriptionPhaseIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   chargeusagebased.SubscriptionPhaseTable,
+			Columns: []string{chargeusagebased.SubscriptionPhaseColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(subscriptionphase.FieldID, field.TypeString),
 			},
 		}
 		for _, k := range nodes {

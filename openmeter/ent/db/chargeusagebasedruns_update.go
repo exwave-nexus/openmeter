@@ -202,6 +202,27 @@ func (_u *ChargeUsageBasedRunsUpdate) SetNillableStoredAtLt(v *time.Time) *Charg
 	return _u
 }
 
+// SetSchemaLevel sets the "schema_level" field.
+func (_u *ChargeUsageBasedRunsUpdate) SetSchemaLevel(v int) *ChargeUsageBasedRunsUpdate {
+	_u.mutation.ResetSchemaLevel()
+	_u.mutation.SetSchemaLevel(v)
+	return _u
+}
+
+// SetNillableSchemaLevel sets the "schema_level" field if the given value is not nil.
+func (_u *ChargeUsageBasedRunsUpdate) SetNillableSchemaLevel(v *int) *ChargeUsageBasedRunsUpdate {
+	if v != nil {
+		_u.SetSchemaLevel(*v)
+	}
+	return _u
+}
+
+// AddSchemaLevel adds value to the "schema_level" field.
+func (_u *ChargeUsageBasedRunsUpdate) AddSchemaLevel(v int) *ChargeUsageBasedRunsUpdate {
+	_u.mutation.AddSchemaLevel(v)
+	return _u
+}
+
 // SetDetailedLinesPresent sets the "detailed_lines_present" field.
 func (_u *ChargeUsageBasedRunsUpdate) SetDetailedLinesPresent(v bool) *ChargeUsageBasedRunsUpdate {
 	_u.mutation.SetDetailedLinesPresent(v)
@@ -278,6 +299,34 @@ func (_u *ChargeUsageBasedRunsUpdate) SetNillableNoFiatTransactionRequired(v *bo
 	return _u
 }
 
+// SetImmutable sets the "immutable" field.
+func (_u *ChargeUsageBasedRunsUpdate) SetImmutable(v bool) *ChargeUsageBasedRunsUpdate {
+	_u.mutation.SetImmutable(v)
+	return _u
+}
+
+// SetNillableImmutable sets the "immutable" field if the given value is not nil.
+func (_u *ChargeUsageBasedRunsUpdate) SetNillableImmutable(v *bool) *ChargeUsageBasedRunsUpdate {
+	if v != nil {
+		_u.SetImmutable(*v)
+	}
+	return _u
+}
+
+// SetFiatOverageCreditAllocationCompleted sets the "fiat_overage_credit_allocation_completed" field.
+func (_u *ChargeUsageBasedRunsUpdate) SetFiatOverageCreditAllocationCompleted(v bool) *ChargeUsageBasedRunsUpdate {
+	_u.mutation.SetFiatOverageCreditAllocationCompleted(v)
+	return _u
+}
+
+// SetNillableFiatOverageCreditAllocationCompleted sets the "fiat_overage_credit_allocation_completed" field if the given value is not nil.
+func (_u *ChargeUsageBasedRunsUpdate) SetNillableFiatOverageCreditAllocationCompleted(v *bool) *ChargeUsageBasedRunsUpdate {
+	if v != nil {
+		_u.SetFiatOverageCreditAllocationCompleted(*v)
+	}
+	return _u
+}
+
 // SetBillingInvoiceLineID sets the "billing_invoice_line" edge to the BillingInvoiceLine entity by ID.
 func (_u *ChargeUsageBasedRunsUpdate) SetBillingInvoiceLineID(id string) *ChargeUsageBasedRunsUpdate {
 	_u.mutation.SetBillingInvoiceLineID(id)
@@ -295,6 +344,21 @@ func (_u *ChargeUsageBasedRunsUpdate) SetNillableBillingInvoiceLineID(id *string
 // SetBillingInvoiceLine sets the "billing_invoice_line" edge to the BillingInvoiceLine entity.
 func (_u *ChargeUsageBasedRunsUpdate) SetBillingInvoiceLine(v *BillingInvoiceLine) *ChargeUsageBasedRunsUpdate {
 	return _u.SetBillingInvoiceLineID(v.ID)
+}
+
+// AddNextRunIDs adds the "next_runs" edge to the ChargeUsageBasedRuns entity by IDs.
+func (_u *ChargeUsageBasedRunsUpdate) AddNextRunIDs(ids ...string) *ChargeUsageBasedRunsUpdate {
+	_u.mutation.AddNextRunIDs(ids...)
+	return _u
+}
+
+// AddNextRuns adds the "next_runs" edges to the ChargeUsageBasedRuns entity.
+func (_u *ChargeUsageBasedRunsUpdate) AddNextRuns(v ...*ChargeUsageBasedRuns) *ChargeUsageBasedRunsUpdate {
+	ids := make([]string, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddNextRunIDs(ids...)
 }
 
 // AddCreditAllocationIDs adds the "credit_allocations" edge to the ChargeUsageBasedRunCreditAllocations entity by IDs.
@@ -404,6 +468,27 @@ func (_u *ChargeUsageBasedRunsUpdate) Mutation() *ChargeUsageBasedRunsMutation {
 func (_u *ChargeUsageBasedRunsUpdate) ClearBillingInvoiceLine() *ChargeUsageBasedRunsUpdate {
 	_u.mutation.ClearBillingInvoiceLine()
 	return _u
+}
+
+// ClearNextRuns clears all "next_runs" edges to the ChargeUsageBasedRuns entity.
+func (_u *ChargeUsageBasedRunsUpdate) ClearNextRuns() *ChargeUsageBasedRunsUpdate {
+	_u.mutation.ClearNextRuns()
+	return _u
+}
+
+// RemoveNextRunIDs removes the "next_runs" edge to ChargeUsageBasedRuns entities by IDs.
+func (_u *ChargeUsageBasedRunsUpdate) RemoveNextRunIDs(ids ...string) *ChargeUsageBasedRunsUpdate {
+	_u.mutation.RemoveNextRunIDs(ids...)
+	return _u
+}
+
+// RemoveNextRuns removes "next_runs" edges to ChargeUsageBasedRuns entities.
+func (_u *ChargeUsageBasedRunsUpdate) RemoveNextRuns(v ...*ChargeUsageBasedRuns) *ChargeUsageBasedRunsUpdate {
+	ids := make([]string, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveNextRunIDs(ids...)
 }
 
 // ClearCreditAllocations clears all "credit_allocations" edges to the ChargeUsageBasedRunCreditAllocations entity.
@@ -610,6 +695,12 @@ func (_u *ChargeUsageBasedRunsUpdate) sqlSave(ctx context.Context) (_node int, e
 	if value, ok := _u.mutation.StoredAtLt(); ok {
 		_spec.SetField(chargeusagebasedruns.FieldStoredAtLt, field.TypeTime, value)
 	}
+	if value, ok := _u.mutation.SchemaLevel(); ok {
+		_spec.SetField(chargeusagebasedruns.FieldSchemaLevel, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedSchemaLevel(); ok {
+		_spec.AddField(chargeusagebasedruns.FieldSchemaLevel, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.DetailedLinesPresent(); ok {
 		_spec.SetField(chargeusagebasedruns.FieldDetailedLinesPresent, field.TypeBool, value)
 	}
@@ -621,6 +712,12 @@ func (_u *ChargeUsageBasedRunsUpdate) sqlSave(ctx context.Context) (_node int, e
 	}
 	if value, ok := _u.mutation.NoFiatTransactionRequired(); ok {
 		_spec.SetField(chargeusagebasedruns.FieldNoFiatTransactionRequired, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Immutable(); ok {
+		_spec.SetField(chargeusagebasedruns.FieldImmutable, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.FiatOverageCreditAllocationCompleted(); ok {
+		_spec.SetField(chargeusagebasedruns.FieldFiatOverageCreditAllocationCompleted, field.TypeBool, value)
 	}
 	if _u.mutation.BillingInvoiceLineCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -644,6 +741,51 @@ func (_u *ChargeUsageBasedRunsUpdate) sqlSave(ctx context.Context) (_node int, e
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(billinginvoiceline.FieldID, field.TypeString),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.NextRunsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   chargeusagebasedruns.NextRunsTable,
+			Columns: []string{chargeusagebasedruns.NextRunsColumn},
+			Bidi:    true,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chargeusagebasedruns.FieldID, field.TypeString),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedNextRunsIDs(); len(nodes) > 0 && !_u.mutation.NextRunsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   chargeusagebasedruns.NextRunsTable,
+			Columns: []string{chargeusagebasedruns.NextRunsColumn},
+			Bidi:    true,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chargeusagebasedruns.FieldID, field.TypeString),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.NextRunsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   chargeusagebasedruns.NextRunsTable,
+			Columns: []string{chargeusagebasedruns.NextRunsColumn},
+			Bidi:    true,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chargeusagebasedruns.FieldID, field.TypeString),
 			},
 		}
 		for _, k := range nodes {
@@ -1075,6 +1217,27 @@ func (_u *ChargeUsageBasedRunsUpdateOne) SetNillableStoredAtLt(v *time.Time) *Ch
 	return _u
 }
 
+// SetSchemaLevel sets the "schema_level" field.
+func (_u *ChargeUsageBasedRunsUpdateOne) SetSchemaLevel(v int) *ChargeUsageBasedRunsUpdateOne {
+	_u.mutation.ResetSchemaLevel()
+	_u.mutation.SetSchemaLevel(v)
+	return _u
+}
+
+// SetNillableSchemaLevel sets the "schema_level" field if the given value is not nil.
+func (_u *ChargeUsageBasedRunsUpdateOne) SetNillableSchemaLevel(v *int) *ChargeUsageBasedRunsUpdateOne {
+	if v != nil {
+		_u.SetSchemaLevel(*v)
+	}
+	return _u
+}
+
+// AddSchemaLevel adds value to the "schema_level" field.
+func (_u *ChargeUsageBasedRunsUpdateOne) AddSchemaLevel(v int) *ChargeUsageBasedRunsUpdateOne {
+	_u.mutation.AddSchemaLevel(v)
+	return _u
+}
+
 // SetDetailedLinesPresent sets the "detailed_lines_present" field.
 func (_u *ChargeUsageBasedRunsUpdateOne) SetDetailedLinesPresent(v bool) *ChargeUsageBasedRunsUpdateOne {
 	_u.mutation.SetDetailedLinesPresent(v)
@@ -1151,6 +1314,34 @@ func (_u *ChargeUsageBasedRunsUpdateOne) SetNillableNoFiatTransactionRequired(v 
 	return _u
 }
 
+// SetImmutable sets the "immutable" field.
+func (_u *ChargeUsageBasedRunsUpdateOne) SetImmutable(v bool) *ChargeUsageBasedRunsUpdateOne {
+	_u.mutation.SetImmutable(v)
+	return _u
+}
+
+// SetNillableImmutable sets the "immutable" field if the given value is not nil.
+func (_u *ChargeUsageBasedRunsUpdateOne) SetNillableImmutable(v *bool) *ChargeUsageBasedRunsUpdateOne {
+	if v != nil {
+		_u.SetImmutable(*v)
+	}
+	return _u
+}
+
+// SetFiatOverageCreditAllocationCompleted sets the "fiat_overage_credit_allocation_completed" field.
+func (_u *ChargeUsageBasedRunsUpdateOne) SetFiatOverageCreditAllocationCompleted(v bool) *ChargeUsageBasedRunsUpdateOne {
+	_u.mutation.SetFiatOverageCreditAllocationCompleted(v)
+	return _u
+}
+
+// SetNillableFiatOverageCreditAllocationCompleted sets the "fiat_overage_credit_allocation_completed" field if the given value is not nil.
+func (_u *ChargeUsageBasedRunsUpdateOne) SetNillableFiatOverageCreditAllocationCompleted(v *bool) *ChargeUsageBasedRunsUpdateOne {
+	if v != nil {
+		_u.SetFiatOverageCreditAllocationCompleted(*v)
+	}
+	return _u
+}
+
 // SetBillingInvoiceLineID sets the "billing_invoice_line" edge to the BillingInvoiceLine entity by ID.
 func (_u *ChargeUsageBasedRunsUpdateOne) SetBillingInvoiceLineID(id string) *ChargeUsageBasedRunsUpdateOne {
 	_u.mutation.SetBillingInvoiceLineID(id)
@@ -1168,6 +1359,21 @@ func (_u *ChargeUsageBasedRunsUpdateOne) SetNillableBillingInvoiceLineID(id *str
 // SetBillingInvoiceLine sets the "billing_invoice_line" edge to the BillingInvoiceLine entity.
 func (_u *ChargeUsageBasedRunsUpdateOne) SetBillingInvoiceLine(v *BillingInvoiceLine) *ChargeUsageBasedRunsUpdateOne {
 	return _u.SetBillingInvoiceLineID(v.ID)
+}
+
+// AddNextRunIDs adds the "next_runs" edge to the ChargeUsageBasedRuns entity by IDs.
+func (_u *ChargeUsageBasedRunsUpdateOne) AddNextRunIDs(ids ...string) *ChargeUsageBasedRunsUpdateOne {
+	_u.mutation.AddNextRunIDs(ids...)
+	return _u
+}
+
+// AddNextRuns adds the "next_runs" edges to the ChargeUsageBasedRuns entity.
+func (_u *ChargeUsageBasedRunsUpdateOne) AddNextRuns(v ...*ChargeUsageBasedRuns) *ChargeUsageBasedRunsUpdateOne {
+	ids := make([]string, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddNextRunIDs(ids...)
 }
 
 // AddCreditAllocationIDs adds the "credit_allocations" edge to the ChargeUsageBasedRunCreditAllocations entity by IDs.
@@ -1277,6 +1483,27 @@ func (_u *ChargeUsageBasedRunsUpdateOne) Mutation() *ChargeUsageBasedRunsMutatio
 func (_u *ChargeUsageBasedRunsUpdateOne) ClearBillingInvoiceLine() *ChargeUsageBasedRunsUpdateOne {
 	_u.mutation.ClearBillingInvoiceLine()
 	return _u
+}
+
+// ClearNextRuns clears all "next_runs" edges to the ChargeUsageBasedRuns entity.
+func (_u *ChargeUsageBasedRunsUpdateOne) ClearNextRuns() *ChargeUsageBasedRunsUpdateOne {
+	_u.mutation.ClearNextRuns()
+	return _u
+}
+
+// RemoveNextRunIDs removes the "next_runs" edge to ChargeUsageBasedRuns entities by IDs.
+func (_u *ChargeUsageBasedRunsUpdateOne) RemoveNextRunIDs(ids ...string) *ChargeUsageBasedRunsUpdateOne {
+	_u.mutation.RemoveNextRunIDs(ids...)
+	return _u
+}
+
+// RemoveNextRuns removes "next_runs" edges to ChargeUsageBasedRuns entities.
+func (_u *ChargeUsageBasedRunsUpdateOne) RemoveNextRuns(v ...*ChargeUsageBasedRuns) *ChargeUsageBasedRunsUpdateOne {
+	ids := make([]string, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveNextRunIDs(ids...)
 }
 
 // ClearCreditAllocations clears all "credit_allocations" edges to the ChargeUsageBasedRunCreditAllocations entity.
@@ -1513,6 +1740,12 @@ func (_u *ChargeUsageBasedRunsUpdateOne) sqlSave(ctx context.Context) (_node *Ch
 	if value, ok := _u.mutation.StoredAtLt(); ok {
 		_spec.SetField(chargeusagebasedruns.FieldStoredAtLt, field.TypeTime, value)
 	}
+	if value, ok := _u.mutation.SchemaLevel(); ok {
+		_spec.SetField(chargeusagebasedruns.FieldSchemaLevel, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedSchemaLevel(); ok {
+		_spec.AddField(chargeusagebasedruns.FieldSchemaLevel, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.DetailedLinesPresent(); ok {
 		_spec.SetField(chargeusagebasedruns.FieldDetailedLinesPresent, field.TypeBool, value)
 	}
@@ -1524,6 +1757,12 @@ func (_u *ChargeUsageBasedRunsUpdateOne) sqlSave(ctx context.Context) (_node *Ch
 	}
 	if value, ok := _u.mutation.NoFiatTransactionRequired(); ok {
 		_spec.SetField(chargeusagebasedruns.FieldNoFiatTransactionRequired, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.Immutable(); ok {
+		_spec.SetField(chargeusagebasedruns.FieldImmutable, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.FiatOverageCreditAllocationCompleted(); ok {
+		_spec.SetField(chargeusagebasedruns.FieldFiatOverageCreditAllocationCompleted, field.TypeBool, value)
 	}
 	if _u.mutation.BillingInvoiceLineCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1547,6 +1786,51 @@ func (_u *ChargeUsageBasedRunsUpdateOne) sqlSave(ctx context.Context) (_node *Ch
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(billinginvoiceline.FieldID, field.TypeString),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.NextRunsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   chargeusagebasedruns.NextRunsTable,
+			Columns: []string{chargeusagebasedruns.NextRunsColumn},
+			Bidi:    true,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chargeusagebasedruns.FieldID, field.TypeString),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedNextRunsIDs(); len(nodes) > 0 && !_u.mutation.NextRunsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   chargeusagebasedruns.NextRunsTable,
+			Columns: []string{chargeusagebasedruns.NextRunsColumn},
+			Bidi:    true,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chargeusagebasedruns.FieldID, field.TypeString),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.NextRunsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   chargeusagebasedruns.NextRunsTable,
+			Columns: []string{chargeusagebasedruns.NextRunsColumn},
+			Bidi:    true,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(chargeusagebasedruns.FieldID, field.TypeString),
 			},
 		}
 		for _, k := range nodes {

@@ -44,7 +44,7 @@ func (a *adapter) UpdateCharge(ctx context.Context, charge usagebased.ChargeBase
 		update := tx.db.ChargeUsageBased.UpdateOneID(charge.ID).
 			Where(dbchargeusagebased.NamespaceEQ(charge.Namespace)).
 			SetDiscounts(&baseIntent.Discounts).
-			SetFeatureID(charge.State.FeatureID).
+			SetOrClearFeatureID(lo.EmptyableToPtr(charge.State.FeatureID)).
 			SetOrClearIntentDeletedAt(convert.TimePtrIn(baseIntent.IntentDeletedAt, time.UTC)).
 			SetInvoiceAt(meta.NormalizeTimestamp(baseIntent.InvoiceAt).In(time.UTC)).
 			SetPrice(&baseIntent.Price).
@@ -65,6 +65,7 @@ func (a *adapter) UpdateCharge(ctx context.Context, charge usagebased.ChargeBase
 			IntentMutableFields: baseIntent.IntentMutableFields.IntentMutableFields,
 			Status:              metaStatus,
 			AdvanceAfter:        meta.NormalizeOptionalTimestamp(charge.State.AdvanceAfter),
+			ValidationIssues:    charge.ValidationIssues,
 		})
 		if err != nil {
 			return usagebased.ChargeBase{}, err
@@ -94,43 +95,36 @@ func (a *adapter) UpdateCharge(ctx context.Context, charge usagebased.ChargeBase
 	})
 }
 
-func (a *adapter) UpdateSubscriptionItemID(ctx context.Context, charge usagebased.Charge, newSubscriptionItemID string) (usagebased.Charge, error) {
-	if err := charge.ManagedModel.Validate(); err != nil {
-		return usagebased.Charge{}, err
+func (a *adapter) UpdateSubscriptionReference(ctx context.Context, input meta.UpdateSubscriptionReferenceInput) error {
+	return entutils.TransactingRepoWithNoValue(ctx, a, func(ctx context.Context, tx *adapter) error {
+		return chargemeta.UpdateSubscriptionReference(
+			ctx,
+			tx.db.ChargeUsageBased.Update(),
+			input,
+		)
+	})
+}
+
+func (a *adapter) UpdateChargeValidationIssues(ctx context.Context, input usagebased.UpdateChargeValidationIssuesInput) error {
+	if err := input.Validate(); err != nil {
+		return err
 	}
 
-	if err := charge.Validate(); err != nil {
-		return usagebased.Charge{}, err
-	}
+	return entutils.TransactingRepoWithNoValue(ctx, a, func(ctx context.Context, tx *adapter) error {
+		update := tx.db.ChargeUsageBased.UpdateOneID(input.ChargeID.ID).
+			Where(dbchargeusagebased.NamespaceEQ(input.ChargeID.Namespace))
 
-	if newSubscriptionItemID == "" {
-		return usagebased.Charge{}, fmt.Errorf("subscription item ID is required")
-	}
-
-	return entutils.TransactingRepo(ctx, a, func(ctx context.Context, tx *adapter) (usagebased.Charge, error) {
-		// TODO: make subscription_item_id immutable again once subscription edits
-		// no longer recreate the item ID for logical item updates.
-		updatedChargeBase, err := tx.db.ChargeUsageBased.UpdateOneID(charge.ID).
-			Where(dbchargeusagebased.NamespaceEQ(charge.Namespace)).
-			SetSubscriptionItemID(newSubscriptionItemID).
-			Save(ctx)
-		if err != nil {
-			return usagebased.Charge{}, err
+		if len(input.ValidationIssues) == 0 {
+			update = update.ClearValidationIssues()
+		} else {
+			update = update.SetValidationIssues(input.ValidationIssues)
 		}
 
-		if err := tx.loadCostBasisEdge(ctx, updatedChargeBase); err != nil {
-			return usagebased.Charge{}, err
+		if _, err := update.Save(ctx); err != nil {
+			return fmt.Errorf("updating validation issues for usage based charge[%s]: %w", input.ChargeID.ID, err)
 		}
 
-		overrideLayer := charge.Intent.GetOverrideLayerMutableFields()
-		mappedChargeBase, err := fromDBBaseWithCurrency(updatedChargeBase, charge.Intent.GetBaseIntent().Currency)
-		if err != nil {
-			return usagebased.Charge{}, err
-		}
-		charge.ChargeBase = mappedChargeBase
-		charge.Intent = usagebased.NewOverridableIntent(charge.Intent.GetBaseIntent(), overrideLayer)
-
-		return charge, nil
+		return nil
 	})
 }
 
@@ -174,6 +168,7 @@ func (a *adapter) DeleteCharge(ctx context.Context, charge usagebased.Charge) er
 			IntentMutableFields: baseIntent.IntentMutableFields.IntentMutableFields,
 			Status:              metaStatus,
 			AdvanceAfter:        charge.State.AdvanceAfter,
+			ValidationIssues:    charge.ValidationIssues,
 		})
 		if err != nil {
 			return err
@@ -197,7 +192,7 @@ func (a *adapter) DeleteCharge(ctx context.Context, charge usagebased.Charge) er
 	})
 }
 
-func (a *adapter) CreateCharges(ctx context.Context, in usagebased.CreateChargesInput) ([]usagebased.Charge, error) {
+func (a *adapter) CreateCharges(ctx context.Context, in usagebased.CreateChargesAdapterInput) ([]usagebased.Charge, error) {
 	if err := in.Validate(); err != nil {
 		return nil, err
 	}
@@ -405,7 +400,7 @@ func expandRealizations(query *db.ChargeUsageBasedQuery, expands meta.Expands) *
 	)
 }
 
-func (a *adapter) buildCreateUsageBasedCharge(ctx context.Context, ns string, intent usagebased.CreateIntent) (*db.ChargeUsageBasedCreate, error) {
+func (a *adapter) buildCreateUsageBasedCharge(ctx context.Context, ns string, intent usagebased.CreateIntentAdapterInput) (*db.ChargeUsageBasedCreate, error) {
 	baseIntent := intent.Intent.GetBaseIntent()
 	baseIntent.Discounts = baseIntent.Discounts.UpsertCorrelationIDs()
 
@@ -413,13 +408,16 @@ func (a *adapter) buildCreateUsageBasedCharge(ctx context.Context, ns string, in
 		SetNillableDeletedAt(convert.TimePtrIn(baseIntent.IntentDeletedAt, time.UTC)).
 		SetNillableIntentDeletedAt(convert.TimePtrIn(baseIntent.IntentDeletedAt, time.UTC)).
 		SetDiscounts(&baseIntent.Discounts).
-		SetFeatureID(intent.FeatureID).
 		SetRatingEngine(intent.RatingEngine).
 		SetPrice(&baseIntent.Price).
 		SetStatusDetailed(usagebased.Status(meta.ChargeStatusCreated)).
 		SetFeatureKey(baseIntent.FeatureKey).
 		SetInvoiceAt(meta.NormalizeTimestamp(baseIntent.InvoiceAt).In(time.UTC)).
 		SetSettlementMode(baseIntent.SettlementMode)
+
+	if intent.FeatureID != "" {
+		create = create.SetFeatureID(intent.FeatureID)
+	}
 
 	if baseIntent.UnitConfig != nil {
 		create = create.SetUnitConfig(baseIntent.UnitConfig)
@@ -430,6 +428,7 @@ func (a *adapter) buildCreateUsageBasedCharge(ctx context.Context, ns string, in
 		Intent:              baseIntent.Intent,
 		IntentMutableFields: baseIntent.IntentMutableFields.IntentMutableFields,
 		Status:              meta.ChargeStatusCreated,
+		ValidationIssues:    intent.ValidationIssues,
 	})
 	if err != nil {
 		return nil, err

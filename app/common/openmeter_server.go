@@ -62,19 +62,23 @@ func NewIngestCollector(
 			return nil, nil, fmt.Errorf("failed to initialize deduplicator: %w", err)
 		}
 
-		return ingest.DeduplicatingCollector{
-				Collector:    collector,
-				Deduplicator: deduplicator,
-			}, func() {
-				collector.Close()
+		deduplicatingCollector := ingest.DeduplicatingCollector{
+			Collector:    collector,
+			Deduplicator: deduplicator,
+		}
 
-				logger.Info("closing deduplicator")
+		closeCollector := func() {
+			collector.Close()
 
-				err := deduplicator.Close()
-				if err != nil {
-					logger.Error("failed to close deduplicator", "error", err)
-				}
-			}, nil
+			logger.Info("closing deduplicator")
+
+			err := deduplicator.Close()
+			if err != nil {
+				logger.Error("failed to close deduplicator", "error", err)
+			}
+		}
+
+		return deduplicatingCollector, closeCollector, nil
 	}
 
 	// Note: closing function is called by dedupe as well
@@ -107,9 +111,11 @@ func ServerProvisionTopics(conf config.EventsConfiguration) []pkgkafka.TopicConf
 func NewIngestService(
 	collector ingest.Collector,
 	logger *slog.Logger,
+	meter metric.Meter,
 ) (ingest.Service, error) {
 	return ingest.NewService(ingest.Config{
-		Collector: collector,
-		Logger:    logger,
+		Collector:   collector,
+		Logger:      logger,
+		MetricMeter: meter,
 	})
 }

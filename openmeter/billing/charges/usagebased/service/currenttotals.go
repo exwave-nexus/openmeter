@@ -9,7 +9,6 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	usagebasedrating "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/rating"
 	"github.com/openmeterio/openmeter/openmeter/customer"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/pkg/clock"
 )
 
@@ -39,17 +38,14 @@ func (s *service) GetCurrentTotals(ctx context.Context, input usagebased.GetCurr
 		return usagebased.GetCurrentTotalsResult{}, fmt.Errorf("get customer override: %w", err)
 	}
 
-	featureMeters, err := s.featureService.ResolveFeatureMeters(ctx, charge.Namespace, feature.FeatureMeterRef{
-		IDOrKey:      charge.GetFeatureKeyOrID(),
-		RequireMeter: true,
-	})
+	featureMeters, err := s.featureMeterResolver.Resolve(ctx, charge.Namespace, charge)
 	if err != nil {
 		return usagebased.GetCurrentTotalsResult{}, fmt.Errorf("resolve feature meters: %w", err)
 	}
 
-	featureMeter, err := charge.ResolveFeatureMeter(featureMeters)
+	featureMeter, err := featureMeters.Get(charge)
 	if err != nil {
-		return usagebased.GetCurrentTotalsResult{}, err
+		return usagebased.GetCurrentTotalsResult{}, fmt.Errorf("resolve feature meter: %w", err)
 	}
 
 	now := clock.Now()
@@ -61,12 +57,15 @@ func (s *service) GetCurrentTotals(ctx context.Context, input usagebased.GetCurr
 		StoredAtLT:              now,
 		IgnoreMinimumCommitment: now.Before(charge.Intent.GetEffectiveServicePeriod().To),
 	})
+	issues, err := billing.ToValidationIssues(err, billing.RequireWarningsOnly())
 	if err != nil {
 		return usagebased.GetCurrentTotalsResult{}, fmt.Errorf("get totals for usage: %w", err)
 	}
 
 	return usagebased.GetCurrentTotalsResult{
-		Charge:    charge,
-		DueTotals: dueTotals,
+		Charge:           charge,
+		DueTotals:        dueTotals.Totals,
+		MeteredQuantity:  dueTotals.MeteredQuantity,
+		ValidationIssues: issues,
 	}, nil
 }

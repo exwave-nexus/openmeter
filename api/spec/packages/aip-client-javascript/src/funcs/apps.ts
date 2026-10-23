@@ -3,8 +3,14 @@
 import { type Client, http } from '../core.js'
 import { type Result, type RequestOptions } from '../lib/types.js'
 import { request } from '../lib/request.js'
-import { toURLSearchParams } from '../lib/encodings.js'
-import { toWire, toPathWire, fromWire, assertValid } from '../lib/wire.js'
+import { toURLSearchParams, encodeSort } from '../lib/encodings.js'
+import {
+  toWire,
+  toPathWire,
+  fromWire,
+  assertValid,
+  toSnakeCase,
+} from '../lib/wire.js'
 import * as schemas from '../models/schemas.js'
 import type {
   ListAppsRequest,
@@ -15,6 +21,8 @@ import type {
   UninstallAppResponse,
   UpdateAppRequest,
   UpdateAppResponse,
+  ExecuteAppActionRequest,
+  ExecuteAppActionResponse,
   ListAppCatalogRequest,
   ListAppCatalogResponse,
   GetAppCatalogItemRequest,
@@ -36,9 +44,14 @@ export function listApps(
   options?: RequestOptions,
 ): Promise<Result<ListAppsResponse>> {
   return request(() => {
+    if (client._options.validate && req.sort !== undefined) {
+      assertValid(schemas.listAppsQueryParams.shape.sort, req.sort)
+    }
     const query = toWire(
       {
         page: req.page,
+        sort: encodeSort(req.sort, toSnakeCase),
+        filter: req.filter,
       },
       schemas.listAppsQueryParams,
     )
@@ -170,6 +183,51 @@ export function updateApp(
           assertValid(schemas.updateAppResponseWire, data)
         }
         return fromWire(data, schemas.updateAppResponse)
+      })
+  })
+}
+
+/**
+ * Execute app action
+ *
+ * Execute an operator action on an installed app. The action must be listed in the
+ * app's `actions`; otherwise the request is rejected.
+ *
+ * POST /openmeter/apps/{appId}/action
+ */
+export function executeAppAction(
+  client: Client,
+  req: ExecuteAppActionRequest,
+  options?: RequestOptions,
+): Promise<Result<ExecuteAppActionResponse>> {
+  return request(() => {
+    const pathParamsInput = {
+      appId: req.appId,
+    }
+    const pathParams = client._options.validate
+      ? toPathWire(pathParamsInput, schemas.executeAppActionPathParams)
+      : pathParamsInput
+    if (client._options.validate) {
+      assertValid(schemas.executeAppActionPathParamsWire, pathParams)
+    }
+    const path = `openmeter/apps/${(() => {
+      if (pathParams.appId === undefined) {
+        throw new Error('missing path parameter: appId')
+      }
+      return encodeURIComponent(String(pathParams.appId))
+    })()}/action`
+    const body = toWire(req.body, schemas.executeAppActionBody)
+    if (client._options.validate) {
+      assertValid(schemas.executeAppActionBodyWire, body)
+    }
+    return http(client)
+      .post(path, { ...options, json: body })
+      .json()
+      .then((data) => {
+        if (client._options.validate) {
+          assertValid(schemas.executeAppActionResponseWire, data)
+        }
+        return fromWire(data, schemas.executeAppActionResponse)
       })
   })
 }

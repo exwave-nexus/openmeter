@@ -10,8 +10,11 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
 	creditpurchasemodels "github.com/openmeterio/openmeter/openmeter/billing/charges/models/creditpurchase"
+	"github.com/openmeterio/openmeter/openmeter/streaming"
 	"github.com/openmeterio/openmeter/pkg/models"
+	"github.com/openmeterio/openmeter/pkg/slicesx"
 )
 
 var _ billing.LineEngine = (*LineEngine)(nil)
@@ -20,18 +23,38 @@ type LineEngine struct {
 	service *service
 }
 
+type buildInvoiceCreditPurchaseStandardLinesInput struct {
+	billing.BuildStandardInvoiceLinesInput
+	ResolveDynamicCostBasis bool
+}
+
 func (e *LineEngine) GetLineEngineType() billing.LineEngineType {
 	return billing.LineEngineTypeChargeCreditPurchase
 }
 
-func (e *LineEngine) IsLineBillableAsOf(_ context.Context, input billing.IsLineBillableAsOfInput) (bool, error) {
+func (e *LineEngine) AreLinesBillableAsOf(_ context.Context, input billing.AreLinesBillableAsOfInput) ([]billing.IsLineBillableAsOfResult, error) {
 	if err := input.Validate(); err != nil {
-		return false, fmt.Errorf("validating input: %w", err)
+		return nil, fmt.Errorf("validating input: %w", err)
 	}
 
-	// Billing enforces that credit purchases are never progressively billed, so there is no
-	// engine-side partial-period filtering to do here.
-	return true, nil
+	return slicesx.MapWithErrPreservingResults(input.Lines, func(line billing.GatheringLine, _ int) (billing.IsLineBillableAsOfResult, error) {
+		if line.SplitLineGroupID != nil {
+			return billing.IsLineBillableAsOfResult{}, billing.ValidationError{Err: billing.ErrInvoiceProgressiveBillingNotSupported}
+		}
+
+		if line.InvoiceAt.Truncate(streaming.MinimumWindowSizeDuration).After(input.AsOf.Truncate(streaming.MinimumWindowSizeDuration)) {
+			return billing.IsLineBillableAsOfResult{}, nil
+		}
+
+		return billing.IsLineBillableAsOfResult{
+			Billable:       true,
+			BillablePeriod: line.ServicePeriod,
+		}, nil
+	})
+}
+
+func (e *LineEngine) GateInvoiceAssignment(context.Context, billing.GateInvoiceAssignmentInput) (billing.GateInvoiceAssignmentResult, error) {
+	return nil, nil
 }
 
 func (e *LineEngine) SplitGatheringLine(_ context.Context, _ billing.SplitGatheringLineInput) (billing.SplitGatheringLineResult, error) {
@@ -39,17 +62,22 @@ func (e *LineEngine) SplitGatheringLine(_ context.Context, _ billing.SplitGather
 }
 
 func (e *LineEngine) BuildStandardInvoiceLines(ctx context.Context, input billing.BuildStandardInvoiceLinesInput) (billing.StandardLines, error) {
-	return e.buildInvoiceCreditPurchaseStandardLines(ctx, input)
+	return e.buildInvoiceCreditPurchaseStandardLines(ctx, buildInvoiceCreditPurchaseStandardLinesInput{
+		BuildStandardInvoiceLinesInput: input,
+	})
 }
 
 func (e *LineEngine) BuildStandardLinesForGatheringPreview(ctx context.Context, input billing.BuildStandardInvoiceLinesInput) (billing.StandardLines, error) {
-	return e.buildInvoiceCreditPurchaseStandardLines(ctx, input)
+	return e.buildInvoiceCreditPurchaseStandardLines(ctx, buildInvoiceCreditPurchaseStandardLinesInput{
+		BuildStandardInvoiceLinesInput: input,
+		ResolveDynamicCostBasis:        true,
+	})
 }
 
-// buildInvoiceCreditPurchaseStandardLines preserves unresolved gathering lines
-// as provisional zero-value lines. Resolved charges can be fully represented
-// without lifecycle side effects, including in previews.
-func (e *LineEngine) buildInvoiceCreditPurchaseStandardLines(ctx context.Context, input billing.BuildStandardInvoiceLinesInput) (billing.StandardLines, error) {
+// buildInvoiceCreditPurchaseStandardLines preserves unresolved lifecycle lines
+// as provisional zero-value lines. Gathering previews can resolve dynamic cost
+// basis locally so they expose the current fiat projection without side effects.
+func (e *LineEngine) buildInvoiceCreditPurchaseStandardLines(ctx context.Context, input buildInvoiceCreditPurchaseStandardLinesInput) (billing.StandardLines, error) {
 	if err := input.Validate(); err != nil {
 		return nil, fmt.Errorf("validating input: %w", err)
 	}
@@ -77,6 +105,25 @@ func (e *LineEngine) buildInvoiceCreditPurchaseStandardLines(ctx context.Context
 
 		if charge.Intent.Settlement.Type() != creditpurchase.SettlementTypeInvoice {
 			return nil, fmt.Errorf("credit purchase charge[%s] is not invoice settled", charge.ID)
+		}
+
+		if input.ResolveDynamicCostBasis && charge.Intent.CostBasis.Type() == creditpurchase.CostBasisTypeCustomCurrency {
+			costBasisIntent, err := charge.Intent.CostBasis.AsCustomCurrency()
+			if err != nil {
+				return nil, fmt.Errorf("getting custom-currency cost basis for credit purchase gathering preview charge[%s]: %w", charge.ID, err)
+			}
+
+			resolvedCostBasis, err := costbasis.ResolveForPreview(ctx, e.service.costbasisResolver, costbasis.ResolveForPreviewInput{
+				CurrencyID:        charge.Intent.Currency.NamespacedID,
+				Intent:            costBasisIntent,
+				ResolvedCostBasis: charge.State.ResolvedCostBasis,
+				ServicePeriodFrom: charge.Intent.ServicePeriod.From,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("resolving cost basis for credit purchase gathering preview charge[%s]: %w", charge.ID, err)
+			}
+
+			charge.State.ResolvedCostBasis = resolvedCostBasis
 		}
 
 		// If costbasis is not yet resolved, we should not try to populate the detailed lines until
@@ -238,6 +285,7 @@ func (e *LineEngine) OnPaymentAuthorized(ctx context.Context, input billing.OnPa
 	}
 
 	_, err := e.fireInvoiceLifecycleTriggerForLines(ctx, billing.TriggerAuthorized, input)
+
 	return err
 }
 
@@ -247,6 +295,7 @@ func (e *LineEngine) OnPaymentSettled(ctx context.Context, input billing.OnPayme
 	}
 
 	_, err := e.fireInvoiceLifecycleTriggerForLines(ctx, billing.TriggerPaid, input)
+
 	return err
 }
 

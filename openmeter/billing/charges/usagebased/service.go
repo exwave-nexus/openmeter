@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/alpacahq/alpacadecimal"
+	"github.com/samber/lo"
 	"github.com/samber/mo"
 
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
-	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/pkg/models"
 )
 
@@ -28,9 +29,6 @@ type UsageBasedService interface {
 	// GetByIDs loads usage-based charges. Request realization expansions when
 	// callers need run, detailed-line, or credit-allocation state.
 	GetByIDs(ctx context.Context, input GetByIDsInput) ([]Charge, error)
-	// UpdateSubscriptionItemID repairs subscription ownership metadata on the
-	// base intent; it must not rewrite an active customer-facing override layer.
-	UpdateSubscriptionItemID(ctx context.Context, charge Charge, newSubscriptionItemID string) (Charge, error)
 	// AdvanceCharge drives one charge until invoice patches are emitted or its
 	// lifecycle becomes stable. Callers must apply returned invoice patches
 	// before resuming when CanAdvance is true.
@@ -45,9 +43,39 @@ type UsageBasedService interface {
 }
 
 type CreateInput struct {
-	Namespace     string
-	Intents       []Intent
-	FeatureMeters feature.FeatureMeters
+	Namespace string
+	Intents   CreateIntents
+}
+
+type CreateIntent struct {
+	Intent
+	Options meta.CreateOptions
+}
+
+type CreateIntents []CreateIntent
+
+func NewCreateIntents(intents ...Intent) CreateIntents {
+	return lo.Map(intents, func(intent Intent, _ int) CreateIntent {
+		return CreateIntent{Intent: intent}
+	})
+}
+
+func (i CreateIntents) Validate() error {
+	errs := lo.Map(i, func(intent CreateIntent, idx int) error {
+		if err := intent.Intent.Validate(); err != nil {
+			return fmt.Errorf("[%d]: %w", idx, err)
+		}
+
+		return nil
+	})
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
+func (i CreateIntents) AsIntents() []Intent {
+	return lo.Map(i, func(intent CreateIntent, _ int) Intent {
+		return intent.Intent
+	})
 }
 
 func (i CreateInput) Validate() error {
@@ -56,14 +84,8 @@ func (i CreateInput) Validate() error {
 		errs = append(errs, errors.New("namespace is required"))
 	}
 
-	if len(i.Intents) > 0 && i.FeatureMeters == nil {
-		errs = append(errs, errors.New("feature meters are required"))
-	}
-
-	for idx, intent := range i.Intents {
-		if err := intent.Validate(); err != nil {
-			errs = append(errs, fmt.Errorf("intent [%d]: %w", idx, err))
-		}
+	if err := i.Intents.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("intents: %w", err))
 	}
 
 	return models.NewNillableGenericValidationError(errors.Join(errs...))
@@ -72,54 +94,6 @@ func (i CreateInput) Validate() error {
 type ChargeWithGatheringLine struct {
 	Charge                Charge
 	GatheringLineToCreate *billing.GatheringLine
-}
-
-type CreateIntent struct {
-	Intent      OverridableIntent
-	Annotations models.Annotations `json:"annotations"`
-
-	FeatureID         string
-	RatingEngine      RatingEngine
-	ResolvedCostBasis *costbasis.State
-}
-
-func (i CreateIntent) Validate() error {
-	var errs []error
-
-	if err := i.Intent.Validate(); err != nil {
-		errs = append(errs, err)
-	}
-
-	if i.FeatureID == "" {
-		errs = append(errs, errors.New("feature id is required"))
-	}
-
-	if err := i.RatingEngine.Validate(); err != nil {
-		errs = append(errs, fmt.Errorf("rating engine: %w", err))
-	}
-
-	return models.NewNillableGenericValidationError(errors.Join(errs...))
-}
-
-type CreateChargesInput struct {
-	Namespace string
-	Intents   []CreateIntent
-}
-
-func (i CreateChargesInput) Validate() error {
-	var errs []error
-
-	if i.Namespace == "" {
-		errs = append(errs, errors.New("namespace is required"))
-	}
-
-	for idx, intent := range i.Intents {
-		if err := intent.Validate(); err != nil {
-			errs = append(errs, fmt.Errorf("intent [%d]: %w", idx, err))
-		}
-	}
-
-	return models.NewNillableGenericValidationError(errors.Join(errs...))
 }
 
 type GetByIDsInput struct {
@@ -151,7 +125,7 @@ type AdvanceChargeInput struct {
 	// FeatureMeters is an authoritative optional resolution hint. None lets the
 	// service resolve the required feature meter; Some resolves exclusively from
 	// the supplied collection and returns an error when the feature is absent.
-	FeatureMeters mo.Option[feature.FeatureMeters]
+	FeatureMeters mo.Option[billingfeaturemeter.FeatureMeters]
 }
 
 func (i AdvanceChargeInput) Validate() error {
@@ -210,6 +184,11 @@ func (i GetCurrentTotalsInput) Validate() error {
 type GetCurrentTotalsResult struct {
 	Charge    Charge
 	DueTotals totals.Totals
+	// MeteredQuantity is the cumulative live metered quantity the due totals
+	// were rated from.
+	MeteredQuantity alpacadecimal.Decimal
+	// ValidationIssues are non-blocking issues from this live rating, not persisted charge issues.
+	ValidationIssues billing.ValidationIssues
 }
 
 func validateExpands(expands meta.Expands) error {

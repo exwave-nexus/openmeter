@@ -112,13 +112,14 @@ func fromDBBase(entity *entdb.ChargeUsageBased, chargeMeta meta.Charge) (usageba
 	}
 
 	return usagebased.ChargeBase{
-		ManagedResource: chargeMeta.ManagedResource,
-		Status:          entity.StatusDetailed,
-		Intent:          usagebased.NewOverridableIntent(intent, fromDBOverride(entity.Edges.IntentOverride)),
+		ManagedResource:  chargeMeta.ManagedResource,
+		Status:           entity.StatusDetailed,
+		ValidationIssues: chargeMeta.ValidationIssues,
+		Intent:           usagebased.NewOverridableIntent(intent, fromDBOverride(entity.Edges.IntentOverride)),
 		State: usagebased.State{
 			CurrentRealizationRunID: entity.CurrentRealizationRunID,
 			AdvanceAfter:            entity.AdvanceAfter,
-			FeatureID:               entity.FeatureID,
+			FeatureID:               lo.FromPtr(entity.FeatureID),
 			RatingEngine:            entity.RatingEngine,
 			CostBasisID:             costBasisID,
 			ResolvedCostBasis:       resolvedCostBasis,
@@ -152,7 +153,23 @@ func fromDBRuns(entity *entdb.ChargeUsageBased) (usagebased.RealizationRuns, err
 	return runs, nil
 }
 
-func fromDBRunBase(dbRun *entdb.ChargeUsageBasedRuns) usagebased.RealizationRunBase {
+func fromDBRunBase(dbRun *entdb.ChargeUsageBasedRuns) (usagebased.RealizationRunBase, error) {
+	if dbRun.SchemaLevel != usagebased.CurrentRealizationRunSchemaLevel {
+		return usagebased.RealizationRunBase{}, fmt.Errorf("unsupported usage-based realization run schema level: %d", dbRun.SchemaLevel)
+	}
+
+	var priorRunID *usagebased.RealizationRunID
+	if dbRun.PriorRunID != nil {
+		if *dbRun.PriorRunID == dbRun.ID {
+			return usagebased.RealizationRunBase{}, fmt.Errorf("usage-based realization run cannot reference itself as prior run [id=%s]", dbRun.ID)
+		}
+
+		priorRunID = &usagebased.RealizationRunID{
+			Namespace: dbRun.Namespace,
+			ID:        *dbRun.PriorRunID,
+		}
+	}
+
 	return usagebased.RealizationRunBase{
 		ID: usagebased.RealizationRunID{
 			Namespace: dbRun.Namespace,
@@ -167,18 +184,25 @@ func fromDBRunBase(dbRun *entdb.ChargeUsageBasedRuns) usagebased.RealizationRunB
 		InitialType:                           dbRun.InitialType,
 		StoredAtLT:                            dbRun.StoredAtLt.UTC(),
 		ServicePeriodTo:                       dbRun.ServicePeriodTo.UTC(),
+		PriorRunID:                            priorRunID,
 		MeteredQuantity:                       dbRun.MeteredQuantity,
 		Totals:                                totals.FromDB(dbRun),
 		NoFiatTransactionRequired:             dbRun.NoFiatTransactionRequired,
+		Immutable:                             dbRun.Immutable,
+		FiatOverageCreditAllocationCompleted:  dbRun.FiatOverageCreditAllocationCompleted,
 		DetailedLinesIncludeCreditAllocations: dbRun.DetailedLinesIncludeCreditAllocations,
-	}
+	}, nil
 }
 
 func fromDBRun(dbRun *entdb.ChargeUsageBasedRuns) (usagebased.RealizationRun, error) {
-	run := usagebased.RealizationRun{
-		RealizationRunBase: fromDBRunBase(dbRun),
+	base, err := fromDBRunBase(dbRun)
+	if err != nil {
+		return usagebased.RealizationRun{}, err
 	}
-	var err error
+
+	run := usagebased.RealizationRun{
+		RealizationRunBase: base,
+	}
 
 	run.CreditsAllocated, err = creditrealization.FromDBRealizationsOrErr(dbRun.Edges.CreditAllocationsOrErr())
 	if err != nil {

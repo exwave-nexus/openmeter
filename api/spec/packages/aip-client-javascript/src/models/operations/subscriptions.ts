@@ -10,10 +10,14 @@ import type {
   Subscription,
   SubscriptionAddon,
   SubscriptionAddonPagePaginatedResponse,
+  SubscriptionAddonUpdate,
   SubscriptionCancelInput,
   SubscriptionChangeInput,
   SubscriptionChangeResponse,
   SubscriptionCreateInput,
+  SubscriptionEditInput,
+  SubscriptionMigrateInput,
+  SubscriptionMigrateResponse,
   SubscriptionPagePaginatedResponse,
 } from '../types.js'
 
@@ -58,11 +62,33 @@ export type UnscheduleCancelationRequest = {
 }
 export type UnscheduleCancelationResponse = Subscription
 
+export type UnscheduleSubscriptionRequest = {
+  subscriptionId: string
+}
+export type UnscheduleSubscriptionResponse = void
+
+export type RestoreSubscriptionRequest = {
+  subscriptionId: string
+}
+export type RestoreSubscriptionResponse = Subscription
+
 export type ChangeSubscriptionRequest = AcceptDateStrings<{
   subscriptionId: string
   body: SubscriptionChangeInput
 }>
 export type ChangeSubscriptionResponse = SubscriptionChangeResponse
+
+export type MigrateSubscriptionRequest = AcceptDateStrings<{
+  subscriptionId: string
+  body: SubscriptionMigrateInput
+}>
+export type MigrateSubscriptionResponse = SubscriptionMigrateResponse
+
+export type EditSubscriptionRequest = AcceptDateStrings<{
+  subscriptionId: string
+  body: SubscriptionEditInput
+}>
+export type EditSubscriptionResponse = Subscription
 
 export type CreateSubscriptionAddonRequest = AcceptDateStrings<{
   subscriptionId: string
@@ -98,3 +124,10 @@ export type GetSubscriptionAddonRequest = {
   subscriptionAddonId: string
 }
 export type GetSubscriptionAddonResponse = SubscriptionAddon
+
+export type UpdateSubscriptionAddonRequest = AcceptDateStrings<{
+  subscriptionId: string
+  subscriptionAddonId: string
+  body: SubscriptionAddonUpdate
+}>
+export type UpdateSubscriptionAddonResponse = SubscriptionAddon

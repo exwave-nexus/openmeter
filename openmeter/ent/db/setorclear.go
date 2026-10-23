@@ -2108,6 +2108,20 @@ func (u *BillingInvoiceValidationIssueUpdateOne) SetOrClearPath(value *string) *
 	return u.SetPath(*value)
 }
 
+func (u *BillingInvoiceValidationIssueUpdate) SetOrClearAttributes(value *models.Annotations) *BillingInvoiceValidationIssueUpdate {
+	if value == nil {
+		return u.ClearAttributes()
+	}
+	return u.SetAttributes(*value)
+}
+
+func (u *BillingInvoiceValidationIssueUpdateOne) SetOrClearAttributes(value *models.Annotations) *BillingInvoiceValidationIssueUpdateOne {
+	if value == nil {
+		return u.ClearAttributes()
+	}
+	return u.SetAttributes(*value)
+}
+
 func (u *BillingProfileUpdate) SetOrClearMetadata(value *map[string]string) *BillingProfileUpdate {
 	if value == nil {
 		return u.ClearMetadata()
@@ -2528,6 +2542,20 @@ func (u *ChargeUpdateOne) SetOrClearDeletedAt(value *time.Time) *ChargeUpdateOne
 	return u.SetDeletedAt(*value)
 }
 
+func (u *ChargeCreditPurchaseUpdate) SetOrClearSubscriptionPhaseID(value *string) *ChargeCreditPurchaseUpdate {
+	if value == nil {
+		return u.ClearSubscriptionPhaseID()
+	}
+	return u.SetSubscriptionPhaseID(*value)
+}
+
+func (u *ChargeCreditPurchaseUpdateOne) SetOrClearSubscriptionPhaseID(value *string) *ChargeCreditPurchaseUpdateOne {
+	if value == nil {
+		return u.ClearSubscriptionPhaseID()
+	}
+	return u.SetSubscriptionPhaseID(*value)
+}
+
 func (u *ChargeCreditPurchaseUpdate) SetOrClearSubscriptionItemID(value *string) *ChargeCreditPurchaseUpdate {
 	if value == nil {
 		return u.ClearSubscriptionItemID()
@@ -2610,6 +2638,20 @@ func (u *ChargeCreditPurchaseUpdateOne) SetOrClearDescription(value *string) *Ch
 		return u.ClearDescription()
 	}
 	return u.SetDescription(*value)
+}
+
+func (u *ChargeCreditPurchaseUpdate) SetOrClearValidationIssues(value *billing.ValidationIssues) *ChargeCreditPurchaseUpdate {
+	if value == nil {
+		return u.ClearValidationIssues()
+	}
+	return u.SetValidationIssues(*value)
+}
+
+func (u *ChargeCreditPurchaseUpdateOne) SetOrClearValidationIssues(value *billing.ValidationIssues) *ChargeCreditPurchaseUpdateOne {
+	if value == nil {
+		return u.ClearValidationIssues()
+	}
+	return u.SetValidationIssues(*value)
 }
 
 func (u *ChargeCreditPurchaseUpdate) SetOrClearFiatCostBasis(value *alpacadecimal.Decimal) *ChargeCreditPurchaseUpdate {
@@ -2934,6 +2976,20 @@ func (u *ChargeCreditPurchaseInvoicedPaymentUpdateOne) SetOrClearAnnotations(val
 	return u.SetAnnotations(*value)
 }
 
+func (u *ChargeFlatFeeUpdate) SetOrClearSubscriptionPhaseID(value *string) *ChargeFlatFeeUpdate {
+	if value == nil {
+		return u.ClearSubscriptionPhaseID()
+	}
+	return u.SetSubscriptionPhaseID(*value)
+}
+
+func (u *ChargeFlatFeeUpdateOne) SetOrClearSubscriptionPhaseID(value *string) *ChargeFlatFeeUpdateOne {
+	if value == nil {
+		return u.ClearSubscriptionPhaseID()
+	}
+	return u.SetSubscriptionPhaseID(*value)
+}
+
 func (u *ChargeFlatFeeUpdate) SetOrClearSubscriptionItemID(value *string) *ChargeFlatFeeUpdate {
 	if value == nil {
 		return u.ClearSubscriptionItemID()
@@ -3016,6 +3072,20 @@ func (u *ChargeFlatFeeUpdateOne) SetOrClearDescription(value *string) *ChargeFla
 		return u.ClearDescription()
 	}
 	return u.SetDescription(*value)
+}
+
+func (u *ChargeFlatFeeUpdate) SetOrClearValidationIssues(value *billing.ValidationIssues) *ChargeFlatFeeUpdate {
+	if value == nil {
+		return u.ClearValidationIssues()
+	}
+	return u.SetValidationIssues(*value)
+}
+
+func (u *ChargeFlatFeeUpdateOne) SetOrClearValidationIssues(value *billing.ValidationIssues) *ChargeFlatFeeUpdateOne {
+	if value == nil {
+		return u.ClearValidationIssues()
+	}
+	return u.SetValidationIssues(*value)
 }
 
 func (u *ChargeFlatFeeUpdate) SetOrClearIntentDeletedAt(value *time.Time) *ChargeFlatFeeUpdate {
@@ -3648,6 +3718,20 @@ func (u *ChargeFlatFeeRunPaymentUpdateOne) SetOrClearAnnotations(value *models.A
 	return u.SetAnnotations(*value)
 }
 
+func (u *ChargeUsageBasedUpdate) SetOrClearSubscriptionPhaseID(value *string) *ChargeUsageBasedUpdate {
+	if value == nil {
+		return u.ClearSubscriptionPhaseID()
+	}
+	return u.SetSubscriptionPhaseID(*value)
+}
+
+func (u *ChargeUsageBasedUpdateOne) SetOrClearSubscriptionPhaseID(value *string) *ChargeUsageBasedUpdateOne {
+	if value == nil {
+		return u.ClearSubscriptionPhaseID()
+	}
+	return u.SetSubscriptionPhaseID(*value)
+}
+
 func (u *ChargeUsageBasedUpdate) SetOrClearSubscriptionItemID(value *string) *ChargeUsageBasedUpdate {
 	if value == nil {
 		return u.ClearSubscriptionItemID()
@@ -3732,6 +3816,20 @@ func (u *ChargeUsageBasedUpdateOne) SetOrClearDescription(value *string) *Charge
 	return u.SetDescription(*value)
 }
 
+func (u *ChargeUsageBasedUpdate) SetOrClearValidationIssues(value *billing.ValidationIssues) *ChargeUsageBasedUpdate {
+	if value == nil {
+		return u.ClearValidationIssues()
+	}
+	return u.SetValidationIssues(*value)
+}
+
+func (u *ChargeUsageBasedUpdateOne) SetOrClearValidationIssues(value *billing.ValidationIssues) *ChargeUsageBasedUpdateOne {
+	if value == nil {
+		return u.ClearValidationIssues()
+	}
+	return u.SetValidationIssues(*value)
+}
+
 func (u *ChargeUsageBasedUpdate) SetOrClearIntentDeletedAt(value *time.Time) *ChargeUsageBasedUpdate {
 	if value == nil {
 		return u.ClearIntentDeletedAt()
@@ -3758,6 +3856,20 @@ func (u *ChargeUsageBasedUpdateOne) SetOrClearDiscounts(value **billing.Discount
 		return u.ClearDiscounts()
 	}
 	return u.SetDiscounts(*value)
+}
+
+func (u *ChargeUsageBasedUpdate) SetOrClearFeatureID(value *string) *ChargeUsageBasedUpdate {
+	if value == nil {
+		return u.ClearFeatureID()
+	}
+	return u.SetFeatureID(*value)
+}
+
+func (u *ChargeUsageBasedUpdateOne) SetOrClearFeatureID(value *string) *ChargeUsageBasedUpdateOne {
+	if value == nil {
+		return u.ClearFeatureID()
+	}
+	return u.SetFeatureID(*value)
 }
 
 func (u *ChargeUsageBasedUpdate) SetOrClearUnitConfig(value **unitconfig.UnitConfig) *ChargeUsageBasedUpdate {

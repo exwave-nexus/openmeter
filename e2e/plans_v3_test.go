@@ -66,6 +66,7 @@ func TestV3PlanLifecycle(t *testing.T) {
 				break
 			}
 		}
+
 		assert.True(t, found, "created plan not found in list")
 	})
 
@@ -224,6 +225,7 @@ func TestV3PlanInvalidDraftLifecycle(t *testing.T) {
 		for _, e := range got.ValidationErrors {
 			codes = append(codes, e.Code)
 		}
+
 		assert.Contains(t, codes, "plan_phase_has_no_rate_cards")
 	})
 
@@ -243,6 +245,101 @@ func TestV3PlanInvalidDraftLifecycle(t *testing.T) {
 				Name:      phase.Name,
 				Duration:  phase.Duration,
 				RateCards: []v3sdk.RateCardInput{validFlatRateCard("added_rc")},
+			}},
+		}
+		_, err := c.Plans.Update(t.Context(), planID, update)
+		c.requireStatus(http.StatusOK, err)
+	})
+
+	t.Run("publish succeeds after fix", func(t *testing.T) {
+		require.NotEmpty(t, planID)
+		published, err := c.Plans.Publish(t.Context(), planID)
+		c.requireStatus(http.StatusOK, err)
+		require.NotNil(t, published)
+		assert.Equal(t, v3sdk.PlanStatusActive, published.Status)
+	})
+}
+
+// Non-flat prices require billing_cadence (the plan analog of
+// TestV3AddonUnitPriceWithoutBillingCadence): the body is accepted as a
+// zero-cadence draft, flagged as billing_cadence_invalid_value on GET, and
+// rejected at publish.
+func TestV3PlanUnitPriceWithoutBillingCadence(t *testing.T) {
+	c := newV3Client(t)
+
+	meterKey := uniqueKey("plan_no_cadence")
+
+	m, err := c.Meters.Create(t.Context(), v3sdk.CreateMeterRequest{
+		Key:           meterKey,
+		Name:          "Test Meter " + meterKey,
+		Aggregation:   v3sdk.MeterAggregationSum,
+		EventType:     uniqueKey("plan_no_cadence_event"),
+		ValueProperty: lo.ToPtr("$.value"),
+	})
+	c.requireStatus(http.StatusCreated, err)
+	require.NotNil(t, m)
+
+	featureKey := uniqueKey("plan_no_cadence")
+
+	f, err := c.Features.Create(t.Context(), v3sdk.CreateFeatureRequest{
+		Key:  featureKey,
+		Name: "Test Feature " + featureKey,
+		Meter: &v3sdk.FeatureMeterReferenceInput{
+			ID: m.ID,
+		},
+	})
+	c.requireStatus(http.StatusCreated, err)
+	require.NotNil(t, f)
+
+	rc := validUnitRateCard(*f)
+	rc.BillingCadence = nil
+
+	phase := validPlanPhase("no_cadence_phase", true /* isLast */)
+	phase.RateCards = []v3sdk.RateCardInput{rc}
+
+	body := validPlanRequest("unit_no_cadence")
+	body.Phases = []v3sdk.PlanPhaseInput{phase}
+
+	var planID string
+
+	t.Run("create accepts the invalid draft", func(t *testing.T) {
+		plan, err := c.Plans.Create(t.Context(), body)
+		c.requireStatus(http.StatusCreated, err)
+		require.NotNil(t, plan)
+		assert.Equal(t, v3sdk.PlanStatusDraft, plan.Status)
+		planID = plan.ID
+	})
+
+	t.Run("validation_errors surfaces on GET", func(t *testing.T) {
+		require.NotEmpty(t, planID)
+		got, err := c.Plans.Get(t.Context(), planID)
+		c.requireStatus(http.StatusOK, err)
+		require.NotNil(t, got)
+		require.NotEmpty(t, got.ValidationErrors, "expected validation_errors on the draft")
+
+		var codes []string
+		for _, e := range got.ValidationErrors {
+			codes = append(codes, e.Code)
+		}
+
+		assert.Contains(t, codes, "billing_cadence_invalid_value")
+	})
+
+	t.Run("publish rejects with the same code", func(t *testing.T) {
+		require.NotEmpty(t, planID)
+		_, err := c.Plans.Publish(t.Context(), planID)
+		problem := requireProblem(t, err, http.StatusBadRequest)
+		assertValidationCode(t, problem, "billing_cadence_invalid_value")
+	})
+
+	t.Run("fix by setting billing_cadence", func(t *testing.T) {
+		require.NotEmpty(t, planID)
+		update := v3sdk.UpsertPlanRequest{
+			Name: body.Name,
+			Phases: []v3sdk.PlanPhaseInput{{
+				Key:       phase.Key,
+				Name:      phase.Name,
+				RateCards: []v3sdk.RateCardInput{validUnitRateCard(*f)},
 			}},
 		}
 		_, err := c.Plans.Update(t.Context(), planID, update)
@@ -597,6 +694,7 @@ func TestV3PlanReadTranslatesV1DynamicAndPackagePrices(t *testing.T) {
 				break
 			}
 		}
+
 		require.NotNil(t, found, "created plan not in list response (the v3 list handler should no longer skip plans with v1 dynamic/package prices)")
 
 		dynRC := findRateCardByKey(t, found, dynamicRCKey)

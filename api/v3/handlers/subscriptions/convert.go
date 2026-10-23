@@ -3,16 +3,26 @@ package subscriptions
 import (
 	"context"
 	"fmt"
+	"slices"
+	"time"
 
 	"github.com/samber/lo"
 
 	api "github.com/openmeterio/openmeter/api/v3"
 	"github.com/openmeterio/openmeter/api/v3/apierrors"
+	"github.com/openmeterio/openmeter/api/v3/handlers/plans"
 	"github.com/openmeterio/openmeter/api/v3/labels"
+	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog/plan"
+	plansubscription "github.com/openmeterio/openmeter/openmeter/productcatalog/subscription"
 	"github.com/openmeterio/openmeter/openmeter/subscription"
+	"github.com/openmeterio/openmeter/openmeter/subscription/patch"
 	subscriptionworkflow "github.com/openmeterio/openmeter/openmeter/subscription/workflow"
 	"github.com/openmeterio/openmeter/pkg/clock"
+	"github.com/openmeterio/openmeter/pkg/currencyx"
+	"github.com/openmeterio/openmeter/pkg/datetime"
 	"github.com/openmeterio/openmeter/pkg/models"
 )
 
@@ -31,9 +41,12 @@ func FromAPISubscriptionSortField(ctx context.Context, field string) (subscripti
 	}
 }
 
-func ToAPIBillingSubscription(subscription subscription.Subscription) api.BillingSubscription {
-	costBasisPins := make([]api.BillingSubscriptionCostBasisPin, 0, len(subscription.CostBasisPins))
-	for _, pin := range subscription.CostBasisPins {
+// subscriptionBaseFields maps the subscription's own fields — everything except the
+// phases and current billing period, which are resolved from the view by
+// ToAPIBillingSubscription.
+func subscriptionBaseFields(sub subscription.Subscription, now time.Time) api.BillingSubscriptionBase {
+	costBasisPins := make([]api.BillingSubscriptionCostBasisPin, 0, len(sub.CostBasisPins))
+	for _, pin := range sub.CostBasisPins {
 		costBasisPins = append(costBasisPins, api.BillingSubscriptionCostBasisPin{
 			CustomCurrencyId: pin.CustomCurrencyID,
 			InvoiceCurrency:  pin.InvoiceCurrency.String(),
@@ -41,27 +54,217 @@ func ToAPIBillingSubscription(subscription subscription.Subscription) api.Billin
 		})
 	}
 
-	subscriptionAPI := api.BillingSubscription{
-		Id:              subscription.ID,
-		CustomerId:      subscription.CustomerId,
-		InvoiceCurrency: subscription.InvoiceCurrency.String(),
-		CostBasisMode:   api.BillingSubscriptionCostBasisMode(subscription.CostBasisMode.OrDefault()),
+	result := api.BillingSubscriptionBase{
+		Id:              sub.ID,
+		Name:            sub.Name,
+		Description:     sub.Description,
+		ActiveFrom:      sub.ActiveFrom,
+		ActiveTo:        sub.ActiveTo,
+		CustomerId:      sub.CustomerId,
+		InvoiceCurrency: sub.InvoiceCurrency.String(),
+		CostBasisMode:   api.BillingSubscriptionCostBasisMode(sub.CostBasisMode.OrDefault()),
 		CostBasisPins:   costBasisPins,
-		BillingAnchor:   subscription.BillingAnchor,
-		SettlementMode:  lo.ToPtr(api.BillingSettlementMode(subscription.SettlementMode)),
-		Status:          api.BillingSubscriptionStatus(subscription.GetStatusAt(clock.Now())),
-		Labels:          labels.FromMetadataAnnotations(subscription.Metadata, subscription.Annotations),
-		CreatedAt:       subscription.CreatedAt,
-		UpdatedAt:       subscription.UpdatedAt,
-		DeletedAt:       subscription.DeletedAt,
+		BillingCadence:  sub.BillingCadence.ISOString().String(),
+		BillingAnchor:   sub.BillingAnchor,
+		ProRatingConfig: &api.BillingSubscriptionProRatingConfig{
+			Enabled: sub.ProRatingConfig.Enabled,
+			Mode:    api.BillingRateCardProrationMode(sub.ProRatingConfig.Mode),
+		},
+		SettlementMode: lo.ToPtr(api.BillingSettlementMode(sub.SettlementMode)),
+		Status:         api.BillingSubscriptionStatus(sub.GetStatusAt(now)),
+		Labels:         labels.FromMetadataAnnotations(sub.Metadata, sub.Annotations),
+		CreatedAt:      sub.CreatedAt,
+		UpdatedAt:      sub.UpdatedAt,
+		DeletedAt:      sub.DeletedAt,
 	}
 
-	// Only set if the subscription is created from a plan
-	if subscription.PlanRef != nil {
-		subscriptionAPI.PlanId = &subscription.PlanRef.Id
+	// Only set if the subscription is created from a plan.
+	if sub.PlanRef != nil {
+		// plan_id is deprecated in favor of plan, but retained for backwards compatibility.
+		result.PlanId = &sub.PlanRef.Id
+		result.Plan = &api.BillingSubscriptionPlanReference{
+			Id:      sub.PlanRef.Id,
+			Key:     sub.PlanRef.Key,
+			Version: sub.PlanRef.Version,
+		}
 	}
 
-	return subscriptionAPI
+	return result
+}
+
+// ToAPIBillingSubscriptionWithoutView maps a bare subscription — no view — to the
+// API model: base fields only, an empty phase list, and no current period.
+// It serves callers that side-load subscriptions without their specs (e.g.
+// the customer charges subscription expand); the view-derived fields need
+// ToAPIBillingSubscription.
+func ToAPIBillingSubscriptionWithoutView(sub subscription.Subscription) api.BillingSubscription {
+	return mapSubscriptionBaseToFull(subscriptionBaseFields(sub, clock.Now()))
+}
+
+// ToAPIBillingSubscriptionBase maps the subscription's own fields without view data.
+func ToAPIBillingSubscriptionBase(sub subscription.Subscription) api.BillingSubscriptionBase {
+	return subscriptionBaseFields(sub, clock.Now())
+}
+
+// The generated full model is flat, so its shared fields need an explicit mapping.
+func mapSubscriptionBaseToFull(fields api.BillingSubscriptionBase) api.BillingSubscription {
+	return api.BillingSubscription{
+		Phases:          []api.BillingSubscriptionPhase{},
+		Id:              fields.Id,
+		Name:            fields.Name,
+		Description:     fields.Description,
+		ActiveFrom:      fields.ActiveFrom,
+		ActiveTo:        fields.ActiveTo,
+		CustomerId:      fields.CustomerId,
+		InvoiceCurrency: fields.InvoiceCurrency,
+		CostBasisMode:   fields.CostBasisMode,
+		CostBasisPins:   fields.CostBasisPins,
+		BillingCadence:  fields.BillingCadence,
+		BillingAnchor:   fields.BillingAnchor,
+		ProRatingConfig: fields.ProRatingConfig,
+		SettlementMode:  fields.SettlementMode,
+		Status:          fields.Status,
+		Labels:          fields.Labels,
+		CreatedAt:       fields.CreatedAt,
+		UpdatedAt:       fields.UpdatedAt,
+		DeletedAt:       fields.DeletedAt,
+		PlanId:          fields.PlanId,
+		Plan:            fields.Plan,
+	}
+}
+
+func ToAPIBillingSubscription(view subscription.SubscriptionView) (api.BillingSubscription, error) {
+	// Resolve a single "now" and thread it through status, the current period, and
+	// phase classification so every time-dependent field reflects the same instant.
+	now := clock.Now()
+
+	result := mapSubscriptionBaseToFull(subscriptionBaseFields(view.Subscription, now))
+
+	// The current aligned billing period only has a value while the subscription is
+	// active and aligned. Querying it before the subscription starts is expected, not
+	// an error, so that case leaves current_period unset.
+	if period, err := view.Spec.GetAlignedBillingPeriodAt(now); err != nil {
+		if !subscription.IsErrSubscriptionBillingPeriodQueriedBeforeSubscriptionStart(err) {
+			return api.BillingSubscription{}, err
+		}
+	} else {
+		result.CurrentPeriod = &api.ClosedPeriod{From: period.From, To: period.To}
+	}
+
+	phases := make([]api.BillingSubscriptionPhase, 0, len(view.Phases))
+	for _, phaseView := range view.Phases {
+		phase, err := toAPIBillingSubscriptionPhase(view, phaseView, now)
+		if err != nil {
+			return api.BillingSubscription{}, err
+		}
+
+		phases = append(phases, phase)
+	}
+
+	result.Phases = phases
+
+	return result, nil
+}
+
+// phaseRelation classifies a phase relative to the current time, which decides which
+// version of each item is surfaced.
+type phaseRelation int
+
+const (
+	phaseRelationPast phaseRelation = iota
+	phaseRelationCurrent
+	phaseRelationFuture
+)
+
+func toAPIBillingSubscriptionPhase(view subscription.SubscriptionView, phaseView subscription.SubscriptionPhaseView, now time.Time) (api.BillingSubscriptionPhase, error) {
+	phase := phaseView.SubscriptionPhase
+
+	// A phase present on the view must have a cadence in the spec; a lookup error is a
+	// spec/view inconsistency (not an open-ended phase), so surface it.
+	cadence, err := view.Spec.GetPhaseCadence(phase.Key)
+	if err != nil {
+		return api.BillingSubscriptionPhase{}, fmt.Errorf("failed to get cadence for phase %q: %w", phase.Key, err)
+	}
+
+	activeTo := cadence.ActiveTo
+
+	// Classify the phase relative to now to decide which item version to surface.
+	relation := phaseRelationPast
+	if currentPhase, ok := view.Spec.GetCurrentPhaseAt(now); ok && currentPhase.PhaseKey == phase.Key {
+		relation = phaseRelationCurrent
+	} else if phase.ActiveFrom.After(now) {
+		relation = phaseRelationFuture
+	}
+
+	// Sort keys for a deterministic item order across responses.
+	itemKeys := lo.Keys(phaseView.ItemsByKey)
+	slices.Sort(itemKeys)
+
+	items := make([]api.BillingSubscriptionItem, 0, len(itemKeys))
+	for _, key := range itemKeys {
+		versions := phaseView.ItemsByKey[key]
+		if len(versions) == 0 {
+			continue
+		}
+
+		var resolved *subscription.SubscriptionItemView
+		switch relation {
+		case phaseRelationCurrent:
+			for i := range versions {
+				if versions[i].SubscriptionItem.IsActiveAt(now) {
+					resolved = &versions[i]
+					break
+				}
+			}
+		case phaseRelationFuture:
+			resolved = &versions[0]
+		default: // phaseRelationPast
+			resolved = &versions[len(versions)-1]
+		}
+
+		if resolved == nil {
+			continue
+		}
+
+		item, err := toAPIBillingSubscriptionItem(*resolved)
+		if err != nil {
+			return api.BillingSubscriptionPhase{}, err
+		}
+
+		items = append(items, item)
+	}
+
+	return api.BillingSubscriptionPhase{
+		Id:          phase.ID,
+		Key:         phase.Key,
+		Name:        phase.Name,
+		Description: phase.Description,
+		Labels:      labels.FromMetadata(phase.Metadata),
+		ActiveFrom:  phase.ActiveFrom,
+		ActiveTo:    activeTo,
+		CreatedAt:   phase.CreatedAt,
+		UpdatedAt:   phase.UpdatedAt,
+		DeletedAt:   phase.DeletedAt,
+		Items:       items,
+	}, nil
+}
+
+// toAPIBillingSubscriptionItem maps a resolved item version to the API item,
+// reusing the shared v3 rate card converter.
+func toAPIBillingSubscriptionItem(itemView subscription.SubscriptionItemView) (api.BillingSubscriptionItem, error) {
+	item := itemView.SubscriptionItem
+
+	rateCard, err := plans.ToAPIBillingRateCard(item.RateCard)
+	if err != nil {
+		return api.BillingSubscriptionItem{}, fmt.Errorf("failed to map rate card for item %q: %w", item.Key, err)
+	}
+
+	return api.BillingSubscriptionItem{
+		Id:         item.ID,
+		ActiveFrom: item.ActiveFrom,
+		ActiveTo:   item.ActiveTo,
+		RateCard:   rateCard,
+	}, nil
 }
 
 func FromAPIBillingSubscriptionEditTimingEnum(t api.BillingSubscriptionEditTimingEnum) (subscription.Timing, error) {
@@ -90,6 +293,29 @@ func FromAPIBillingSubscriptionEditTiming(t api.BillingSubscriptionEditTiming) (
 	return FromAPIBillingSubscriptionEditTimingEnum(enum)
 }
 
+// FromAPIBillingSubscriptionCreateTiming maps the create-body timing to the domain
+// timing. Create timing is deliberately narrower than edit timing: only immediate
+// or a custom timestamp — next_billing_cycle is not a create value (a new
+// subscription has no current billing cycle), so it is not part of the type.
+func FromAPIBillingSubscriptionCreateTiming(t api.BillingSubscriptionCreateTiming) (subscription.Timing, error) {
+	// Try decoding as a custom RFC3339 datetime first, otherwise it would also decode
+	// as a "string enum" and we'd never be able to distinguish enum vs datetime.
+	if custom, err := t.AsDateTime(); err == nil {
+		return subscription.Timing{Custom: &custom}, nil
+	}
+
+	enum, err := t.AsBillingSubscriptionCreateTimingEnum()
+	if err != nil {
+		return subscription.Timing{}, models.NewGenericValidationError(fmt.Errorf("invalid timing"))
+	}
+
+	if enum != api.BillingSubscriptionCreateTimingEnumImmediate {
+		return subscription.Timing{}, models.NewGenericValidationError(fmt.Errorf("invalid timing: %s", enum))
+	}
+
+	return subscription.Timing{Enum: lo.ToPtr(subscription.TimingImmediate)}, nil
+}
+
 // FromAPIBillingSubscriptionCreate converts a create subscription request to a create subscription workflow input.
 func FromAPIBillingSubscriptionCreate(
 	namespace string,
@@ -102,6 +328,17 @@ func FromAPIBillingSubscriptionCreate(
 		return subscriptionworkflow.CreateSubscriptionWorkflowInput{}, err
 	}
 
+	// Timing defaults to immediate when omitted; a future timing schedules the
+	// subscription to start later. The domain validates the resolved timing
+	// (rejecting a past instant), mirroring edit/change.
+	timing := subscription.Timing{Enum: lo.ToPtr(subscription.TimingImmediate)}
+	if createSubscriptionRequest.Timing != nil {
+		timing, err = FromAPIBillingSubscriptionCreateTiming(*createSubscriptionRequest.Timing)
+		if err != nil {
+			return subscriptionworkflow.CreateSubscriptionWorkflowInput{}, err
+		}
+	}
+
 	workflowInput := subscriptionworkflow.CreateSubscriptionWorkflowInput{
 		Namespace:     namespace,
 		CustomerID:    customerID.ID,
@@ -109,10 +346,7 @@ func FromAPIBillingSubscriptionCreate(
 		ChangeSubscriptionWorkflowInput: subscriptionworkflow.ChangeSubscriptionWorkflowInput{
 			Name:          subscriptionName,
 			CostBasisMode: subscription.CostBasisMode(lo.FromPtr(createSubscriptionRequest.CostBasisMode)),
-			Timing: subscription.Timing{
-				// TODO: accept from request
-				Enum: lo.ToPtr(subscription.TimingImmediate),
-			},
+			Timing:        timing,
 			BillingAnchor: createSubscriptionRequest.BillingAnchor,
 			MetadataModel: models.MetadataModel{
 				Metadata: metadata,
@@ -121,4 +355,217 @@ func FromAPIBillingSubscriptionCreate(
 	}
 
 	return workflowInput, nil
+}
+
+// FromAPIBillingSubscriptionEditOperation maps a single API edit operation to the
+// domain subscription patch that applies it to the target spec. The mapping mirrors
+// the v1 editSubscription handler; rate cards are converted via the shared plans
+// converter so add-item stays consistent with plan/subscription creation.
+func FromAPIBillingSubscriptionEditOperation(op api.BillingSubscriptionEditOperation) (subscription.Patch, error) {
+	disc, err := op.Discriminator()
+	if err != nil {
+		return nil, models.NewGenericValidationError(fmt.Errorf("failed to read edit operation type: %w", err))
+	}
+
+	switch disc {
+	case string(api.BillingSubscriptionEditAddItemTypeAddItem):
+		apiP, err := op.AsBillingSubscriptionEditAddItem()
+		if err != nil {
+			return nil, models.NewGenericValidationError(fmt.Errorf("failed to decode add_item operation: %w", err))
+		}
+
+		rc, err := plans.FromAPIBillingRateCard(apiP.RateCard)
+		if err != nil {
+			return nil, models.NewGenericValidationError(fmt.Errorf("failed to convert add_item rate card: %w", err))
+		}
+
+		phaseRC := &plansubscription.RateCard{
+			PhaseKey: apiP.PhaseKey,
+			RateCard: rc,
+		}
+
+		return patch.PatchAddItem{
+			PhaseKey: apiP.PhaseKey,
+			ItemKey:  rc.Key(),
+			CreateInput: subscription.SubscriptionItemSpec{
+				CreateSubscriptionItemInput: subscription.CreateSubscriptionItemInput{
+					CreateSubscriptionItemPlanInput:     phaseRC.ToCreateSubscriptionItemPlanInput(),
+					CreateSubscriptionItemCustomerInput: subscription.CreateSubscriptionItemCustomerInput{},
+				},
+			},
+		}, nil
+
+	case string(api.BillingSubscriptionEditRemoveItemTypeRemoveItem):
+		apiP, err := op.AsBillingSubscriptionEditRemoveItem()
+		if err != nil {
+			return nil, models.NewGenericValidationError(fmt.Errorf("failed to decode remove_item operation: %w", err))
+		}
+
+		return patch.PatchRemoveItem{
+			PhaseKey: apiP.PhaseKey,
+			ItemKey:  apiP.ItemKey,
+		}, nil
+
+	case string(api.BillingSubscriptionEditAddPhaseTypeAddPhase):
+		apiP, err := op.AsBillingSubscriptionEditAddPhase()
+		if err != nil {
+			return nil, models.NewGenericValidationError(fmt.Errorf("failed to decode add_phase operation: %w", err))
+		}
+
+		// start_after is required but nullable: a null (or absent) value leaves the
+		// zero offset, i.e. the subscription start. The domain then rejects that as
+		// "in the past" on a running subscription, matching v1's null handling.
+		var startAfter datetime.ISODuration
+		if apiP.Phase.StartAfter.IsSpecified() && !apiP.Phase.StartAfter.IsNull() {
+			sa, err := apiP.Phase.StartAfter.Get()
+			if err != nil {
+				return nil, models.NewGenericValidationError(fmt.Errorf("failed to read add_phase start_after: %w", err))
+			}
+
+			startAfter, err = datetime.ISODurationString(sa).Parse()
+			if err != nil {
+				return nil, models.NewGenericValidationError(fmt.Errorf("failed to parse add_phase start_after: %w", err))
+			}
+		}
+
+		var duration *datetime.ISODuration
+		if apiP.Phase.Duration != nil {
+			d, err := datetime.ISODurationString(*apiP.Phase.Duration).Parse()
+			if err != nil {
+				return nil, models.NewGenericValidationError(fmt.Errorf("failed to parse add_phase duration: %w", err))
+			}
+
+			duration = &d
+		}
+
+		return patch.PatchAddPhase{
+			PhaseKey: apiP.Phase.Key,
+			CreateInput: subscription.CreateSubscriptionPhaseInput{
+				Duration: duration,
+				CreateSubscriptionPhasePlanInput: subscription.CreateSubscriptionPhasePlanInput{
+					PhaseKey:    apiP.Phase.Key,
+					StartAfter:  startAfter,
+					Name:        apiP.Phase.Name,
+					Description: apiP.Phase.Description,
+				},
+				CreateSubscriptionPhaseCustomerInput: subscription.CreateSubscriptionPhaseCustomerInput{},
+			},
+		}, nil
+
+	case string(api.BillingSubscriptionEditRemovePhaseTypeRemovePhase):
+		apiP, err := op.AsBillingSubscriptionEditRemovePhase()
+		if err != nil {
+			return nil, models.NewGenericValidationError(fmt.Errorf("failed to decode remove_phase operation: %w", err))
+		}
+
+		var shift subscription.RemoveSubscriptionPhaseShifting
+		switch apiP.Shift {
+		case api.BillingSubscriptionRemovePhaseShiftingNext:
+			shift = subscription.RemoveSubscriptionPhaseShiftNext
+		case api.BillingSubscriptionRemovePhaseShiftingPrev:
+			shift = subscription.RemoveSubscriptionPhaseShiftPrev
+		default:
+			return nil, models.NewGenericValidationError(fmt.Errorf("invalid remove_phase shift: %s", apiP.Shift))
+		}
+
+		return patch.PatchRemovePhase{
+			PhaseKey: apiP.PhaseKey,
+			RemoveInput: subscription.RemoveSubscriptionPhaseInput{
+				Shift: shift,
+			},
+		}, nil
+
+	case string(api.BillingSubscriptionEditStretchPhaseTypeStretchPhase):
+		apiP, err := op.AsBillingSubscriptionEditStretchPhase()
+		if err != nil {
+			return nil, models.NewGenericValidationError(fmt.Errorf("failed to decode stretch_phase operation: %w", err))
+		}
+
+		d, err := datetime.ISODurationString(apiP.ExtendBy).Parse()
+		if err != nil {
+			return nil, models.NewGenericValidationError(fmt.Errorf("failed to parse stretch_phase extend_by: %w", err))
+		}
+
+		return patch.PatchStretchPhase{
+			PhaseKey: apiP.PhaseKey,
+			Duration: d,
+		}, nil
+
+	case string(api.BillingSubscriptionEditUnscheduleEditTypeUnscheduleEdit):
+		return patch.PatchUnscheduleEdit{}, nil
+
+	default:
+		return nil, models.NewGenericValidationError(fmt.Errorf("unknown edit operation type: %s", disc))
+	}
+}
+
+// FromAPIBillingSubscriptionCustomPlan maps an inline (custom) plan definition from a
+// create or change request into the domain plan create input. It performs pure
+// mapping only: plan validity, currency resolution, and the fiat/custom-currency
+// rules are enforced downstream by the subscription service and spec validation.
+func FromAPIBillingSubscriptionCustomPlan(namespace string, body api.BillingSubscriptionCustomPlan) (plan.CreatePlanInput, error) {
+	metadata, err := labels.ToMetadata(body.Labels)
+	if err != nil {
+		return plan.CreatePlanInput{}, fmt.Errorf("failed to convert label metadata: %w", err)
+	}
+
+	req := plan.CreatePlanInput{
+		NamespacedModel: models.NamespacedModel{
+			Namespace: namespace,
+		},
+		Plan: productcatalog.Plan{
+			PlanMeta: productcatalog.PlanMeta{
+				Name:            body.Name,
+				Description:     body.Description,
+				Metadata:        metadata,
+				ProRatingConfig: plans.ToProRatingConfig(body.ProRatingEnabled),
+			},
+		},
+	}
+
+	// currencyx.Code (not FiatCode) so custom currencies are accepted; the resolver
+	// and spec validation reject unregistered or otherwise invalid currencies later.
+	req.Currency = currencies.NewCurrencyReference(currencyx.Code(body.Currency))
+
+	billingCadence, err := datetime.ISODurationString(body.BillingCadence).Parse()
+	if err != nil {
+		return req, fmt.Errorf("invalid billing cadence: %w", err)
+	}
+
+	req.BillingCadence = billingCadence
+
+	if len(body.Phases) > 0 {
+		req.Phases = make([]productcatalog.Phase, 0, len(body.Phases))
+		for _, phase := range body.Phases {
+			p, err := plans.FromAPIBillingPlanPhase(phase)
+			if err != nil {
+				return req, fmt.Errorf("failed to convert phase: %w", err)
+			}
+
+			req.Phases = append(req.Phases, p)
+		}
+	}
+
+	return req, nil
+}
+
+func FromAPIBillingSubscriptionMigrate(id models.NamespacedID, body api.BillingSubscriptionMigrate) (plansubscription.MigrateSubscriptionRequest, error) {
+	result := plansubscription.MigrateSubscriptionRequest{
+		ID:            id,
+		TargetVersion: body.TargetVersion,
+		StartingPhase: body.StartingPhase,
+		BillingAnchor: body.BillingAnchor,
+	}
+
+	// Preserve omission so the domain service can choose its default timing.
+	if body.Timing != nil {
+		timing, err := FromAPIBillingSubscriptionEditTiming(*body.Timing)
+		if err != nil {
+			return plansubscription.MigrateSubscriptionRequest{}, err
+		}
+
+		result.Timing = &timing
+	}
+
+	return result, nil
 }

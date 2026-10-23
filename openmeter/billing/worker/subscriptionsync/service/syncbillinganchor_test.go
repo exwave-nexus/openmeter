@@ -51,7 +51,6 @@ func (s *BillingAnchorTestSuite) TestBillingAnchorSinglePhase() {
 	//    - 2025-07-10T15:00:00Z - 2025-07-31T15:00:00Z
 	//    - 2025-07-31T15:00:00Z - 2025-08-31T15:00:00Z
 	//    - 2025-08-31T15:00:00Z - 2025-09-30T15:00:00Z
-
 	ctx := s.T().Context()
 	defer clock.UnFreeze()
 	clock.FreezeTime(testutils.GetRFC3339Time(s.T(), "2025-06-30T15:00:00Z"))
@@ -82,9 +81,9 @@ func (s *BillingAnchorTestSuite) TestBillingAnchorSinglePhase() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Name:       "test-rate-card",
-								Key:        s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
+								Name:    "test-rate-card",
+								Key:     s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(nil, lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(100),
 								}),
@@ -227,7 +226,6 @@ func (s *BillingAnchorTestSuite) TestBillingAnchorMultiPhase() {
 	//  - the gathering invoice should have the following service periods:
 	//    - 2025-08-10T15:00:00Z - 2025-08-31T15:00:00Z
 	//    - 2025-08-31T15:00:00Z - 2025-09-30T15:00:00Z
-
 	ctx := s.T().Context()
 	defer clock.UnFreeze()
 	clock.FreezeTime(testutils.GetRFC3339Time(s.T(), "2025-06-30T15:00:00Z"))
@@ -259,9 +257,9 @@ func (s *BillingAnchorTestSuite) TestBillingAnchorMultiPhase() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Name:       "test-rate-card",
-								Key:        s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
+								Name:    "test-rate-card",
+								Key:     s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(nil, lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								EntitlementTemplate: productcatalog.NewEntitlementTemplateFrom(productcatalog.MeteredEntitlementTemplate{
 									IssueAfterReset: lo.ToPtr(1000.0),
 									UsagePeriod:     datetime.MustParseDuration(s.T(), "P1M"),
@@ -279,9 +277,9 @@ func (s *BillingAnchorTestSuite) TestBillingAnchorMultiPhase() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Name:       "test-rate-card",
-								Key:        s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
+								Name:    "test-rate-card",
+								Key:     s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(nil, lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(100),
 								}),

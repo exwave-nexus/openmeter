@@ -66,6 +66,10 @@ func (mockFlatFeeHandler) OnCustomCurrencyOverageAccrued(_ context.Context, inpu
 	}, nil
 }
 
+func (mockFlatFeeHandler) OnCustomCurrencyOverageAccruedCorrection(context.Context, flatfee.OnCustomCurrencyOverageAccruedCorrectionInput) error {
+	return nil
+}
+
 func (mockFlatFeeHandler) OnCorrectCreditAllocations(_ context.Context, input flatfee.CorrectCreditAllocationsInput) (creditrealization.CreateCorrectionInputs, error) {
 	return lo.Map(input.Corrections, func(correction creditrealization.CorrectionRequestItem, _ int) creditrealization.CreateCorrectionInput {
 		return creditrealization.CreateCorrectionInput{
@@ -112,12 +116,12 @@ type mockCreditPurchaseHandler struct{}
 
 var _ creditpurchase.Handler = (*mockCreditPurchaseHandler)(nil)
 
-func (mockCreditPurchaseHandler) OnPromotionalCreditPurchase(context.Context, creditpurchase.Charge) (ledgertransaction.GroupReference, error) {
-	return newMockLedgerTransactionGroupReference(), nil
+func (mockCreditPurchaseHandler) OnPromotionalCreditPurchase(context.Context, creditpurchase.CreditGrantInput) (creditpurchase.CreditGrantResult, error) {
+	return creditpurchase.CreditGrantResult{GroupReference: newMockLedgerTransactionGroupReference()}, nil
 }
 
-func (mockCreditPurchaseHandler) OnCreditPurchaseInitiated(context.Context, creditpurchase.Charge) (ledgertransaction.GroupReference, error) {
-	return newMockLedgerTransactionGroupReference(), nil
+func (mockCreditPurchaseHandler) OnCreditPurchaseInitiated(context.Context, creditpurchase.CreditGrantInput) (creditpurchase.CreditGrantResult, error) {
+	return creditpurchase.CreditGrantResult{GroupReference: newMockLedgerTransactionGroupReference()}, nil
 }
 
 func (mockCreditPurchaseHandler) OnCreditPurchasePaymentAuthorized(context.Context, creditpurchase.PaymentEventInput) (ledgertransaction.GroupReference, error) {
@@ -151,6 +155,10 @@ func (mockUsageBasedHandler) OnCustomCurrencyOverageAccrued(_ context.Context, i
 		TransactionGroup: newMockLedgerTransactionGroupReference(),
 		TotalFiatAmount:  fiatCurrency.RoundToPrecision(input.GetCustomCurrencyAmountAccrued().Mul(costBasis)),
 	}, nil
+}
+
+func (mockUsageBasedHandler) OnCustomCurrencyOverageAccruedCorrection(context.Context, usagebased.OnCustomCurrencyOverageAccruedCorrectionInput) error {
+	return nil
 }
 
 func (mockUsageBasedHandler) OnPaymentAuthorized(context.Context, usagebased.OnPaymentAuthorizedInput) (ledgertransaction.GroupReference, error) {

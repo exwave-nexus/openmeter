@@ -41,6 +41,7 @@ func currencyCodePointerForJSON(currency *currencies.CurrencyReference) *currenc
 	}
 
 	code := currency.Code
+
 	return &code
 }
 
@@ -59,6 +60,11 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 		rateCards := make([]rateCardAlias, len(phase.RateCards))
 		for j, rc := range phase.RateCards {
 			meta := rc.AsMeta()
+			var featureID, featureKey *string
+			if meta.Feature != nil {
+				featureID = meta.Feature.ID
+				featureKey = meta.Feature.Key
+			}
 
 			// Marshal price to raw JSON if present
 			var priceJSON json.RawMessage
@@ -67,6 +73,7 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal price: %w", err)
 				}
+
 				priceJSON = priceBytes
 			}
 
@@ -77,6 +84,7 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 				if err != nil {
 					return nil, fmt.Errorf("failed to marshal entitlement template: %w", err)
 				}
+
 				entitlementTemplateJSON = entitlementTemplateBytes
 			}
 
@@ -88,8 +96,8 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 				Description:         meta.Description,
 				Metadata:            meta.Metadata,
 				Annotations:         meta.Annotations,
-				FeatureKey:          meta.FeatureKey,
-				FeatureID:           meta.FeatureID,
+				FeatureKey:          featureKey,
+				FeatureID:           featureID,
 				Price:               priceJSON,
 				Currency:            currencyCodePointerForJSON(meta.Currency),
 				EntitlementTemplate: entitlementTemplateJSON,
@@ -190,8 +198,7 @@ func (p *Plan) UnmarshalJSON(data []byte) error {
 				Description:         rcData.Description,
 				Metadata:            rcData.Metadata,
 				Annotations:         rcData.Annotations,
-				FeatureKey:          rcData.FeatureKey,
-				FeatureID:           rcData.FeatureID,
+				Feature:             productcatalog.NewFeatureReference(rcData.FeatureID, rcData.FeatureKey),
 				Price:               price,
 				EntitlementTemplate: entitlementTemplate,
 			}
@@ -209,8 +216,10 @@ func (p *Plan) UnmarshalJSON(data []byte) error {
 					if err != nil {
 						return fmt.Errorf("invalid billing cadence for rate card %q: %w", rcData.Key, err)
 					}
+
 					frc.BillingCadence = &period
 				}
+
 				rc = frc
 
 			case productcatalog.UsageBasedRateCardType:
@@ -220,8 +229,10 @@ func (p *Plan) UnmarshalJSON(data []byte) error {
 					if err != nil {
 						return fmt.Errorf("invalid billing cadence for rate card %q: %w", rcData.Key, err)
 					}
+
 					urc.BillingCadence = period
 				}
+
 				rc = urc
 
 			default:

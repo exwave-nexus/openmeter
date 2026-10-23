@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"log/slog"
 
 	"github.com/google/wire"
@@ -10,6 +11,7 @@ import (
 	entdb "github.com/openmeterio/openmeter/openmeter/ent/db"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/addon"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog/featureresolver"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/plan"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/planaddon"
 	plansubscription "github.com/openmeterio/openmeter/openmeter/productcatalog/subscription"
@@ -24,6 +26,7 @@ import (
 	subscriptionrepo "github.com/openmeterio/openmeter/openmeter/subscription/repo"
 	subscriptionservice "github.com/openmeterio/openmeter/openmeter/subscription/service"
 	subscriptioncustomer "github.com/openmeterio/openmeter/openmeter/subscription/validators/customer"
+	"github.com/openmeterio/openmeter/openmeter/subscription/validators/itemreference"
 	subscriptionworkflow "github.com/openmeterio/openmeter/openmeter/subscription/workflow"
 	subscriptionworkflowservice "github.com/openmeterio/openmeter/openmeter/subscription/workflow/service"
 	"github.com/openmeterio/openmeter/openmeter/taxcode"
@@ -34,6 +37,10 @@ import (
 
 var Subscription = wire.NewSet(
 	NewSubscriptionServices,
+	wire.FieldsOf(
+		new(SubscriptionServiceWithWorkflow),
+		"ItemReferenceValidator",
+	),
 )
 
 // TODO: break up to multiple initializers
@@ -42,6 +49,7 @@ type SubscriptionServiceWithWorkflow struct {
 	WorkflowService          subscriptionworkflow.Service
 	PlanSubscriptionService  plansubscription.PlanSubscriptionService
 	SubscriptionAddonService subscriptionaddon.Service
+	ItemReferenceValidator   itemreference.Validator
 }
 
 func NewSubscriptionServices(
@@ -60,9 +68,18 @@ func NewSubscriptionServices(
 	featureFlags ffx.Service,
 	taxCodeService taxcode.Service,
 ) (SubscriptionServiceWithWorkflow, error) {
+	featureResolver, err := featureresolver.New(featureConnector)
+	if err != nil {
+		return SubscriptionServiceWithWorkflow{}, fmt.Errorf("failed to initialize feature resolver: %w", err)
+	}
+
 	subscriptionRepo := subscriptionrepo.NewSubscriptionRepo(db)
 	subscriptionPhaseRepo := subscriptionrepo.NewSubscriptionPhaseRepo(db)
 	subscriptionItemRepo := subscriptionrepo.NewSubscriptionItemRepo(db)
+	itemReferenceValidator, err := itemreference.NewValidator(subscriptionItemRepo)
+	if err != nil {
+		return SubscriptionServiceWithWorkflow{}, fmt.Errorf("failed to initialize subscription item reference validator: %w", err)
+	}
 
 	subscriptionEntitlementAdapter := subscriptionentitlement.NewSubscriptionEntitlementAdapter(
 		entitlementRegistry.Entitlement,
@@ -110,8 +127,10 @@ func NewSubscriptionServices(
 		Service:            subscriptionService,
 		CustomerService:    customerService,
 		CurrencyResolver:   currencyResolver,
+		FeatureResolver:    featureResolver,
 		TransactionManager: subscriptionRepo,
 		AddonService:       subAddSvc,
+		PlanAddonService:   planAddonService,
 		Logger:             logger.With("subsystem", "subscription.workflow.service"),
 		Lockr:              lockr,
 		FeatureFlags:       featureFlags,
@@ -124,6 +143,7 @@ func NewSubscriptionServices(
 		WorkflowService:     subscriptionWorkflowService,
 		SubscriptionService: subscriptionService,
 		PlanService:         planService,
+		FeatureResolver:     featureResolver,
 		CurrencyResolver:    currencyResolver,
 		CustomerService:     customerService,
 		Logger:              logger.With("subsystem", "subscription.change.service"),
@@ -153,5 +173,6 @@ func NewSubscriptionServices(
 		WorkflowService:          subscriptionWorkflowService,
 		PlanSubscriptionService:  planSubscriptionService,
 		SubscriptionAddonService: subAddSvc,
+		ItemReferenceValidator:   itemReferenceValidator,
 	}, nil
 }

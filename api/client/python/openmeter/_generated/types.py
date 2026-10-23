@@ -2309,7 +2309,8 @@ class InstallWithApiKeyRequest(TypedDict, total=False):
     :vartype name: str
     :ivar create_billing_profile: If true, a billing profile will be created for the app. The
      Stripe app will be also set as the default billing profile if the current default is a Sandbox
-     app.
+     app. Custom Invoicing apps use the Auto Collection preset with an OpenMeter supplier in the US
+     (postal code 94114), without replacing the default profile.
     :vartype create_billing_profile: bool
     :ivar api_key: The API key for the provider. For example, the Stripe API key. Required.
     :vartype api_key: str
@@ -2321,7 +2322,9 @@ class InstallWithApiKeyRequest(TypedDict, total=False):
      If name is not provided defaults to the marketplace listing's name."""
     createBillingProfile: bool
     """If true, a billing profile will be created for the app. The Stripe app will be also set as the
-     default billing profile if the current default is a Sandbox app."""
+     default billing profile if the current default is a Sandbox app. Custom Invoicing apps use the
+     Auto Collection preset with an OpenMeter supplier in the US (postal code 94114), without
+     replacing the default profile."""
     apiKey: Required[str]
     """The API key for the provider. For example, the Stripe API key. Required."""
 
@@ -2803,7 +2806,8 @@ class MarketplaceInstallRequestPayload(TypedDict, total=False):
     :vartype name: str
     :ivar create_billing_profile: If true, a billing profile will be created for the app. The
      Stripe app will be also set as the default billing profile if the current default is a Sandbox
-     app.
+     app. Custom Invoicing apps use the Auto Collection preset with an OpenMeter supplier in the US
+     (postal code 94114), without replacing the default profile.
     :vartype create_billing_profile: bool
     """
 
@@ -2813,7 +2817,9 @@ class MarketplaceInstallRequestPayload(TypedDict, total=False):
      If name is not provided defaults to the marketplace listing's name."""
     createBillingProfile: bool
     """If true, a billing profile will be created for the app. The Stripe app will be also set as the
-     default billing profile if the current default is a Sandbox app."""
+     default billing profile if the current default is a Sandbox app. Custom Invoicing apps use the
+     Auto Collection preset with an OpenMeter supplier in the US (postal code 94114), without
+     replacing the default profile."""
 
 
 class MarketplaceListing(TypedDict, total=False):
@@ -3005,36 +3011,49 @@ class MeterUpdate(TypedDict, total=False):
 class MigrateRequest(TypedDict, total=False):
     """MigrateRequest.
 
-    :ivar timing: Timing configuration for the migration, when the migration should take effect. If
-     not supported by the subscription, 400 will be returned. Is either a Union[str,
-     "_models.SubscriptionTimingEnum"] type or a datetime.datetime type.
+    :ivar timing: When the migration takes effect: immediately, at the next billing cycle, or at an
+     explicit billing-aligned timestamp. In-place migrations may be scheduled into a later phase
+     when the current and target phase timelines match. The target plan reference is saved
+     immediately; changed items take effect at the requested time. Past or unsupported times return
+     an error. Is either a Union[str, "_models.SubscriptionTimingEnum"] type or a datetime.datetime
+     type.
     :vartype timing: "_unions.SubscriptionTiming"
-    :ivar target_version: The version of the plan to migrate to. If not provided, the subscription
-     will migrate to the latest version of the current plan.
+    :ivar target_version: A strictly later version of the current plan to migrate to. If not
+     provided, the subscription will migrate to the latest version of the current plan.
     :vartype target_version: int
-    :ivar starting_phase: The key of the phase to start the subscription in. If not provided, the
-     subscription will start in the first phase of the plan.
+    :ivar starting_phase: Explicitly replace the subscription, starting in this target plan phase.
+     Providing this field always selects replacement, even if the phase matches the current one.
+     Replacement may produce billing adjustments and does not transfer addons. Omit it to migrate in
+     place; incompatible phase timelines then return an error.
     :vartype starting_phase: str
-    :ivar billing_anchor: The billing anchor of the subscription. The provided date will be
-     normalized according to the billing cadence to the nearest recurrence before start time. If not
-     provided, the previous subscription billing anchor will be used.
+    :ivar billing_anchor: The anchor used with the plan's billing cadence to calculate billing
+     periods. If startingPhase is omitted and this anchor is omitted or equal to the existing one,
+     migration preserves the current subscription. Providing a different anchor ends the current
+     subscription and creates a replacement. The supplied anchor is preserved; it may be before or
+     after the replacement's start time.
     :vartype billing_anchor: str
     """
 
     timing: "_unions.SubscriptionTiming"
-    """Timing configuration for the migration, when the migration should take effect. If not supported
-     by the subscription, 400 will be returned. Is either a Union[str,
-     \"_models.SubscriptionTimingEnum\"] type or a datetime.datetime type."""
+    """When the migration takes effect: immediately, at the next billing cycle, or at an explicit
+     billing-aligned timestamp. In-place migrations may be scheduled into a later phase when the
+     current and target phase timelines match. The target plan reference is saved immediately;
+     changed items take effect at the requested time. Past or unsupported times return an error. Is
+     either a Union[str, \"_models.SubscriptionTimingEnum\"] type or a datetime.datetime type."""
     targetVersion: int
-    """The version of the plan to migrate to. If not provided, the subscription will migrate to the
-     latest version of the current plan."""
+    """A strictly later version of the current plan to migrate to. If not provided, the subscription
+     will migrate to the latest version of the current plan."""
     startingPhase: str
-    """The key of the phase to start the subscription in. If not provided, the subscription will start
-     in the first phase of the plan."""
+    """Explicitly replace the subscription, starting in this target plan phase. Providing this field
+     always selects replacement, even if the phase matches the current one. Replacement may produce
+     billing adjustments and does not transfer addons. Omit it to migrate in place; incompatible
+     phase timelines then return an error."""
     billingAnchor: str
-    """The billing anchor of the subscription. The provided date will be normalized according to the
-     billing cadence to the nearest recurrence before start time. If not provided, the previous
-     subscription billing anchor will be used."""
+    """The anchor used with the plan's billing cadence to calculate billing periods. If startingPhase
+     is omitted and this anchor is omitted or equal to the existing one, migration preserves the
+     current subscription. Providing a different anchor ends the current subscription and creates a
+     replacement. The supplied anchor is preserved; it may be before or after the replacement's
+     start time."""
 
 
 class NotificationChannelWebhookCreateRequest(TypedDict, total=False):

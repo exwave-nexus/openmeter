@@ -15,9 +15,9 @@ import (
 	flatfeeadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/flatfee/adapter"
 	flatfeeservice "github.com/openmeterio/openmeter/openmeter/billing/charges/flatfee/service"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/invoiceupdater"
-	"github.com/openmeterio/openmeter/openmeter/billing/charges/lineage"
-	lineageadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/lineage/adapter"
-	lineageservice "github.com/openmeterio/openmeter/openmeter/billing/charges/lineage/service"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage"
+	legacylineageadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage/adapter"
+	legacylineageservice "github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage/service"
 	chargeslinerouter "github.com/openmeterio/openmeter/openmeter/billing/charges/linerouter"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	metaadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/meta/adapter"
@@ -25,20 +25,23 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	usagebasedadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/adapter"
 	usagebasedservice "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service"
+	billingfeaturemeterservice "github.com/openmeterio/openmeter/openmeter/billing/featuremeter/service"
 	"github.com/openmeterio/openmeter/openmeter/billing/rating"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
+	"github.com/openmeterio/openmeter/openmeter/customer"
 	entdb "github.com/openmeterio/openmeter/openmeter/ent/db"
 	enttx "github.com/openmeterio/openmeter/openmeter/ent/tx"
 	"github.com/openmeterio/openmeter/openmeter/ledger"
 	ledgeraccount "github.com/openmeterio/openmeter/openmeter/ledger/account"
+	"github.com/openmeterio/openmeter/openmeter/ledger/advance"
 	ledgerbreakage "github.com/openmeterio/openmeter/openmeter/ledger/breakage"
 	ledgerbreakageadapter "github.com/openmeterio/openmeter/openmeter/ledger/breakage/adapter"
 	ledgerchargeadapter "github.com/openmeterio/openmeter/openmeter/ledger/chargeadapter"
 	ledgercollector "github.com/openmeterio/openmeter/openmeter/ledger/collector"
 	"github.com/openmeterio/openmeter/openmeter/ledger/recognizer"
 	"github.com/openmeterio/openmeter/openmeter/ledger/transactions"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/openmeter/streaming"
+	"github.com/openmeterio/openmeter/openmeter/subscription/validators/itemreference"
 	"github.com/openmeterio/openmeter/openmeter/taxcode"
 	"github.com/openmeterio/openmeter/pkg/featuregate"
 	"github.com/openmeterio/openmeter/pkg/framework/lockr"
@@ -61,19 +64,25 @@ func NewChargesMetaAdapter(
 }
 
 func NewChargesCollectorService(
+	logger *slog.Logger,
 	db *entdb.Client,
 	ledgerService ledger.Ledger,
 	balanceQuerier ledger.BalanceQuerier,
 	accountResolver ledger.AccountResolver,
 	accountService ledgeraccount.Service,
+	advanceService advance.Service,
+	breakageService ledgerbreakage.Service,
 ) (ledgercollector.Service, error) {
 	collectorService, err := ledgercollector.NewService(ledgercollector.Config{
-		Ledger: ledgerService,
+		Logger:  logger,
+		Advance: advanceService,
+		Ledger:  ledgerService,
 		Dependencies: transactions.ResolverDependencies{
 			AccountService: accountResolver,
 			AccountCatalog: accountService,
 			BalanceQuerier: balanceQuerier,
 		},
+		Breakage:           breakageService,
 		AccountLocker:      accountService,
 		TransactionManager: enttx.NewCreator(db),
 	})
@@ -136,10 +145,19 @@ func NewChargesCreditPurchaseHandler(
 	balanceQuerier ledger.BalanceQuerier,
 	accountResolver ledger.AccountResolver,
 	accountService ledgeraccount.Service,
+	advanceService advance.Service,
 	breakageService ledgerbreakage.Service,
 	transactionManager transaction.Creator,
 ) (creditpurchase.Handler, error) {
-	handler, err := ledgerchargeadapter.NewCreditPurchaseHandler(ledgerService, balanceQuerier, accountResolver, accountService, breakageService, transactionManager)
+	handler, err := ledgerchargeadapter.NewCreditPurchaseHandler(ledgerchargeadapter.CreditPurchaseHandlerConfig{
+		Ledger:             ledgerService,
+		BalanceQuerier:     balanceQuerier,
+		AccountResolver:    accountResolver,
+		AccountCatalog:     accountService,
+		AdvanceService:     advanceService,
+		BreakageService:    breakageService,
+		TransactionManager: transactionManager,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create charges credit purchase handler: %w", err)
 	}
@@ -180,8 +198,8 @@ func NewChargesFlatFeeAdapter(
 
 func NewChargesLineageAdapter(
 	db *entdb.Client,
-) (lineage.Adapter, error) {
-	lineageAdapter, err := lineageadapter.New(lineageadapter.Config{
+) (legacylineage.Adapter, error) {
+	lineageAdapter, err := legacylineageadapter.New(legacylineageadapter.Config{
 		Client: db,
 	})
 	if err != nil {
@@ -192,9 +210,9 @@ func NewChargesLineageAdapter(
 }
 
 func NewChargesLineageService(
-	lineageAdapter lineage.Adapter,
-) (lineage.Service, error) {
-	lineageService, err := lineageservice.New(lineageservice.Config{
+	lineageAdapter legacylineage.Adapter,
+) (legacylineage.Service, error) {
+	lineageService, err := legacylineageservice.New(legacylineageservice.Config{
 		Adapter: lineageAdapter,
 	})
 	if err != nil {
@@ -207,20 +225,26 @@ func NewChargesLineageService(
 func NewChargesFlatFeeService(
 	flatFeeAdapter flatfee.Adapter,
 	flatFeeHandler flatfee.Handler,
-	lineageService lineage.Service,
+	lineageService legacylineage.Service,
 	metaAdapter meta.Adapter,
 	locker *lockr.Locker,
+	featureMeterResolver *billingfeaturemeterservice.Resolver,
 	ratingService rating.Service,
 	currenciesService currencies.Service,
+	itemReferenceValidator itemreference.Validator,
+	billingService billing.Service,
 ) (flatfee.Service, error) {
 	flatFeeSvc, err := flatfeeservice.New(flatfeeservice.Config{
-		Adapter:       flatFeeAdapter,
-		Handler:       flatFeeHandler,
-		Lineage:       lineageService,
-		MetaAdapter:   metaAdapter,
-		Locker:        locker,
-		RatingService: ratingService,
-		Currencies:    currenciesService,
+		Adapter:                flatFeeAdapter,
+		Handler:                flatFeeHandler,
+		Lineage:                lineageService,
+		MetaAdapter:            metaAdapter,
+		Locker:                 locker,
+		FeatureMeterResolver:   featureMeterResolver,
+		RatingService:          ratingService,
+		Currencies:             currenciesService,
+		ItemReferenceValidator: itemReferenceValidator,
+		BillingService:         billingService,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create charges flat fee service: %w", err)
@@ -249,28 +273,30 @@ func NewChargesUsageBasedAdapter(
 func NewChargesUsageBasedService(
 	usageBasedAdapter usagebased.Adapter,
 	usageBasedHandler usagebased.Handler,
-	lineageService lineage.Service,
+	lineageService legacylineage.Service,
 	locker *lockr.Locker,
 	metaAdapter meta.Adapter,
 	invoiceUpdater invoiceupdater.Updater,
 	billingService billing.Service,
-	featureService feature.FeatureConnector,
+	featureMeterResolver *billingfeaturemeterservice.Resolver,
 	ratingService rating.Service,
 	currenciesService currencies.Service,
 	streamingConnector streaming.Connector,
+	itemReferenceValidator itemreference.Validator,
 ) (usagebased.Service, error) {
 	usageBasedSvc, err := usagebasedservice.New(usagebasedservice.Config{
-		Adapter:                 usageBasedAdapter,
-		Handler:                 usageBasedHandler,
-		Lineage:                 lineageService,
-		Locker:                  locker,
-		MetaAdapter:             metaAdapter,
-		InvoiceUpdater:          invoiceUpdater,
-		CustomerOverrideService: billingService,
-		FeatureService:          featureService,
-		RatingService:           ratingService,
-		Currencies:              currenciesService,
-		StreamingConnector:      streamingConnector,
+		Adapter:                usageBasedAdapter,
+		Handler:                usageBasedHandler,
+		Lineage:                lineageService,
+		Locker:                 locker,
+		MetaAdapter:            metaAdapter,
+		InvoiceUpdater:         invoiceUpdater,
+		BillingService:         billingService,
+		FeatureMeterResolver:   featureMeterResolver,
+		RatingService:          ratingService,
+		Currencies:             currenciesService,
+		StreamingConnector:     streamingConnector,
+		ItemReferenceValidator: itemReferenceValidator,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create charges usage based service: %w", err)
@@ -314,7 +340,7 @@ func NewChargesCreditPurchaseAdapter(
 func NewChargesCreditPurchaseService(
 	creditPurchaseAdapter creditpurchase.Adapter,
 	creditPurchaseHandler creditpurchase.Handler,
-	lineageService lineage.Service,
+	lineageService legacylineage.Service,
 	metaAdapter meta.Adapter,
 	currenciesService currencies.Service,
 ) (creditpurchase.Service, error) {
@@ -351,7 +377,7 @@ func NewChargesService(
 	logger *slog.Logger,
 	rootAdapter charges.Adapter,
 	metaAdapter meta.Adapter,
-	featureService feature.FeatureConnector,
+	featureMeterResolver *billingfeaturemeterservice.Resolver,
 	flatFeeSvc flatfee.Service,
 	creditPurchaseSvc creditpurchase.Service,
 	usageBasedSvc usagebased.Service,
@@ -359,13 +385,15 @@ func NewChargesService(
 	recognizerService recognizer.Service,
 	taxCodeService taxcode.Service,
 	currencyResolver currencies.CurrencyResolver,
+	customerService customer.Service,
+	subscriptionService charges.SubscriptionService,
 	fsNamespaceLockdown []string,
 ) (charges.Service, error) {
 	chargesSvc, err := chargesservice.New(chargesservice.Config{
 		Logger:                logger,
 		Adapter:               rootAdapter,
 		MetaAdapter:           metaAdapter,
-		FeatureService:        featureService,
+		FeatureMeterResolver:  featureMeterResolver,
 		FlatFeeService:        flatFeeSvc,
 		CreditPurchaseService: creditPurchaseSvc,
 		UsageBasedService:     usageBasedSvc,
@@ -373,6 +401,8 @@ func NewChargesService(
 		RecognizerService:     recognizerService,
 		TaxCodeService:        taxCodeService,
 		CurrencyResolver:      currencyResolver,
+		CustomerService:       customerService,
+		SubscriptionService:   subscriptionService,
 		FSNamespaceLockdown:   fsNamespaceLockdown,
 	})
 	if err != nil {
@@ -388,7 +418,7 @@ func NewRecognizerService(
 	balanceQuerier ledger.BalanceQuerier,
 	accountResolver ledger.AccountResolver,
 	accountService ledgeraccount.Service,
-	lineageService lineage.Service,
+	lineageService legacylineage.Service,
 ) (recognizer.Service, error) {
 	return recognizer.NewService(recognizer.Config{
 		Ledger: ledgerService,
@@ -410,7 +440,7 @@ func newChargesRegistry(
 	locker *lockr.Locker,
 	billingService billing.Service,
 	ratingService rating.Service,
-	featureService feature.FeatureConnector,
+	featureMeterResolver *billingfeaturemeterservice.Resolver,
 	streamingConnector streaming.Connector,
 	ledgerService ledger.Ledger,
 	balanceQuerier ledger.BalanceQuerier,
@@ -420,6 +450,9 @@ func newChargesRegistry(
 	taxCodeService taxcode.Service,
 	currencyResolver currencies.CurrencyResolver,
 	currenciesService currencies.Service,
+	customerService customer.Service,
+	subscriptionService charges.SubscriptionService,
+	itemReferenceValidator itemreference.Validator,
 	fsNamespaceLockdown []string,
 	creditsConfig config.CreditsConfiguration,
 	featureGate *featuregate.FeatureGateChecker,
@@ -439,9 +472,16 @@ func newChargesRegistry(
 		return nil, err
 	}
 
+	advanceService, err := NewLedgerAdvanceService(logger, ledgerService, balanceQuerier, accountResolver, accountService, breakageService)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ledger advance service: %w", err)
+	}
+
 	transactionManager := enttx.NewCreator(db)
 	collectorService, err := ledgercollector.NewService(ledgercollector.Config{
-		Ledger: ledgerService,
+		Logger:  logger,
+		Advance: advanceService,
+		Ledger:  ledgerService,
 		Dependencies: transactions.ResolverDependencies{
 			AccountService: accountResolver,
 			AccountCatalog: accountService,
@@ -467,6 +507,7 @@ func newChargesRegistry(
 		balanceQuerier,
 		accountResolver,
 		accountService,
+		advanceService,
 		breakageService,
 		transactionManager,
 	)
@@ -479,7 +520,7 @@ func newChargesRegistry(
 		return nil, err
 	}
 
-	flatFeeSvc, err := NewChargesFlatFeeService(flatFeeAdapter, flatFeeHandler, lineageService, metaAdapter, locker, ratingService, currenciesService)
+	flatFeeSvc, err := NewChargesFlatFeeService(flatFeeAdapter, flatFeeHandler, lineageService, metaAdapter, locker, featureMeterResolver, ratingService, currenciesService, itemReferenceValidator, billingService)
 	if err != nil {
 		return nil, err
 	}
@@ -506,10 +547,11 @@ func newChargesRegistry(
 		metaAdapter,
 		invoiceUpdater,
 		billingService,
-		featureService,
+		featureMeterResolver,
 		ratingService,
 		currenciesService,
 		streamingConnector,
+		itemReferenceValidator,
 	)
 	if err != nil {
 		return nil, err
@@ -532,6 +574,7 @@ func newChargesRegistry(
 	if err := billingService.RegisterLineEngine(creditPurchaseSvc.GetLineEngine()); err != nil {
 		return nil, fmt.Errorf("failed to register charges credit purchase line engine: %w", err)
 	}
+
 	createLineRouter, err := chargeslinerouter.New(chargeslinerouter.Config{
 		CreditsEnabled:           creditsConfig.Enabled,
 		CreditThenInvoiceEnabled: creditsConfig.EnableCreditThenInvoice,
@@ -554,7 +597,7 @@ func newChargesRegistry(
 		logger,
 		rootAdapter,
 		metaAdapter,
-		featureService,
+		featureMeterResolver,
 		flatFeeSvc,
 		creditPurchaseSvc,
 		usageBasedSvc,
@@ -562,6 +605,8 @@ func newChargesRegistry(
 		recognizerService,
 		taxCodeService,
 		currencyResolver,
+		customerService,
+		subscriptionService,
 		fsNamespaceLockdown,
 	)
 	if err != nil {

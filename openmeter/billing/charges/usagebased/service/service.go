@@ -1,36 +1,44 @@
 package service
 
 import (
+	"context"
 	"errors"
 
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/invoiceupdater"
-	"github.com/openmeterio/openmeter/openmeter/billing/charges/lineage"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	usagebasedrating "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/rating"
 	usagebasedrun "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/run"
+	billingfeaturemeterservice "github.com/openmeterio/openmeter/openmeter/billing/featuremeter/service"
 	"github.com/openmeterio/openmeter/openmeter/billing/rating"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/openmeter/streaming"
+	"github.com/openmeterio/openmeter/openmeter/subscription/validators/itemreference"
 	"github.com/openmeterio/openmeter/pkg/framework/lockr"
 )
 
 type Config struct {
-	Adapter                 usagebased.Adapter
-	Handler                 usagebased.Handler
-	Lineage                 lineage.Service
-	Locker                  *lockr.Locker
-	MetaAdapter             meta.Adapter
-	InvoiceUpdater          invoiceupdater.Updater
-	CustomerOverrideService billing.CustomerOverrideService
-	FeatureService          feature.FeatureConnector
-	RatingService           rating.Service
-	Currencies              currencies.Service
+	Adapter                usagebased.Adapter
+	Handler                usagebased.Handler
+	Lineage                legacylineage.Service
+	Locker                 *lockr.Locker
+	MetaAdapter            meta.Adapter
+	InvoiceUpdater         invoiceupdater.Updater
+	BillingService         billing.Service
+	FeatureMeterResolver   *billingfeaturemeterservice.Resolver
+	RatingService          rating.Service
+	Currencies             currencies.Service
+	ItemReferenceValidator itemreference.Validator
 
 	StreamingConnector streaming.Connector
+}
+
+type LineSubscriptionReferenceService interface {
+	SetGatheringLineSubscriptionReferenceByChargeID(ctx context.Context, input billing.SetLineSubscriptionReferenceByChargeIDInput) error
+	SetStandardLineSubscriptionReferenceByChargeID(ctx context.Context, input billing.SetLineSubscriptionReferenceByChargeIDInput) error
 }
 
 func (c Config) Validate() error {
@@ -60,12 +68,12 @@ func (c Config) Validate() error {
 		errs = append(errs, errors.New("invoice updater cannot be null"))
 	}
 
-	if c.CustomerOverrideService == nil {
-		errs = append(errs, errors.New("customer override service cannot be null"))
+	if c.BillingService == nil {
+		errs = append(errs, errors.New("billing service cannot be null"))
 	}
 
-	if c.FeatureService == nil {
-		errs = append(errs, errors.New("feature service cannot be null"))
+	if c.FeatureMeterResolver == nil {
+		errs = append(errs, errors.New("feature meter resolver cannot be null"))
 	}
 
 	if c.RatingService == nil {
@@ -74,6 +82,10 @@ func (c Config) Validate() error {
 
 	if c.Currencies == nil {
 		errs = append(errs, errors.New("currencies service cannot be null"))
+	}
+
+	if c.ItemReferenceValidator == nil {
+		errs = append(errs, errors.New("subscription item reference validator cannot be null"))
 	}
 
 	if c.StreamingConnector == nil {
@@ -115,16 +127,18 @@ func New(config Config) (usagebased.Service, error) {
 	}
 
 	return &service{
-		adapter:                 config.Adapter,
-		locker:                  config.Locker,
-		metaAdapter:             config.MetaAdapter,
-		invoiceUpdater:          config.InvoiceUpdater,
-		customerOverrideService: config.CustomerOverrideService,
-		featureService:          config.FeatureService,
-		ratingService:           config.RatingService,
-		rater:                   rater,
-		runs:                    runs,
-		costbasisResolver:       costbasisResolver,
+		adapter:                          config.Adapter,
+		locker:                           config.Locker,
+		metaAdapter:                      config.MetaAdapter,
+		invoiceUpdater:                   config.InvoiceUpdater,
+		customerOverrideService:          config.BillingService,
+		featureMeterResolver:             config.FeatureMeterResolver,
+		ratingService:                    config.RatingService,
+		rater:                            rater,
+		runs:                             runs,
+		costbasisResolver:                costbasisResolver,
+		itemReferenceValidator:           config.ItemReferenceValidator,
+		lineSubscriptionReferenceService: config.BillingService,
 	}, nil
 }
 
@@ -134,13 +148,15 @@ type service struct {
 	metaAdapter             meta.Adapter
 	invoiceUpdater          invoiceupdater.Updater
 	customerOverrideService billing.CustomerOverrideService
-	featureService          feature.FeatureConnector
+	featureMeterResolver    *billingfeaturemeterservice.Resolver
 	ratingService           rating.Service
 
 	rater usagebasedrating.Service
 	runs  *usagebasedrun.Service
 
-	costbasisResolver costbasis.Resolver
+	costbasisResolver                costbasis.Resolver
+	itemReferenceValidator           itemreference.Validator
+	lineSubscriptionReferenceService LineSubscriptionReferenceService
 }
 
 func (s *service) GetLineEngine() billing.LineEngine {

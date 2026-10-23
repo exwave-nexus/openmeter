@@ -1,6 +1,7 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs-node.url = "github:NixOS/nixpkgs/04a1d3aa7f0c1ef4fd84974b757ba4c279747642";
     flake-parts.url = "github:hercules-ci/flake-parts";
     devenv.url = "github:cachix/devenv";
     git-hooks.url = "github:cachix/git-hooks.nix";
@@ -34,7 +35,38 @@
             languages = {
               go = {
                 enable = true;
-                package = pkgs.go_1_26;
+                # The Nixpkgs Go package can retain a build-time loader that is not represented in
+                # its store identity. Wrap cmd/link with the active loader as an explicit argument
+                # and derivation input so every internal link, including Nix checks, uses it.
+                package =
+                  if pkgs.stdenv.hostPlatform.isLinux then
+                    pkgs.symlinkJoin
+                      {
+                        name = "${pkgs.go_1_27.name}-openmeter";
+                        paths = [ pkgs.go_1_27 ];
+                        inherit (pkgs.go_1_27) CGO_ENABLED GOARCH GOOS meta passthru version;
+                        nativeBuildInputs = [ pkgs.makeWrapper ];
+                        postBuild = ''
+                          linkTool="share/go/pkg/tool/${pkgs.go_1_27.GOOS}_${pkgs.go_1_27.GOARCH}/link"
+                          rm "$out/$linkTool"
+                          makeWrapper "${pkgs.go_1_27}/$linkTool" "$out/$linkTool" \
+                            --add-flags "-I=${pkgs.stdenv.cc.bintools.dynamicLinker}"
+
+                          wrapProgram "$out/bin/go" \
+                            --set-default GO_LDSO ${pkgs.stdenv.cc.bintools.dynamicLinker}
+                        '';
+                      }
+                  else
+                    pkgs.go_1_27;
+
+                delve.package = pkgs.delve.overrideAttrs (old: {
+                  # Delve runs these generator checks only with the latest Go release. They invoke
+                  # `go run ...@latest`, which cannot query modules while buildGoModule uses -mod=vendor.
+                  # Keep the remaining Delve tests enabled until upstream packaging skips these checks.
+                  checkFlags = (old.checkFlags or [ ]) ++ [
+                    "-skip=TestGeneratedDoc|TestTypecheckRPC"
+                  ];
+                });
               };
 
               python = {
@@ -47,7 +79,7 @@
 
               javascript = {
                 enable = true;
-                package = pkgs.nodejs-slim_26;
+                package = inputs'.nixpkgs-node.legacyPackages.nodejs-slim_26;
                 pnpm = {
                   enable = true;
                 };
@@ -88,8 +120,8 @@
                 src = fetchFromGitHub {
                   owner = "confluentinc";
                   repo = "librdkafka";
-                  rev = "v2.15.0";
-                  sha256 = "sha256-WW64fwh0xR4lEVwmrv00tP9mo6b49aCNgLLH/P0YS8k=";
+                  rev = "v2.15.1";
+                  sha256 = "sha256-74D1sMSA6advmirxeJiYzoqI0jjBqvbDtUqW8B8PieU=";
                 };
               }))
 
@@ -142,20 +174,37 @@
             ];
 
             env = {
-              GOCACHE = "${config.devenv.shells.default.env.DEVENV_STATE}/go/build-cache";
+              # Go's action cache does not include Nix store identities in its linker key. Include
+              # both the complete Go output and runtime-loader store basenames so neither a Go
+              # rebuild nor a stdenv/glibc update can reuse link results from another generation.
+              GOCACHE =
+                let
+                  goToolchainID = builtins.baseNameOf (toString config.devenv.shells.default.languages.go.package);
+                  runtimeLinkerID =
+                    if pkgs.stdenv.hostPlatform.isLinux then
+                      builtins.elemAt (builtins.match "/nix/store/([^/]+)/.*" pkgs.stdenv.cc.bintools.dynamicLinker) 0
+                    else
+                      "native";
+                in
+                "${config.devenv.shells.default.env.DEVENV_STATE}/go/build-cache/${goToolchainID}/${runtimeLinkerID}";
               KUBECONFIG = "${config.devenv.shells.default.env.DEVENV_STATE}/kube/config";
               KIND_CLUSTER_NAME = "openmeter";
 
               HELM_CACHE_HOME = "${config.devenv.shells.default.env.DEVENV_STATE}/helm/cache";
               HELM_CONFIG_HOME = "${config.devenv.shells.default.env.DEVENV_STATE}/helm/config";
               HELM_DATA_HOME = "${config.devenv.shells.default.env.DEVENV_STATE}/helm/data";
+            } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+              # Keep GO_LDSO visible for patched Go linkers and diagnostics. The wrapped cmd/link
+              # above also passes -I explicitly because the cached Nix binary can retain its stale
+              # build-time default even when this variable is set.
+              GO_LDSO = pkgs.stdenv.cc.bintools.dynamicLinker;
             };
 
             enterShell = ''
               # Share downloaded modules across worktrees; keep GOPATH and build artifacts local.
               export GOMODCACHE="$HOME/go/pkg/mod"
 
-              ${lib.optionalString pkgs.stdenv.isDarwin ''
+              ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
                 # Workaround for XCBUILD.XCRUN cosmetic issue due to incompatible plists (see https://github.com/NixOS/nixpkgs/issues/376958)
                 # 1) Filter out the buggy Nix version of xcbuild/xcrun from PATH
                 export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "xcbuild" | tr '\n' ':')
@@ -165,8 +214,10 @@
                 # End of workaround
               ''}
 
-              # Keep GitHub-hosted Node jobs aligned with the Nix shell.
+              # Keep GitHub-hosted jobs aligned with the Nix shell.
               node -v > .nvmrc
+              go env GOVERSION | sed 's/^go//' > .go-version
+              printf 'v%s\n' "$(golangci-lint version --short)" > .golangci.version
             '';
 
             # https://github.com/cachix/devenv/issues/528#issuecomment-1556108767

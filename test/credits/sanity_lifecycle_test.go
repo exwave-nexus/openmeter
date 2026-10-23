@@ -13,9 +13,11 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/payment"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
+	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
 	"github.com/openmeterio/openmeter/openmeter/ledger"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
@@ -161,7 +163,7 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 	)
 	res, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:          cust.GetID(),
 				Currency:          USD,
@@ -173,7 +175,7 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 				UniqueReferenceID: "usage-based-charge-a",
 				FeatureKey:        meterSlug,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 1)
@@ -206,7 +208,7 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 	})
 	res, err = s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:          cust.GetID(),
 				Currency:          USD,
@@ -218,7 +220,7 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 				UniqueReferenceID: "usage-based-charge-b",
 				FeatureKey:        meterSlug,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 1)
@@ -248,7 +250,7 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 	// When the customer buys 25 credits at cost basis 0.5, it backfills the older uncovered usage first.
 	res, err = s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateCreditPurchaseIntent(CreateCreditPurchaseIntentInput{
 				Customer: cust.GetID(),
 				Currency: USD,
@@ -262,13 +264,14 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 				}),
 				CostBasis: newFiatCreditPurchaseCostBasis(costBasis1),
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 1)
 
 	purchase1Charge, err := res[0].AsCreditPurchaseCharge()
 	s.NoError(err)
+	s.assertAdvanceBacking(ctx, cust.GetID(), purchase1Charge, costBasis1, map[string]float64{chargeA.ID: 20, chargeB.ID: 5})
 	s.Equal(alpacadecimal.NewFromInt(-40), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.None[*alpacadecimal.Decimal](), ledger.TransactionAuthorizationStatusOpen))
 	s.Equal(alpacadecimal.NewFromInt(-15), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil), ledger.TransactionAuthorizationStatusOpen))
 	s.Equal(alpacadecimal.NewFromInt(15), s.MustCustomerAccruedBalance(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil)))
@@ -304,6 +307,7 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 	s.Equal(purchase1Amount.Neg(), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis1), ledger.TransactionAuthorizationStatusOpen))
 	s.Equal(alpacadecimal.NewFromInt(20), s.MustCustomerAccruedBalance(cust.GetID(), USD, mo.Some(&costBasis1)))
 	s.Equal(alpacadecimal.NewFromInt(5), s.MustCustomerFBOBalance(cust.GetID(), USD, mo.Some(&costBasis1)))
+	s.assertAdvanceBacking(ctx, cust.GetID(), purchase1Charge, costBasis1, map[string]float64{chargeA.ID: 20, chargeB.ID: 0})
 
 	// Given a second later credit purchase now sees only Charge B's remaining uncovered amount.
 	// !!! The released 5 from Purchase 1 stayed as available purchased credit in FBO; it did not
@@ -312,7 +316,7 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 	clock.FreezeTime(chargeBFinalizeAt.Add(time.Minute))
 	res, err = s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateCreditPurchaseIntent(CreateCreditPurchaseIntentInput{
 				Customer: cust.GetID(),
 				Currency: USD,
@@ -326,7 +330,7 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 				}),
 				CostBasis: newFiatCreditPurchaseCostBasis(costBasis2),
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 1)
@@ -339,6 +343,7 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 	s.Equal(purchase1Amount.Neg(), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis1), ledger.TransactionAuthorizationStatusOpen))
 	s.Equal(alpacadecimal.NewFromInt(20), s.MustCustomerAccruedBalance(cust.GetID(), USD, mo.Some(&costBasis1)))
 	s.Equal(alpacadecimal.NewFromInt(5), s.MustCustomerFBOBalance(cust.GetID(), USD, mo.Some(&costBasis1)))
+	s.assertAdvanceBacking(ctx, cust.GetID(), purchase1Charge, costBasis1, map[string]float64{chargeA.ID: 20, chargeB.ID: 0})
 	s.Equal(purchase2Amount.Neg(), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis2), ledger.TransactionAuthorizationStatusOpen))
 	s.Equal(purchase2Amount, s.MustCustomerAccruedBalance(cust.GetID(), USD, mo.Some(&costBasis2)))
 	s.Equal(alpacadecimal.Zero, s.MustCustomerFBOBalance(cust.GetID(), USD, mo.Some(&costBasis2)))
@@ -351,6 +356,7 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 	s.Equal(purchase1Amount.Neg(), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis1), ledger.TransactionAuthorizationStatusOpen))
 	s.Equal(alpacadecimal.NewFromInt(20), s.MustCustomerAccruedBalance(cust.GetID(), USD, mo.Some(&costBasis1)))
 	s.Equal(alpacadecimal.NewFromInt(5), s.MustCustomerFBOBalance(cust.GetID(), USD, mo.Some(&costBasis1)))
+	s.assertAdvanceBacking(ctx, cust.GetID(), purchase1Charge, costBasis1, map[string]float64{chargeA.ID: 20, chargeB.ID: 0})
 	s.Equal(purchase2Amount.Neg(), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis2), ledger.TransactionAuthorizationStatusOpen))
 	s.Equal(alpacadecimal.Zero, s.MustCustomerAccruedBalance(cust.GetID(), USD, mo.Some(&costBasis2)))
 	s.Equal(purchase2Amount, s.MustCustomerFBOBalance(cust.GetID(), USD, mo.Some(&costBasis2)))
@@ -364,9 +370,51 @@ func (s *SanityLifecycleSuite) TestUsageBasedCreditOnlyLifecycleTwoChargesTwoPur
 	s.Equal(alpacadecimal.Zero, s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis1), ledger.TransactionAuthorizationStatusOpen))
 	s.Equal(alpacadecimal.NewFromInt(20), s.MustCustomerAccruedBalance(cust.GetID(), USD, mo.Some(&costBasis1)))
 	s.Equal(alpacadecimal.NewFromInt(5), s.MustCustomerFBOBalance(cust.GetID(), USD, mo.Some(&costBasis1)))
+	s.assertAdvanceBacking(ctx, cust.GetID(), purchase1Charge, costBasis1, map[string]float64{chargeA.ID: 20, chargeB.ID: 0})
 	s.Equal(alpacadecimal.Zero, s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis2), ledger.TransactionAuthorizationStatusOpen))
 	s.Equal(alpacadecimal.Zero, s.MustCustomerAccruedBalance(cust.GetID(), USD, mo.Some(&costBasis2)))
 	s.Equal(purchase2Amount, s.MustCustomerFBOBalance(cust.GetID(), USD, mo.Some(&costBasis2)))
+}
+
+// Assert the same FIFO backing as the legacy regression, now from journal
+// provenance. Aggregate customer balances cannot detect cross-charge drift.
+func (s *SanityLifecycleSuite) assertAdvanceBacking(ctx context.Context, customerID customer.CustomerID, purchase creditpurchase.Charge, costBasis alpacadecimal.Decimal, expected map[string]float64) {
+	accounts, err := s.LedgerResolver.GetCustomerAccounts(ctx, customerID)
+	s.Require().NoError(err)
+
+	buckets, err := s.BalanceQuerier.GetBalanceBuckets(ctx, ledger.BalanceBucketQuery{
+		Namespace: customerID.Namespace,
+		Filters: ledger.Filters{
+			AccountID: lo.ToPtr(accounts.AccruedAccount.ID().ID),
+			Provenance: ledger.ProvenanceFilter{
+				SourceChargeID: mo.Some(&purchase.ID),
+			},
+			Route: ledger.RouteFilter{
+				Currency:  currencies.NewCurrencyReference(USD),
+				CostBasis: mo.Some(&costBasis),
+			},
+		},
+		GroupBy: []string{ledger.BalanceBucketGroupBySpendChargeID},
+	})
+	s.Require().NoError(err)
+
+	booked := map[string]float64{}
+	for _, bucket := range buckets {
+		booked[lo.FromPtr(bucket.GroupByValues[ledger.BalanceBucketGroupBySpendChargeID])] += bucket.SettledAmount.InexactFloat64()
+	}
+
+	lineages, err := s.LineageService.LoadLineagesByCustomer(ctx, legacylineage.LoadLineagesByCustomerInput{
+		Namespace:  customerID.Namespace,
+		CustomerID: customerID.ID,
+		Currency:   currencies.NewCurrencyReference(USD),
+	})
+	s.Require().NoError(err)
+
+	s.Empty(lineages, "new collections use ledger origins")
+
+	for chargeID, amount := range expected {
+		s.Equal(amount, booked[chargeID], "persisted ledger backing for %s", chargeID)
+	}
 }
 
 // Use this helper for the shared single-charge lifecycle setup that stops after
@@ -421,7 +469,7 @@ func (s *SanityLifecycleSuite) setupUsageBasedCreditOnlyLifecyclePartialBackfill
 	// When creating a credit-only usage-based charge with a tiered price.
 	res, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:          cust.GetID(),
 				Currency:          USD,
@@ -433,7 +481,7 @@ func (s *SanityLifecycleSuite) setupUsageBasedCreditOnlyLifecyclePartialBackfill
 				UniqueReferenceID: namespacePrefix,
 				FeatureKey:        meterSlug,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 1)
@@ -474,7 +522,7 @@ func (s *SanityLifecycleSuite) setupUsageBasedCreditOnlyLifecyclePartialBackfill
 	// Given a later external credit purchase partially backfills that earlier advance-backed usage.
 	res, err = s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateCreditPurchaseIntent(CreateCreditPurchaseIntentInput{
 				Customer: cust.GetID(),
 				Currency: USD,
@@ -488,7 +536,7 @@ func (s *SanityLifecycleSuite) setupUsageBasedCreditOnlyLifecyclePartialBackfill
 				}),
 				CostBasis: newFiatCreditPurchaseCostBasis(costBasis),
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 1)

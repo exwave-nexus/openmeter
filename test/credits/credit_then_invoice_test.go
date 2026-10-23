@@ -2,13 +2,13 @@ package credits
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/alpacahq/alpacadecimal"
 	"github.com/samber/lo"
 	"github.com/samber/mo"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	appcustominvoicing "github.com/openmeterio/openmeter/openmeter/app/custominvoicing"
@@ -22,7 +22,9 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
 	"github.com/openmeterio/openmeter/openmeter/ledger"
+	"github.com/openmeterio/openmeter/openmeter/meter"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	pcfeature "github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/datetime"
@@ -82,7 +84,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceDeletePatchD
 		// - billing has one active gathering line for the charge and the ledger remains unchanged
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -96,7 +98,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceDeletePatchD
 					UniqueReferenceID: "usage-based-credit-then-invoice-delete-gathering",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -142,6 +144,735 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceDeletePatchD
 		// - every ledger balance is still identical to the pre-delete snapshot
 		s.RequireChargeStatus(usageBasedChargeID, usagebased.StatusDeleted)
 		s.AssertLedgerSnapshotUnchanged(ledgerSnapshotInput, startLedger)
+	})
+}
+
+func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceCollectionPersistsMissingMeterValidationIssue() {
+	t := s.T()
+	ctx := t.Context()
+	ns := s.GetUniqueNamespace("charges-credits-usagebased-missing-meter-collection")
+	s.ProvisionDefaultTaxCodes(ctx, ns)
+
+	customInvoicing := s.SetupCustomInvoicing(ns)
+	cust := s.CreateLedgerBackedCustomer(ns, "test-subject")
+
+	_ = s.ProvisionBillingProfile(ctx, ns, customInvoicing.App.GetID(),
+		billingtest.WithCollectionInterval(datetime.MustParseDuration(t, "P2D")),
+		billingtest.WithManualApproval(),
+	)
+
+	apiRequestsTotal := s.SetupApiRequestsTotalFeature(ctx, ns)
+	defer apiRequestsTotal.Cleanup()
+	meters, err := s.MeterAdapter.ListMeters(ctx, meter.ListMetersParams{Namespace: ns})
+	s.NoError(err)
+	s.Require().Len(meters.Items, 1)
+	apiRequestsTotalMeter := meters.Items[0]
+
+	setupAt := datetime.MustParseTimeInLocation(t, "2025-12-01T00:00:00Z", time.UTC).AsTime()
+	servicePeriod := timeutil.ClosedPeriod{
+		From: datetime.MustParseTimeInLocation(t, "2026-01-01T00:00:00Z", time.UTC).AsTime(),
+		To:   datetime.MustParseTimeInLocation(t, "2026-02-01T00:00:00Z", time.UTC).AsTime(),
+	}
+
+	clock.FreezeTime(setupAt)
+	defer clock.UnFreeze()
+
+	var usageBasedChargeID meta.ChargeID
+
+	s.Run("Given a charge-backed usage line whose feature initially has a meter", func() {
+		// given:
+		// - a metered feature can be resolved when a credit-then-invoice usage charge is created
+		// when:
+		// - charge creation persists the charge and its gathering line
+		// then:
+		// - the gathering line is owned by the usage-based charge line engine and is ready for later collection
+		created, err := s.Charges.Create(ctx, charges.CreateInput{
+			Namespace: ns,
+			Intents: charges.NewCreateChargeIntents(
+				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
+					Customer:       cust.GetID(),
+					Currency:       USD,
+					ServicePeriod:  servicePeriod,
+					SettlementMode: productcatalog.CreditThenInvoiceSettlementMode,
+					Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+						Amount: alpacadecimal.NewFromInt(1),
+					}),
+					Name:              "usage-based-missing-meter-collection",
+					ManagedBy:         billing.SubscriptionManagedLine,
+					UniqueReferenceID: "usage-based-missing-meter-collection",
+					FeatureKey:        apiRequestsTotal.Feature.Key,
+				}),
+			),
+		})
+		s.NoError(err)
+		s.Require().Len(created, 1)
+
+		usageBasedCharge, err := created[0].AsUsageBasedCharge()
+		s.NoError(err)
+		usageBasedChargeID = usageBasedCharge.GetChargeID()
+		s.RequireChargeStatus(usageBasedCharge.GetChargeID(), usagebased.StatusCreated)
+
+		lines := s.mustGatheringLinesForCharge(ns, cust.ID, usageBasedCharge.ID, false)
+		s.Require().Len(lines, 1)
+		s.Equal(billing.LineEngineTypeChargeUsageBased, lines[0].Engine)
+	})
+
+	s.Run("when the meter disappears collection leaves the line in gathering", func() {
+		// given:
+		// - the persisted charge and gathering line still reference the feature
+		// when:
+		// - the meter backing that feature is removed and the line becomes collectible
+		// then:
+		// - collection excludes the line and records the missing dependency on the charge
+		err := s.MeterAdapter.ReplaceMeters(ctx, nil)
+		s.NoError(err)
+
+		clock.FreezeTime(servicePeriod.To.Add(time.Second))
+		defer clock.UnFreeze()
+		invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+			Customer: cust.GetID(),
+			AsOf:     lo.ToPtr(servicePeriod.To),
+		})
+		s.Require().NoError(err)
+		s.Empty(invoices)
+
+		charge := s.RequireUsageBasedChargeStatus(usageBasedChargeID, usagebased.StatusCreated)
+		s.Empty(charge.Realizations)
+		s.Require().Len(charge.ValidationIssues, 1)
+		issue := charge.ValidationIssues[0]
+		s.Equal(billing.ValidationIssueSeverityCritical, issue.Severity)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Code, issue.Code)
+		s.Equal(billing.ValidationComponentProductCatalog, issue.Component)
+		s.Equal("/charges/"+usageBasedChargeID.ID, issue.Path)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Message, issue.Message)
+		s.Equal(apiRequestsTotal.Feature.Key, issue.Attributes["feature_key"])
+		s.Len(s.mustGatheringLinesForCharge(ns, cust.ID, usageBasedChargeID.ID, false), 1)
+
+		invoicesResult, err := s.BillingService.ListStandardInvoices(ctx, billing.ListStandardInvoicesInput{
+			Namespace: ns,
+		})
+		s.NoError(err)
+		s.Empty(invoicesResult.Items)
+	})
+
+	s.Run("when the meter is restored collection creates the normal realization", func() {
+		// given:
+		// - the blocked gathering line and its charge validation issue remain persisted
+		// when:
+		// - the meter is restored and collection is retried
+		// then:
+		// - the line follows the existing invoice and rated-run lifecycle
+		err := s.MeterAdapter.ReplaceMeters(ctx, []meter.Meter{apiRequestsTotalMeter})
+		s.NoError(err)
+
+		clock.FreezeTime(servicePeriod.To.Add(time.Second))
+		defer clock.UnFreeze()
+		invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+			Customer: cust.GetID(),
+			AsOf:     lo.ToPtr(servicePeriod.To),
+		})
+		s.Require().NoError(err)
+		s.Require().Len(invoices, 1)
+		s.Equal(billing.StandardInvoiceStatusDraftWaitingForCollection, invoices[0].Status)
+		s.Require().Len(invoices[0].Lines.OrEmpty(), 1)
+
+		charge := s.RequireUsageBasedChargeStatus(usageBasedChargeID, usagebased.StatusActiveRealizationWaitingForCollection)
+		s.Empty(charge.ValidationIssues)
+		s.Require().Len(charge.Realizations, 1)
+		currentRun, err := charge.GetCurrentRealizationRun()
+		s.NoError(err)
+		s.Equal(invoices[0].ID, lo.FromPtr(currentRun.InvoiceID))
+		s.Equal(invoices[0].Lines.OrEmpty()[0].ID, lo.FromPtr(currentRun.LineID))
+		s.Empty(s.mustGatheringLinesForCharge(ns, cust.ID, usageBasedChargeID.ID, false))
+	})
+}
+
+func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceWaitingForCollectionMissingMeterIsRetryable() {
+	// given:
+	// - a charge-backed usage invoice and its realization run are waiting for collection
+	// when:
+	// - the feature's required meter disappears before collection
+	// then:
+	// - the invoice fails with a persisted validation issue and succeeds when retried after meter restoration
+	t := s.T()
+	ctx := t.Context()
+	ns := s.GetUniqueNamespace("charges-credits-usagebased-waiting-for-collection-missing-meter")
+	s.ProvisionDefaultTaxCodes(ctx, ns)
+
+	customInvoicing := s.SetupCustomInvoicing(ns)
+	cust := s.CreateLedgerBackedCustomer(ns, "test-subject")
+
+	_ = s.ProvisionBillingProfile(ctx, ns, customInvoicing.App.GetID(),
+		billingtest.WithCollectionInterval(datetime.MustParseDuration(t, "P2D")),
+		billingtest.WithManualApproval(),
+	)
+
+	apiRequestsTotal := s.SetupApiRequestsTotalFeature(ctx, ns)
+	defer apiRequestsTotal.Cleanup()
+
+	meters, err := s.MeterAdapter.ListMeters(ctx, meter.ListMetersParams{Namespace: ns})
+	s.NoError(err)
+	s.Require().Len(meters.Items, 1)
+	apiRequestsTotalMeter := meters.Items[0]
+
+	setupAt := datetime.MustParseTimeInLocation(t, "2025-12-01T00:00:00Z", time.UTC).AsTime()
+	servicePeriod := timeutil.ClosedPeriod{
+		From: datetime.MustParseTimeInLocation(t, "2026-01-01T00:00:00Z", time.UTC).AsTime(),
+		To:   datetime.MustParseTimeInLocation(t, "2026-02-01T00:00:00Z", time.UTC).AsTime(),
+	}
+
+	clock.FreezeTime(setupAt)
+	defer clock.UnFreeze()
+
+	var (
+		usageBasedChargeID meta.ChargeID
+		invoice            billing.StandardInvoice
+		runID              usagebased.RealizationRunID
+		lineID             billing.LineID
+	)
+
+	s.Run("given the charge invoice is waiting for collection", func() {
+		// given:
+		// - a metered credit-then-invoice usage charge has usage in its final service period
+		// when:
+		// - billing creates the invoice before its collection time
+		// then:
+		// - the invoice and its charge realization wait for collection
+		s.MockStreamingConnector.AddSimpleEvent(
+			apiRequestsTotal.Feature.Key,
+			10,
+			datetime.MustParseTimeInLocation(t, "2026-01-15T00:00:00Z", time.UTC).AsTime(),
+		)
+
+		created, err := s.Charges.Create(ctx, charges.CreateInput{
+			Namespace: ns,
+			Intents: charges.NewCreateChargeIntents(
+				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
+					Customer:       cust.GetID(),
+					Currency:       USD,
+					ServicePeriod:  servicePeriod,
+					SettlementMode: productcatalog.CreditThenInvoiceSettlementMode,
+					Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+						Amount: alpacadecimal.NewFromInt(1),
+					}),
+					Name:              "usage-based-waiting-for-collection-missing-meter",
+					ManagedBy:         billing.SubscriptionManagedLine,
+					UniqueReferenceID: "usage-based-waiting-for-collection-missing-meter",
+					FeatureKey:        apiRequestsTotal.Feature.Key,
+				}),
+			),
+		})
+		s.NoError(err)
+		s.Require().Len(created, 1)
+
+		usageBasedCharge, err := created[0].AsUsageBasedCharge()
+		s.NoError(err)
+		usageBasedChargeID = usageBasedCharge.GetChargeID()
+
+		clock.FreezeTime(servicePeriod.To)
+		defer clock.UnFreeze()
+		invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+			Customer: cust.GetID(),
+			AsOf:     lo.ToPtr(servicePeriod.To),
+		})
+		s.NoError(err)
+		s.Require().Len(invoices, 1)
+		invoice = invoices[0]
+		s.Equal(billing.StandardInvoiceStatusDraftWaitingForCollection, invoice.Status)
+		s.False(invoice.StatusDetails.Failed)
+		s.Require().Len(invoice.Lines.OrEmpty(), 1)
+		lineID = invoice.Lines.OrEmpty()[0].GetLineID()
+
+		charge := s.RequireUsageBasedChargeStatus(usageBasedChargeID, usagebased.StatusActiveRealizationWaitingForCollection)
+		currentRun, err := charge.GetCurrentRealizationRun()
+		s.NoError(err)
+		runID = currentRun.ID
+		s.Equal(lineID.ID, lo.FromPtr(currentRun.LineID))
+		s.Equal(invoice.ID, lo.FromPtr(currentRun.InvoiceID))
+	})
+
+	s.Run("when the required meter disappears during the wait", func() {
+		// given:
+		// - the persisted invoice and charge realization are waiting for collection
+		// when:
+		// - the feature's required meter disappears before collection
+		// then:
+		// - collection persists a retryable failed invoice and rolls the charge back to waiting
+		err := s.MeterAdapter.ReplaceMeters(ctx, nil)
+		s.NoError(err)
+
+		clock.FreezeTime(invoice.DefaultCollectionAtForStandardInvoice())
+		defer clock.UnFreeze()
+		invoice, err = s.BillingService.AdvanceInvoice(ctx, invoice.GetInvoiceID())
+		s.NoError(err)
+		s.Equal(billing.StandardInvoiceStatusDraftInvalidCreated, invoice.Status)
+		s.True(invoice.StatusDetails.Failed)
+		s.Require().NotNil(invoice.StatusDetails.AvailableActions.Retry)
+		s.Require().Len(invoice.ValidationIssues, 1)
+
+		issue := invoice.ValidationIssues[0]
+		s.Equal(billing.ValidationIssueSeverityCritical, issue.Severity)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Code, issue.Code)
+		s.Equal(billing.LineEngineValidationComponent(billing.LineEngineTypeChargeUsageBased), issue.Component)
+		s.Equal("/charges/"+usageBasedChargeID.ID, issue.Path)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Message, issue.Message)
+		s.Equal(apiRequestsTotal.Feature.Key, issue.Attributes["feature_key"])
+
+		persistedInvoice, err := s.BillingService.GetStandardInvoiceById(ctx, billing.GetStandardInvoiceByIdInput{
+			Invoice: invoice.GetInvoiceID(),
+			Expand:  billing.StandardInvoiceExpandAll,
+		})
+		s.NoError(err)
+		s.Equal(billing.StandardInvoiceStatusDraftInvalidCreated, persistedInvoice.Status)
+		s.True(persistedInvoice.StatusDetails.Failed)
+		s.Require().NotNil(persistedInvoice.StatusDetails.AvailableActions.Retry)
+		s.Require().Len(persistedInvoice.ValidationIssues, 1)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Code, persistedInvoice.ValidationIssues[0].Code)
+
+		charge := s.RequireUsageBasedChargeStatus(usageBasedChargeID, usagebased.StatusActiveRealizationWaitingForCollection)
+		currentRun, err := charge.GetCurrentRealizationRun()
+		s.NoError(err)
+		s.Equal(runID.ID, currentRun.ID.ID)
+		s.Equal(lineID.ID, lo.FromPtr(currentRun.LineID))
+		s.Equal(invoice.ID, lo.FromPtr(currentRun.InvoiceID))
+	})
+
+	s.Run("then restoring the meter allows the same invoice to retry", func() {
+		// given:
+		// - the failed invoice remains associated with the charge's waiting realization run
+		// when:
+		// - the meter is restored and the invoice is retried
+		// then:
+		// - collection succeeds without replacing the run or duplicating its invoice association
+		clock.FreezeTime(invoice.DefaultCollectionAtForStandardInvoice())
+		defer clock.UnFreeze()
+
+		err := s.MeterAdapter.ReplaceMeters(ctx, []meter.Meter{apiRequestsTotalMeter})
+		s.NoError(err)
+
+		invoice, err = s.BillingService.RetryInvoice(ctx, invoice.GetInvoiceID())
+		s.NoError(err)
+		s.Equal(billing.StandardInvoiceStatusDraftManualApprovalNeeded, invoice.Status)
+		s.False(invoice.StatusDetails.Failed)
+		s.Nil(invoice.StatusDetails.AvailableActions.Retry)
+		s.Empty(invoice.ValidationIssues)
+		s.NotNil(invoice.QuantitySnapshotedAt)
+
+		charge := s.RequireUsageBasedChargeStatus(usageBasedChargeID, usagebased.StatusActiveRealizationProcessing)
+		currentRun, err := charge.GetCurrentRealizationRun()
+		s.NoError(err)
+		s.Equal(runID.ID, currentRun.ID.ID)
+		s.Equal(lineID.ID, lo.FromPtr(currentRun.LineID))
+		s.Equal(invoice.ID, lo.FromPtr(currentRun.InvoiceID))
+		s.Equal(alpacadecimal.NewFromInt(10), currentRun.MeteredQuantity)
+	})
+}
+
+func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceCollectionPersistsMultipleMissingMeterValidationIssues() {
+	t := s.T()
+	ctx := t.Context()
+	ns := s.GetUniqueNamespace("charges-credits-usagebased-multiple-missing-meter-collection")
+	s.ProvisionDefaultTaxCodes(ctx, ns)
+
+	customInvoicing := s.SetupCustomInvoicing(ns)
+	cust := s.CreateLedgerBackedCustomer(ns, "test-subject")
+
+	_ = s.ProvisionBillingProfile(ctx, ns, customInvoicing.App.GetID(),
+		billingtest.WithCollectionInterval(datetime.MustParseDuration(t, "P2D")),
+		billingtest.WithManualApproval(),
+	)
+
+	apiRequestsTotal := s.SetupApiRequestsTotalFeature(ctx, ns)
+	defer apiRequestsTotal.Cleanup()
+
+	aiTokens, err := s.FeatureService.CreateFeature(ctx, pcfeature.CreateFeatureInputs{
+		Namespace: ns,
+		Name:      "AI tokens",
+		Key:       "ai-tokens",
+		MeterID:   apiRequestsTotal.Feature.MeterID,
+	})
+	s.NoError(err)
+
+	setupAt := datetime.MustParseTimeInLocation(t, "2025-12-01T00:00:00Z", time.UTC).AsTime()
+	servicePeriod := timeutil.ClosedPeriod{
+		From: datetime.MustParseTimeInLocation(t, "2026-01-01T00:00:00Z", time.UTC).AsTime(),
+		To:   datetime.MustParseTimeInLocation(t, "2026-02-01T00:00:00Z", time.UTC).AsTime(),
+	}
+
+	clock.FreezeTime(setupAt)
+	defer clock.UnFreeze()
+
+	// given:
+	// - two credit-then-invoice usage charges have gathering lines backed by different features
+	// - both features resolve to a meter when the charges are created
+	created, err := s.Charges.Create(ctx, charges.CreateInput{
+		Namespace: ns,
+		Intents: charges.NewCreateChargeIntents(
+			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
+				Customer:       cust.GetID(),
+				Currency:       USD,
+				ServicePeriod:  servicePeriod,
+				SettlementMode: productcatalog.CreditThenInvoiceSettlementMode,
+				Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+					Amount: alpacadecimal.NewFromInt(1),
+				}),
+				Name:              "API requests",
+				ManagedBy:         billing.SubscriptionManagedLine,
+				UniqueReferenceID: "missing-meter-api-requests",
+				FeatureKey:        apiRequestsTotal.Feature.Key,
+			}),
+			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
+				Customer:       cust.GetID(),
+				Currency:       USD,
+				ServicePeriod:  servicePeriod,
+				SettlementMode: productcatalog.CreditThenInvoiceSettlementMode,
+				Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+					Amount: alpacadecimal.NewFromInt(1),
+				}),
+				Name:              "AI tokens",
+				ManagedBy:         billing.SubscriptionManagedLine,
+				UniqueReferenceID: "missing-meter-ai-tokens",
+				FeatureKey:        aiTokens.Key,
+			}),
+		),
+	})
+	s.NoError(err)
+	s.Require().Len(created, 2)
+
+	// when:
+	// - the shared meter disappears and both gathering lines become collectible
+	err = s.MeterAdapter.ReplaceMeters(ctx, nil)
+	s.NoError(err)
+	clock.FreezeTime(servicePeriod.To.Add(time.Second))
+
+	invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+		Customer: cust.GetID(),
+		AsOf:     lo.ToPtr(servicePeriod.To),
+	})
+
+	// then:
+	// - collection excludes both lines and records a distinct critical issue on each charge
+	s.Require().NoError(err)
+	s.Empty(invoices)
+
+	issueFeatureKeys := make([]string, 0, len(created))
+	for _, createdCharge := range created {
+		usageBasedCharge, err := createdCharge.AsUsageBasedCharge()
+		s.NoError(err)
+		charge := s.RequireUsageBasedChargeStatus(usageBasedCharge.GetChargeID(), usagebased.StatusCreated)
+		s.Empty(charge.Realizations)
+		s.Require().Len(charge.ValidationIssues, 1)
+		issue := charge.ValidationIssues[0]
+		s.Equal(billing.ValidationIssueSeverityCritical, issue.Severity)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Code, issue.Code)
+		s.Equal(billing.ValidationComponentProductCatalog, issue.Component)
+		s.Equal("/charges/"+usageBasedCharge.ID, issue.Path)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Message, issue.Message)
+		featureKey, ok := issue.Attributes["feature_key"].(string)
+		s.Require().True(ok)
+		issueFeatureKeys = append(issueFeatureKeys, featureKey)
+		s.Len(s.mustGatheringLinesForCharge(ns, cust.ID, usageBasedCharge.ID, false), 1)
+	}
+
+	s.ElementsMatch([]string{
+		apiRequestsTotal.Feature.Key,
+		aiTokens.Key,
+	}, issueFeatureKeys)
+
+	invoicesResult, err := s.BillingService.ListStandardInvoices(ctx, billing.ListStandardInvoicesInput{
+		Namespace: ns,
+	})
+	s.NoError(err)
+	s.Empty(invoicesResult.Items)
+}
+
+func (s *CreditThenInvoiceTestSuite) TestAdvanceChargesIgnoresMissingMetersForUsageChargesThatAreNotDue() {
+	t := s.T()
+	ctx := t.Context()
+	ns := s.GetUniqueNamespace("charges-advance-ignores-not-due-missing-meters")
+	s.ProvisionDefaultTaxCodes(ctx, ns)
+
+	customInvoicing := s.SetupCustomInvoicing(ns)
+	cust := s.CreateLedgerBackedCustomer(ns, "test-subject")
+
+	_ = s.ProvisionBillingProfile(ctx, ns, customInvoicing.App.GetID(),
+		billingtest.WithManualApproval(),
+	)
+
+	apiRequestsTotal := s.SetupApiRequestsTotalFeature(ctx, ns)
+	defer apiRequestsTotal.Cleanup()
+
+	aiTokens, err := s.FeatureService.CreateFeature(ctx, pcfeature.CreateFeatureInputs{
+		Namespace: ns,
+		Name:      "AI tokens",
+		Key:       "ai-tokens",
+		MeterID:   apiRequestsTotal.Feature.MeterID,
+	})
+	s.NoError(err)
+
+	usageServicePeriod := timeutil.ClosedPeriod{
+		From: datetime.MustParseTimeInLocation(t, "2026-01-01T00:00:00Z", time.UTC).AsTime(),
+		To:   datetime.MustParseTimeInLocation(t, "2026-02-01T00:00:00Z", time.UTC).AsTime(),
+	}
+	flatFeeServicePeriod := timeutil.ClosedPeriod{
+		From: datetime.MustParseTimeInLocation(t, "2026-01-15T00:00:00Z", time.UTC).AsTime(),
+		To:   datetime.MustParseTimeInLocation(t, "2026-02-15T00:00:00Z", time.UTC).AsTime(),
+	}
+
+	clock.FreezeTime(usageServicePeriod.From)
+	defer clock.UnFreeze()
+
+	// given:
+	// - two usage charges are active and are not due until the end of their service period
+	usageCharges, err := s.Charges.Create(ctx, charges.CreateInput{
+		Namespace: ns,
+		Intents: charges.NewCreateChargeIntents(
+			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
+				Customer:       cust.GetID(),
+				Currency:       USD,
+				ServicePeriod:  usageServicePeriod,
+				SettlementMode: productcatalog.CreditOnlySettlementMode,
+				Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+					Amount: alpacadecimal.NewFromInt(1),
+				}),
+				Name:              "API requests",
+				ManagedBy:         billing.SubscriptionManagedLine,
+				UniqueReferenceID: "not-due-api-requests",
+				FeatureKey:        apiRequestsTotal.Feature.Key,
+			}),
+			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
+				Customer:       cust.GetID(),
+				Currency:       USD,
+				ServicePeriod:  usageServicePeriod,
+				SettlementMode: productcatalog.CreditOnlySettlementMode,
+				Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+					Amount: alpacadecimal.NewFromInt(1),
+				}),
+				Name:              "AI tokens",
+				ManagedBy:         billing.SubscriptionManagedLine,
+				UniqueReferenceID: "not-due-ai-tokens",
+				FeatureKey:        aiTokens.Key,
+			}),
+		),
+	})
+	s.NoError(err)
+	s.Require().Len(usageCharges, 2)
+
+	usageChargeIDs := make([]meta.ChargeID, 0, len(usageCharges))
+	for _, charge := range usageCharges {
+		usageCharge, err := charge.AsUsageBasedCharge()
+		s.NoError(err)
+		s.Equal(usagebased.StatusActive, usageCharge.Status)
+		s.Require().NotNil(usageCharge.State.AdvanceAfter)
+		s.True(usageServicePeriod.To.Equal(*usageCharge.State.AdvanceAfter))
+		usageChargeIDs = append(usageChargeIDs, usageCharge.GetChargeID())
+	}
+
+	// - an unrelated credit-then-invoice flat fee for the customer becomes due first
+	flatFeeCharges, err := s.Charges.Create(ctx, charges.CreateInput{
+		Namespace: ns,
+		Intents: charges.NewCreateChargeIntents(
+			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
+				Customer:       cust.GetID(),
+				Currency:       USD,
+				ServicePeriod:  flatFeeServicePeriod,
+				SettlementMode: productcatalog.CreditThenInvoiceSettlementMode,
+				Price: productcatalog.NewPriceFrom(productcatalog.FlatPrice{
+					Amount:      alpacadecimal.NewFromInt(10),
+					PaymentTerm: productcatalog.InAdvancePaymentTerm,
+				}),
+				Name:              "monthly platform fee",
+				ManagedBy:         billing.SubscriptionManagedLine,
+				UniqueReferenceID: "due-platform-fee",
+			}),
+		),
+	})
+	s.NoError(err)
+	s.Require().Len(flatFeeCharges, 1)
+	flatFeeCharge, err := flatFeeCharges[0].AsFlatFeeCharge()
+	s.NoError(err)
+	s.Equal(flatfee.StatusCreated, flatFeeCharge.Status)
+
+	// when:
+	// - the usage meters disappear before the unrelated flat fee is advanced
+	err = s.MeterAdapter.ReplaceMeters(ctx, nil)
+	s.NoError(err)
+	clock.FreezeTime(flatFeeServicePeriod.From)
+
+	advancedCharges, err := s.Charges.AdvanceCharges(ctx, charges.AdvanceChargesInput{
+		Customer: cust.GetID(),
+	})
+
+	// then:
+	// - the due flat fee advances without resolving meters for the not-due usage charges
+	s.Require().NoError(err)
+	s.Require().Len(advancedCharges, 1)
+	advancedFlatFee, err := advancedCharges[0].AsFlatFeeCharge()
+	s.NoError(err)
+	s.Equal(flatfee.StatusActive, advancedFlatFee.Status)
+	s.RequireChargeStatus(flatFeeCharge.GetChargeID(), flatfee.StatusActive)
+
+	for _, usageChargeID := range usageChargeIDs {
+		charge := s.RequireChargeStatus(usageChargeID, usagebased.StatusActive)
+		usageCharge, err := charge.AsUsageBasedCharge()
+		s.NoError(err)
+		s.Require().NotNil(usageCharge.State.AdvanceAfter)
+		s.True(usageServicePeriod.To.Equal(*usageCharge.State.AdvanceAfter))
+	}
+}
+
+func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceCollectionPersistsActiveRealizationRunValidationIssue() {
+	t := s.T()
+	ctx := t.Context()
+	ns := s.GetUniqueNamespace("charges-credits-usagebased-active-run-collection")
+	s.ProvisionDefaultTaxCodes(ctx, ns)
+
+	sandboxApp := s.InstallSandboxApp(t, ns)
+	cust := s.CreateLedgerBackedCustomer(ns, "test-subject")
+
+	_ = s.ProvisionBillingProfile(ctx, ns, sandboxApp.GetID(),
+		billingtest.WithProgressiveBilling(),
+		billingtest.WithCollectionInterval(datetime.MustParseDuration(t, "P2D")),
+		billingtest.WithManualApproval(),
+	)
+
+	apiRequestsTotal := s.SetupApiRequestsTotalFeature(ctx, ns)
+	defer apiRequestsTotal.Cleanup()
+
+	setupAt := datetime.MustParseTimeInLocation(t, "2025-12-01T00:00:00Z", time.UTC).AsTime()
+	servicePeriod := timeutil.ClosedPeriod{
+		From: datetime.MustParseTimeInLocation(t, "2026-01-01T00:00:00Z", time.UTC).AsTime(),
+		To:   datetime.MustParseTimeInLocation(t, "2026-02-01T00:00:00Z", time.UTC).AsTime(),
+	}
+	midPeriodInvoiceAt := datetime.MustParseTimeInLocation(t, "2026-01-16T00:00:00Z", time.UTC).AsTime()
+
+	clock.FreezeTime(setupAt)
+	defer clock.UnFreeze()
+
+	var (
+		usageBasedChargeID meta.ChargeID
+		partialInvoice     billing.StandardInvoice
+	)
+
+	s.Run("Given a credit-then-invoice usage charge", func() {
+		// given:
+		// - a metered usage charge is configured for progressive billing
+		// when:
+		// - the charge and its gathering line are created
+		// then:
+		// - the charge is ready for a partial realization during its service period
+		created, err := s.Charges.Create(ctx, charges.CreateInput{
+			Namespace: ns,
+			Intents: charges.NewCreateChargeIntents(
+				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
+					Customer:       cust.GetID(),
+					Currency:       USD,
+					ServicePeriod:  servicePeriod,
+					SettlementMode: productcatalog.CreditThenInvoiceSettlementMode,
+					Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+						Amount: alpacadecimal.NewFromInt(1),
+					}),
+					Name:              "usage-based-active-run-collection",
+					ManagedBy:         billing.SubscriptionManagedLine,
+					UniqueReferenceID: "usage-based-active-run-collection",
+					FeatureKey:        apiRequestsTotal.Feature.Key,
+				}),
+			),
+		})
+		s.NoError(err)
+		s.Require().Len(created, 1)
+
+		usageBasedCharge, err := created[0].AsUsageBasedCharge()
+		s.NoError(err)
+		usageBasedChargeID = usageBasedCharge.GetChargeID()
+		s.RequireChargeStatus(usageBasedChargeID, usagebased.StatusCreated)
+	})
+
+	s.Run("When a partial invoice becomes invalid during app validation", func() {
+		// given:
+		// - usage exists for the first part of the service period
+		// - the invoicing app rejects the customer configuration during invoice validation
+		// when:
+		// - the partial invoice reaches its collection time
+		// then:
+		// - the invoice is persisted as draft.invalid and retains the charge's active realization run
+		s.MockStreamingConnector.AddSimpleEvent(
+			apiRequestsTotal.Feature.Key,
+			10,
+			datetime.MustParseTimeInLocation(t, "2026-01-15T00:00:00Z", time.UTC).AsTime(),
+		)
+		clock.FreezeTime(midPeriodInvoiceAt)
+		defer clock.UnFreeze()
+
+		invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+			Customer: cust.GetID(),
+			AsOf:     lo.ToPtr(midPeriodInvoiceAt),
+		})
+		s.NoError(err)
+		s.Require().Len(invoices, 1)
+		partialInvoice = invoices[0]
+
+		mockApp := s.SandboxApp.EnableMock(t)
+		defer s.SandboxApp.DisableMock()
+		mockApp.OnValidateStandardInvoice(billing.NewValidationError(
+			"missing_app_customer_data",
+			"customer has no data for the invoicing app",
+		))
+
+		clock.FreezeTime(partialInvoice.DefaultCollectionAtForStandardInvoice())
+		partialInvoice, err = s.BillingService.AdvanceInvoice(ctx, partialInvoice.GetInvoiceID())
+		s.NoError(err)
+		mockApp.AssertExpectations(t)
+
+		s.Equal(billing.StandardInvoiceStatusDraftInvalid, partialInvoice.Status)
+		s.Require().Len(partialInvoice.ValidationIssues, 1)
+		s.Equal("missing_app_customer_data", partialInvoice.ValidationIssues[0].Code)
+		s.Equal(billing.ComponentName("app.sandbox.invoiceCustomers.validate"), partialInvoice.ValidationIssues[0].Component)
+
+		charge := s.RequireUsageBasedChargeStatus(usageBasedChargeID, usagebased.StatusActiveRealizationProcessing)
+		currentRun, err := charge.GetCurrentRealizationRun()
+		s.NoError(err)
+		s.Equal(usagebased.RealizationRunTypePartialInvoice, currentRun.Type)
+		s.Equal(partialInvoice.ID, lo.FromPtr(currentRun.InvoiceID))
+	})
+
+	s.Run("Then final collection excludes the blocked line and records the issue on the charge", func() {
+		// given:
+		// - the earlier draft.invalid partial invoice still owns the charge's active realization run
+		// when:
+		// - billing collects the remaining line at the end of the service period
+		// then:
+		// - the assignment gate leaves the line gathering and records the blocking run on the charge
+		clock.FreezeTime(servicePeriod.To)
+		defer clock.UnFreeze()
+
+		invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+			Customer: cust.GetID(),
+			AsOf:     lo.ToPtr(servicePeriod.To),
+		})
+		s.Require().NoError(err)
+		s.Empty(invoices)
+
+		charge := s.RequireUsageBasedChargeStatus(usageBasedChargeID, usagebased.StatusActiveRealizationProcessing)
+		s.Require().Len(charge.ValidationIssues, 1)
+		issue := charge.ValidationIssues[0]
+		s.Equal(billing.ValidationIssueSeverityCritical, issue.Severity)
+		s.Equal(usagebased.ValidationIssueCodeInvoiceAssignmentBlockedActiveRun, issue.Code)
+		s.Equal(usagebased.ValidationIssueComponentLineEngine, issue.Component)
+		s.Contains(issue.Message, "must be completed before")
+		s.Require().Len(partialInvoice.Lines.OrEmpty(), 1)
+		s.Equal(partialInvoice.ID, issue.Attributes["invoice_id"])
+		s.Equal(partialInvoice.Lines.OrEmpty()[0].ID, issue.Attributes["line_id"])
+
+		gatheringLines := s.mustGatheringLinesForCharge(ns, cust.ID, usageBasedChargeID.ID, false)
+		s.Require().Len(gatheringLines, 1)
+
+		standardInvoices, err := s.BillingService.ListStandardInvoices(ctx, billing.ListStandardInvoicesInput{
+			Namespace: ns,
+		})
+		s.NoError(err)
+		s.Require().Len(standardInvoices.Items, 1)
+		s.Equal(partialInvoice.ID, standardInvoices.Items[0].ID)
 	})
 }
 
@@ -209,7 +940,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceDeletePatchD
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -223,7 +954,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceDeletePatchD
 					UniqueReferenceID: "usage-based-credit-then-invoice-delete-standard",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -400,7 +1131,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceDeletePatchK
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -414,7 +1145,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceDeletePatchK
 					UniqueReferenceID: "usage-based-credit-then-invoice-delete-immutable",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -568,7 +1299,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceCreatePatchCrea
 		// - one created flat fee charge and one pending gathering line are created
 		err := s.Charges.ApplyPatches(ctx, charges.ApplyPatchesInput{
 			CustomerID: cust.GetID(),
-			Creates: charges.ChargeIntents{
+			Creates: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -582,7 +1313,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceCreatePatchCrea
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-create",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 
@@ -688,7 +1419,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeletePatchDele
 		// - billing has one active gathering line for the charge and the ledger remains unchanged
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -702,7 +1433,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeletePatchDele
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-delete-gathering",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -805,7 +1536,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeletePatchDele
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -819,7 +1550,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeletePatchDele
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-delete-standard",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -985,7 +1716,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeletePatchDele
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -999,7 +1730,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeletePatchDele
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-delete-standard-partial",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -1154,7 +1885,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeletePatchKeep
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -1168,7 +1899,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeletePatchKeep
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-delete-immutable",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -1335,7 +2066,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoicePartialCreditPa
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -1349,7 +2080,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoicePartialCreditPa
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-partial-payment",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -1614,7 +2345,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDirectPaidTrigg
 		// - the invoice waits for payment processing
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -1628,7 +2359,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDirectPaidTrigg
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-direct-paid",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -1740,7 +2471,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceFullyCreditedPa
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -1754,7 +2485,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceFullyCreditedPa
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-no-fiat-payment-callback",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -1858,7 +2589,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceZeroAmountFinal
 		// - the persisted amount is zero, no gathering line exists, and no ledger booking exists
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -1876,7 +2607,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceZeroAmountFinal
 						Mode:    productcatalog.ProRatingModeProratePrices,
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -1983,7 +2714,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceShrinkToZeroThe
 		// - the charge is created and billing has one active gathering line
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateCreditPurchaseIntent(CreateCreditPurchaseIntentInput{
 					Customer: cust.GetID(),
 					Currency: USD,
@@ -1997,7 +2728,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceShrinkToZeroThe
 					}),
 					CostBasis: newFiatCreditPurchaseCostBasis(creditCostBasis),
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -2008,7 +2739,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceShrinkToZeroThe
 
 		res, err = s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -2026,7 +2757,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceShrinkToZeroThe
 						Mode:    productcatalog.ProRatingModeProratePrices,
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -2240,7 +2971,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeleteImmutable
 		// - the line is immutable and the current run has invoice usage plus authorized payment
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -2254,7 +2985,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeleteImmutable
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-delete-immutable-payment",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -2384,7 +3115,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceAsyncPaymentBoo
 		// - the current run has accrued invoice usage and no payment
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -2402,7 +3133,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceAsyncPaymentBoo
 						Mode:    productcatalog.ProRatingModeProratePrices,
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -2584,7 +3315,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceInArrearsActiva
 		// - it starts as created and the pending gathering line invoices at service period end
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -2598,7 +3329,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceInArrearsActiva
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-in-arrears",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -2736,7 +3467,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeleteActiveCha
 		// - the charge becomes active but no standard invoice exists yet
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -2750,7 +3481,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceDeleteActiveCha
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: "flatfee-credit-then-invoice-delete-active",
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -2836,7 +3567,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceShrinkExtendPat
 		// - billing has one active gathering line for the charge and the ledger remains unchanged
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -2854,7 +3585,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceShrinkExtendPat
 						Mode:    productcatalog.ProRatingModeProratePrices,
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -2981,7 +3712,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceShrinkPatchUpda
 		// - the current run is mutable and attached to the draft standard line
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -2999,7 +3730,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceShrinkPatchUpda
 						Mode:    productcatalog.ProRatingModeProratePrices,
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -3146,7 +3877,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceShrinkPatchCorr
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -3164,7 +3895,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceShrinkPatchCorr
 						Mode:    productcatalog.ProRatingModeProratePrices,
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -3318,7 +4049,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceImmutableShrink
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -3336,7 +4067,7 @@ func (s *CreditThenInvoiceTestSuite) TestFlatFeeCreditThenInvoiceImmutableShrink
 						Mode:    productcatalog.ProRatingModeProratePrices,
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -3525,7 +4256,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceExtendPatchU
 		// - billing has one active gathering line for the charge and the ledger remains unchanged
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -3539,7 +4270,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceExtendPatchU
 					UniqueReferenceID: "usage-based-credit-then-invoice-extend-gathering",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -3640,7 +4371,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceShrinkPatchU
 		// - billing has one active gathering line for the charge and the ledger remains unchanged
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -3654,7 +4385,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceShrinkPatchU
 					UniqueReferenceID: "usage-based-credit-then-invoice-shrink-gathering",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -3772,7 +4503,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceExtendPatchD
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -3786,7 +4517,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceExtendPatchD
 					UniqueReferenceID: "usage-based-credit-then-invoice-extend-mutable-standard",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -3958,7 +4689,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceShrinkPatchD
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -3972,7 +4703,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceShrinkPatchD
 					UniqueReferenceID: "usage-based-credit-then-invoice-shrink-mutable-standard",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -4148,7 +4879,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceShrinkPatchA
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -4162,7 +4893,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceShrinkPatchA
 					UniqueReferenceID: "usage-based-credit-then-invoice-shrink-immutable",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -4405,7 +5136,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceExtendPatchD
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -4419,7 +5150,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceExtendPatchD
 					UniqueReferenceID: "usage-based-credit-then-invoice-extend-final-collection",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -4627,7 +5358,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceExtendPatchA
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -4641,7 +5372,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceExtendPatchA
 					UniqueReferenceID: "usage-based-credit-then-invoice-extend-immutable",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -4843,7 +5574,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceShrinkExtend
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -4857,7 +5588,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceShrinkExtend
 					UniqueReferenceID: "usage-based-credit-then-invoice-shrink-extend-shrink",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -5206,7 +5937,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceExtendPatchF
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -5220,7 +5951,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedCreditThenInvoiceExtendPatchF
 					UniqueReferenceID: "usage-based-credit-then-invoice-extend-tail",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -5402,52 +6133,6 @@ func (s *CreditThenInvoiceTestSuite) shrinkCharge(ctx context.Context, customerI
 	})
 }
 
-func (s *CreditThenInvoiceTestSuite) RequireChargeStatus(chargeID meta.ChargeID, status any) charges.Charge {
-	s.T().Helper()
-
-	charge := s.MustGetChargeByID(chargeID)
-
-	var actualStatus string
-	switch charge.Type() {
-	case meta.ChargeTypeUsageBased:
-		usageBasedCharge, err := charge.AsUsageBasedCharge()
-		s.NoError(err)
-		actualStatus = string(usageBasedCharge.Status)
-	case meta.ChargeTypeFlatFee:
-		flatFeeCharge, err := charge.AsFlatFeeCharge()
-		s.NoError(err)
-		actualStatus = string(flatFeeCharge.Status)
-	case meta.ChargeTypeCreditPurchase:
-		creditPurchaseCharge, err := charge.AsCreditPurchaseCharge()
-		s.NoError(err)
-		actualStatus = string(creditPurchaseCharge.Status)
-	default:
-		s.FailNowf("unsupported charge type", "charge type %s is not supported", charge.Type())
-	}
-
-	s.Equal(fmt.Sprint(status), actualStatus)
-
-	return charge
-}
-
-func (s *CreditThenInvoiceTestSuite) RequireUsageBasedChargeStatus(chargeID meta.ChargeID, status usagebased.Status) usagebased.Charge {
-	s.T().Helper()
-
-	charge, err := s.RequireChargeStatus(chargeID, status).AsUsageBasedCharge()
-	s.NoError(err)
-
-	return charge
-}
-
-func (s *CreditThenInvoiceTestSuite) RequireFlatFeeChargeStatus(chargeID meta.ChargeID, status flatfee.Status) flatfee.Charge {
-	s.T().Helper()
-
-	charge, err := s.RequireChargeStatus(chargeID, status).AsFlatFeeCharge()
-	s.NoError(err)
-
-	return charge
-}
-
 func (s *CreditThenInvoiceTestSuite) mustGetUsageBasedChargeByIDWithExpands(chargeID meta.ChargeID, expands meta.Expands) usagebased.Charge {
 	s.T().Helper()
 
@@ -5476,4 +6161,222 @@ func (s *CreditThenInvoiceTestSuite) mustGetFlatFeeChargeByIDWithExpands(chargeI
 	s.NoError(err)
 
 	return flatFeeCharge
+}
+
+const (
+	deletedLineIssuanceDeletedLineName  = "deleted charge"
+	deletedLineIssuanceRetainedLineName = "retained charge"
+)
+
+func (s *CreditThenInvoiceTestSuite) TestFlatFeeIssuingSkipsDeletedChargeLine() {
+	t := s.T()
+	ctx := t.Context()
+	clock.FreezeTime(time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC))
+	defer clock.UnFreeze()
+
+	// given a two-charge draft whose automatic approval deadline has passed
+	fixture := s.setupDeletedLineIssuanceInvoice(meta.ChargeTypeFlatFee)
+	clock.FreezeTime(fixture.Invoice.DraftUntil.Add(time.Second))
+	defer clock.UnFreeze()
+
+	// when deleting one charge causes the remaining invoice to issue
+	deletedChargeID, ok := fixture.ChargesByLineName[deletedLineIssuanceDeletedLineName]
+	require.True(t, ok)
+	deletedLine := fixture.LinesByName[deletedLineIssuanceDeletedLineName]
+	require.NotNil(t, deletedLine)
+	retainedChargeID, ok := fixture.ChargesByLineName[deletedLineIssuanceRetainedLineName]
+	require.True(t, ok)
+	retainedLine := fixture.LinesByName[deletedLineIssuanceRetainedLineName]
+	require.NotNil(t, retainedLine)
+	s.MustRefundCharge(ctx, fixture.Customer, deletedChargeID)
+	invoice, err := s.BillingService.GetStandardInvoiceById(ctx, billing.GetStandardInvoiceByIdInput{
+		Invoice: fixture.Invoice.GetInvoiceID(),
+		Expand: billing.StandardInvoiceExpands{
+			billing.StandardInvoiceExpandLines,
+			billing.StandardInvoiceExpandDeletedLines,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, invoice.Lines.OrEmpty(), 2)
+	deletedLine = invoice.Lines.GetByID(deletedLine.ID)
+	require.NotNil(t, deletedLine)
+	require.NotNil(t, deletedLine.DeletedAt)
+	s.RequireChargeStatus(deletedChargeID, meta.ChargeStatusDeleted)
+
+	// then the deleted charge does not block booking the retained line
+	s.Equal(billing.StandardInvoiceStatusPaymentProcessingPending, invoice.Status)
+	s.False(invoice.StatusDetails.Failed)
+	s.False(invoice.HasCriticalValidationIssues())
+	s.RequireTotals(billingtest.ExpectedTotals{Amount: 10, Total: 10}, invoice.Totals)
+	retainedCharge := s.RequireFlatFeeChargeStatus(retainedChargeID, flatfee.StatusActiveAwaitingPaymentSettlement)
+	retainedRun, err := retainedCharge.Realizations.GetByLineID(retainedLine.ID)
+	require.NoError(t, err)
+	require.True(t, retainedRun.Immutable)
+	require.Nil(t, retainedRun.DeletedAt)
+	require.Equal(t, invoice.ID, lo.FromPtr(retainedRun.InvoiceID))
+	require.Equal(t, retainedLine.ID, lo.FromPtr(retainedRun.LineID))
+	require.NotNil(t, retainedRun.AccruedUsage)
+	require.NotNil(t, retainedRun.AccruedUsage.LedgerTransaction)
+	require.Equal(t, float64(10), retainedRun.AccruedUsage.Totals.Total.InexactFloat64())
+}
+
+func (s *CreditThenInvoiceTestSuite) TestUsageBasedIssuingSkipsDeletedChargeLine() {
+	t := s.T()
+	ctx := t.Context()
+	clock.FreezeTime(time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC))
+	defer clock.UnFreeze()
+	defer s.MockStreamingConnector.Reset()
+
+	// given a two-charge draft whose automatic approval deadline has passed
+	fixture := s.setupDeletedLineIssuanceInvoice(meta.ChargeTypeUsageBased)
+	clock.FreezeTime(fixture.Invoice.DraftUntil.Add(time.Second))
+	defer clock.UnFreeze()
+
+	// when deleting one charge causes the remaining invoice to issue
+	deletedChargeID, ok := fixture.ChargesByLineName[deletedLineIssuanceDeletedLineName]
+	require.True(t, ok)
+	deletedLine := fixture.LinesByName[deletedLineIssuanceDeletedLineName]
+	require.NotNil(t, deletedLine)
+	retainedChargeID, ok := fixture.ChargesByLineName[deletedLineIssuanceRetainedLineName]
+	require.True(t, ok)
+	retainedLine := fixture.LinesByName[deletedLineIssuanceRetainedLineName]
+	require.NotNil(t, retainedLine)
+	s.MustRefundCharge(ctx, fixture.Customer, deletedChargeID)
+	invoice, err := s.BillingService.GetStandardInvoiceById(ctx, billing.GetStandardInvoiceByIdInput{
+		Invoice: fixture.Invoice.GetInvoiceID(),
+		Expand: billing.StandardInvoiceExpands{
+			billing.StandardInvoiceExpandLines,
+			billing.StandardInvoiceExpandDeletedLines,
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, invoice.Lines.OrEmpty(), 2)
+	deletedLine = invoice.Lines.GetByID(deletedLine.ID)
+	require.NotNil(t, deletedLine)
+	require.NotNil(t, deletedLine.DeletedAt)
+	s.RequireChargeStatus(deletedChargeID, meta.ChargeStatusDeleted)
+
+	// then the deleted charge does not block booking the retained line
+	s.Equal(billing.StandardInvoiceStatusPaymentProcessingPending, invoice.Status)
+	s.False(invoice.StatusDetails.Failed)
+	s.False(invoice.HasCriticalValidationIssues())
+	s.RequireTotals(billingtest.ExpectedTotals{Amount: 10, Total: 10}, invoice.Totals)
+	retainedCharge := s.RequireUsageBasedChargeStatus(retainedChargeID, usagebased.StatusActiveAwaitingPaymentSettlement)
+	retainedRun, err := retainedCharge.Realizations.GetByLineID(retainedLine.ID)
+	require.NoError(t, err)
+	require.True(t, retainedRun.Immutable)
+	require.Nil(t, retainedRun.DeletedAt)
+	require.Equal(t, invoice.ID, lo.FromPtr(retainedRun.InvoiceID))
+	require.Equal(t, retainedLine.ID, lo.FromPtr(retainedRun.LineID))
+	require.NotNil(t, retainedRun.InvoiceUsage)
+	require.NotNil(t, retainedRun.InvoiceUsage.LedgerTransaction)
+	require.Equal(t, float64(10), retainedRun.InvoiceUsage.Totals.Total.InexactFloat64())
+}
+
+type deletedLineIssuanceInvoice struct {
+	Customer          customer.CustomerID
+	Invoice           billing.StandardInvoice
+	LinesByName       map[string]*billing.StandardLine
+	ChargesByLineName map[string]meta.ChargeID
+}
+
+func (s *CreditThenInvoiceTestSuite) setupDeletedLineIssuanceInvoice(chargeType meta.ChargeType) deletedLineIssuanceInvoice {
+	t := s.T()
+	t.Helper()
+	ctx := t.Context()
+
+	ns := s.GetUniqueNamespace("deleted-line-issuance-" + string(chargeType))
+	s.ProvisionDefaultTaxCodes(ctx, ns)
+	invoicing := s.SetupCustomInvoicing(ns)
+	cust := s.CreateLedgerBackedCustomer(ns, "test-subject")
+	s.ProvisionBillingProfile(ctx, ns, invoicing.App.GetID())
+	period := timeutil.ClosedPeriod{From: clock.Now(), To: clock.Now().AddDate(0, 1, 0)}
+	var featureKey string
+	var processingStatus any = flatfee.StatusActiveRealizationProcessing
+	if chargeType == meta.ChargeTypeUsageBased {
+		processingStatus = usagebased.StatusActiveRealizationProcessing
+		feature := s.SetupApiRequestsTotalFeature(ctx, ns)
+		featureKey = feature.Feature.Key
+		period = timeutil.ClosedPeriod{From: clock.Now().AddDate(0, -1, 0), To: clock.Now()}
+		s.MockStreamingConnector.AddSimpleEvent(featureKey, 5, period.From.Add(15*24*time.Hour))
+	}
+
+	chargeInputs := []struct {
+		Name   string
+		Amount int64
+	}{
+		{Name: deletedLineIssuanceDeletedLineName, Amount: 5},
+		{Name: deletedLineIssuanceRetainedLineName, Amount: 10},
+	}
+	intents := make([]charges.ChargeIntent, 0, len(chargeInputs))
+	for _, chargeInput := range chargeInputs {
+		price := productcatalog.NewPriceFrom(productcatalog.FlatPrice{
+			Amount:      alpacadecimal.NewFromInt(chargeInput.Amount),
+			PaymentTerm: productcatalog.InAdvancePaymentTerm,
+		})
+		if chargeType == meta.ChargeTypeUsageBased {
+			price = productcatalog.NewPriceFrom(productcatalog.UnitPrice{Amount: alpacadecimal.NewFromInt(chargeInput.Amount / 5)})
+		}
+
+		intents = append(intents, s.CreateMockChargeIntent(CreateMockChargeIntentInput{
+			Customer:       cust.GetID(),
+			Currency:       USD,
+			ServicePeriod:  period,
+			SettlementMode: productcatalog.CreditThenInvoiceSettlementMode,
+			Price:          price,
+			ProRating: productcatalog.ProRatingConfig{
+				Enabled: true,
+				Mode:    productcatalog.ProRatingModeProratePrices,
+			},
+			FeatureKey:        featureKey,
+			Name:              chargeInput.Name,
+			ManagedBy:         billing.SubscriptionManagedLine,
+			UniqueReferenceID: chargeInput.Name,
+		}))
+	}
+
+	created, err := s.Charges.Create(ctx, charges.CreateInput{Namespace: ns, Intents: charges.NewCreateChargeIntents(intents...)})
+	require.NoError(t, err)
+	require.Len(t, created, 2)
+	invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+		Customer: cust.GetID(),
+		AsOf:     lo.ToPtr(clock.Now()),
+	})
+	require.NoError(t, err)
+	require.Len(t, invoices, 1)
+	invoice := invoices[0]
+	if chargeType == meta.ChargeTypeUsageBased {
+		require.Equal(t, billing.StandardInvoiceStatusDraftWaitingForCollection, invoice.Status)
+		clock.FreezeTime(invoice.DefaultCollectionAtForStandardInvoice())
+		defer clock.UnFreeze()
+		invoice, err = s.BillingService.AdvanceInvoice(ctx, invoice.GetInvoiceID())
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, billing.StandardInvoiceStatusDraftWaitingAutoApproval, invoice.Status)
+	require.NotNil(t, invoice.DraftUntil)
+	require.Len(t, invoice.Lines.OrEmpty(), 2)
+	fixture := deletedLineIssuanceInvoice{
+		Customer: cust.GetID(),
+		Invoice:  invoice,
+		LinesByName: lo.KeyBy(invoice.Lines.OrEmpty(), func(line *billing.StandardLine) string {
+			return line.Name
+		}),
+		ChargesByLineName: make(map[string]meta.ChargeID, 2),
+	}
+	require.Len(t, fixture.LinesByName, 2)
+	for lineName, expectedAmount := range map[string]float64{
+		deletedLineIssuanceDeletedLineName:  5,
+		deletedLineIssuanceRetainedLineName: 10,
+	} {
+		line := fixture.LinesByName[lineName]
+		require.NotNil(t, line)
+		require.NotNil(t, line.ChargeID)
+		chargeID := meta.ChargeID{Namespace: ns, ID: *line.ChargeID}
+		fixture.ChargesByLineName[lineName] = chargeID
+		s.RequireChargeStatus(chargeID, processingStatus)
+		s.RequireTotals(billingtest.ExpectedTotals{Amount: expectedAmount, Total: expectedAmount}, line.Totals)
+	}
+
+	return fixture
 }

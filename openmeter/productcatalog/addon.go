@@ -36,6 +36,7 @@ func (s AddonStatus) Validate() error {
 	if !slices.Contains(s.Values(), s) {
 		return fmt.Errorf("invalid addon status: %s", s)
 	}
+
 	return nil
 }
 
@@ -288,6 +289,7 @@ func ValidateAddonCurrencyCodes() models.ValidatorFunc[Addon] {
 				ErrCurrencyInvalid,
 			)
 		}
+
 		var errs []error
 
 		for _, rateCard := range a.RateCards {
@@ -409,6 +411,14 @@ func ValidateAddonHasCompatiblePrices() models.ValidatorFunc[Addon] {
 func AddonRateCardMatcherForAGivenPlanRateCard(planRateCard RateCard) func(addonRateCard RateCard) bool {
 	return func(addonRateCard RateCard) bool {
 		return addonRateCard.Key() == planRateCard.Key()
+	}
+}
+
+// ValidateAddonWithResolvedFeatures verifies that every feature reference has
+// its feature representation sideloaded.
+func ValidateAddonWithResolvedFeatures() models.ValidatorFunc[Addon] {
+	return func(a Addon) error {
+		return ValidateRateCardsWithResolvedFeatures()(a.RateCards)
 	}
 }
 

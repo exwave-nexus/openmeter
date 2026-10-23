@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/openmeterio/openmeter/openmeter/app"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	currencytestutils "github.com/openmeterio/openmeter/openmeter/currencies/testutils"
 	entdb "github.com/openmeterio/openmeter/openmeter/ent/db"
@@ -20,6 +21,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/plan"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/plan/adapter"
 	pctestutils "github.com/openmeterio/openmeter/openmeter/productcatalog/testutils"
+	"github.com/openmeterio/openmeter/openmeter/taxcode"
 	"github.com/openmeterio/openmeter/openmeter/testutils"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -34,9 +36,18 @@ func TestPostgresAdapter(t *testing.T) {
 
 	// Get new namespace ID
 	namespace := pctestutils.NewTestNamespace(t)
+	taxCode, err := env.TaxCode.CreateTaxCode(t.Context(), taxcode.CreateTaxCodeInput{
+		Namespace: namespace,
+		Key:       "stripe_txcd_10000000",
+		Name:      "Stripe txcd_10000000",
+		AppMappings: taxcode.TaxCodeAppMappings{
+			{AppType: app.AppTypeStripe, TaxCode: "txcd_10000000"},
+		},
+	})
+	require.NoError(t, err)
 
 	// Setup meter repository
-	err := env.Meter.ReplaceMeters(t.Context(), pctestutils.NewTestMeters(t, namespace))
+	err = env.Meter.ReplaceMeters(t.Context(), pctestutils.NewTestMeters(t, namespace))
 	require.NoError(t, err, "replacing meters must not fail")
 
 	result, err := env.Meter.ListMeters(t.Context(), meter.ListMetersParams{
@@ -79,13 +90,13 @@ func TestPostgresAdapter(t *testing.T) {
 						Name:                "Trial RateCard 1",
 						Description:         lo.ToPtr("Trial RateCard 1"),
 						Metadata:            models.Metadata{"name": "trial-ratecard-1"},
-						FeatureKey:          nil,
-						FeatureID:           nil,
+						Feature:             productcatalog.NewFeatureReference(nil, nil),
 						EntitlementTemplate: nil,
 						TaxConfig: &productcatalog.TaxConfig{
 							Stripe: &productcatalog.StripeTaxConfig{
 								Code: "txcd_10000000",
 							},
+							TaxCodeID: lo.ToPtr(taxCode.ID),
 						},
 						Price: productcatalog.NewPriceFrom(productcatalog.FlatPrice{
 							Amount:      decimal.NewFromInt(0),
@@ -111,13 +122,13 @@ func TestPostgresAdapter(t *testing.T) {
 						Name:                "Pro RateCard 1",
 						Description:         lo.ToPtr("Pro RateCard 1"),
 						Metadata:            models.Metadata{"name": features[0].Key},
-						FeatureKey:          &features[0].Key,
-						FeatureID:           nil,
+						Feature:             productcatalog.NewFeatureReference(nil, &features[0].Key),
 						EntitlementTemplate: nil,
 						TaxConfig: &productcatalog.TaxConfig{
 							Stripe: &productcatalog.StripeTaxConfig{
 								Code: "txcd_10000000",
 							},
+							TaxCodeID: lo.ToPtr(taxCode.ID),
 						},
 						Price: productcatalog.NewPriceFrom(productcatalog.TieredPrice{
 							Mode: productcatalog.VolumeTieredPrice,
@@ -296,6 +307,7 @@ func TestPostgresAdapter(t *testing.T) {
 				t,
 				namespace,
 				pctestutils.WithPlanKey("custom-plan-currency"),
+				withoutTaxConfig,
 				func(t *testing.T, p *productcatalog.Plan) {
 					t.Helper()
 					p.Currency = custom.Reference()
@@ -628,10 +640,10 @@ func TestListPlansExcludeUnitConfig(t *testing.T) {
 			RateCards: []productcatalog.RateCard{
 				&productcatalog.UsageBasedRateCard{
 					RateCardMeta: productcatalog.RateCardMeta{
-						Key:        feat.Key,
-						Name:       "Pro RateCard",
-						FeatureKey: &feat.Key,
-						Price:      productcatalog.NewPriceFrom(productcatalog.UnitPrice{Amount: decimal.NewFromInt(1)}),
+						Key:     feat.Key,
+						Name:    "Pro RateCard",
+						Feature: productcatalog.NewFeatureReference(nil, &feat.Key),
+						Price:   productcatalog.NewPriceFrom(productcatalog.UnitPrice{Amount: decimal.NewFromInt(1)}),
 						UnitConfig: &productcatalog.UnitConfig{
 							Operation:        productcatalog.UnitConfigOperationDivide,
 							ConversionFactor: decimal.NewFromInt(1000),
@@ -676,11 +688,11 @@ func TestListPlansExcludeUnrepresentableCurrencies(t *testing.T) {
 
 	namespace := pctestutils.NewTestNamespace(t)
 
-	plain := pctestutils.NewTestPlan(t, namespace, pctestutils.WithPlanKey("plain"))
+	plain := pctestutils.NewTestPlan(t, namespace, pctestutils.WithPlanKey("plain"), withoutTaxConfig)
 	_, err := env.PlanRepository.CreatePlan(t.Context(), plain)
 	require.NoError(t, err, "creating plain plan must not fail")
 
-	withOverride := pctestutils.NewTestPlan(t, namespace, pctestutils.WithPlanKey("with-override"))
+	withOverride := pctestutils.NewTestPlan(t, namespace, pctestutils.WithPlanKey("with-override"), withoutTaxConfig)
 	overriddenRateCard, ok := withOverride.Phases[0].RateCards[0].(*productcatalog.FlatFeeRateCard)
 	require.True(t, ok, "default test plan rate card must be flat fee")
 	custom, err := env.Currency.CreateCurrency(t.Context(), currencytestutils.NewCreateCurrencyInput(namespace, "TOKEN", "Tokens", "tok"))
@@ -689,7 +701,7 @@ func TestListPlansExcludeUnrepresentableCurrencies(t *testing.T) {
 	_, err = env.PlanRepository.CreatePlan(t.Context(), withOverride)
 	require.NoError(t, err, "creating plan with rate-card currency override must not fail")
 
-	withCustomDefault := pctestutils.NewTestPlan(t, namespace, pctestutils.WithPlanKey("with-custom-default"))
+	withCustomDefault := pctestutils.NewTestPlan(t, namespace, pctestutils.WithPlanKey("with-custom-default"), withoutTaxConfig)
 	withCustomDefault.Currency = custom.Reference()
 	_, err = env.PlanRepository.CreatePlan(t.Context(), withCustomDefault)
 	require.NoError(t, err, "creating plan with custom default currency must not fail")
@@ -716,6 +728,21 @@ func TestListPlansExcludeUnrepresentableCurrencies(t *testing.T) {
 		require.ElementsMatch(t, []string{"plain"}, keys)
 		require.Equal(t, 1, list.TotalCount, "TotalCount must exclude plans with unrepresentable currencies")
 	})
+}
+
+func withoutTaxConfig(t *testing.T, p *productcatalog.Plan) {
+	t.Helper()
+
+	for _, phase := range p.Phases {
+		for _, rateCard := range phase.RateCards {
+			err := rateCard.ChangeMeta(func(meta productcatalog.RateCardMeta) (productcatalog.RateCardMeta, error) {
+				meta.TaxConfig = nil
+
+				return meta, nil
+			})
+			require.NoError(t, err)
+		}
+	}
 }
 
 type createPlanVersionInput struct {
@@ -751,7 +778,7 @@ func testListPlanStatusFilter(ctx context.Context, t *testing.T, repo plan.Repos
 
 	ns := "list-plan-status-filter"
 
-	planV1Input := pctestutils.NewTestPlan(t, ns)
+	planV1Input := pctestutils.NewTestPlan(t, ns, withoutTaxConfig)
 
 	err := createPlanVersion(ctx, repo, createPlanVersionInput{
 		Namespace: ns,

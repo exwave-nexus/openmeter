@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/oklog/ulid/v2"
 	"github.com/samber/lo"
 
 	"github.com/openmeterio/openmeter/api"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	productcataloghttp "github.com/openmeterio/openmeter/openmeter/productcatalog/http"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/planaddon"
+	"github.com/openmeterio/openmeter/pkg/filter"
 	"github.com/openmeterio/openmeter/pkg/framework/commonhttp"
 	"github.com/openmeterio/openmeter/pkg/framework/transport/httptransport"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -51,12 +53,23 @@ func (h *handler) ListPlanAddons() ListPlanAddonsHandler {
 				OrderBy:          planaddon.OrderBy(lo.FromPtrOr(params.OrderBy, api.PlanAddonOrderById)),
 				Order:            sortx.Order(lo.FromPtrOr(params.Order, api.SortOrderDESC)),
 				Namespaces:       []string{ns},
-				PlanIDs:          []string{params.PlanIDOrKey},
-				PlanKeys:         []string{params.PlanIDOrKey},
-				AddonIDs:         lo.FromPtrOr(params.Id, nil),
-				AddonKeys:        lo.FromPtrOr(params.Key, nil),
 				AddonKeyVersions: lo.FromPtrOr(params.KeyVersion, nil),
 				IncludeDeleted:   lo.FromPtr(params.IncludeDeleted),
+			}
+
+			// Detect whether PlanIDOrKey is a ULID or a key string.
+			if _, err := ulid.Parse(params.PlanIDOrKey); err == nil {
+				req.PlanID = &filter.FilterULID{FilterString: filter.FilterString{Eq: lo.ToPtr(params.PlanIDOrKey)}}
+			} else {
+				req.PlanKey = &filter.FilterString{Eq: lo.ToPtr(params.PlanIDOrKey)}
+			}
+
+			if ids := lo.FromPtrOr(params.Id, nil); len(ids) > 0 {
+				req.AddonID = &filter.FilterULID{FilterString: filter.FilterString{In: lo.ToPtr(ids)}}
+			}
+
+			if keys := lo.FromPtrOr(params.Key, nil); len(keys) > 0 {
+				req.AddonKey = &filter.FilterString{In: lo.ToPtr(keys)}
 			}
 
 			return req, nil
@@ -75,9 +88,11 @@ func (h *handler) ListPlanAddons() ListPlanAddonsHandler {
 				if a.Plan.HasUnitConfig() || a.Addon.AsProductCatalogAddon().HasUnitConfig() {
 					return ListPlanAddonsResponse{}, productcatalog.ErrUnitConfigNotRepresentable
 				}
+
 				if a.Plan.Currency.IsCustom() || a.Addon.Currency.IsCustom() {
 					return ListPlanAddonsResponse{}, productcatalog.ErrCurrencyNotRepresentable
 				}
+
 				if a.Plan.HasCurrencyOverrides() || a.Addon.AsProductCatalogAddon().HasCurrencyOverrides() {
 					return ListPlanAddonsResponse{}, productcatalog.ErrRateCardCurrencyNotRepresentable
 				}
@@ -131,6 +146,7 @@ func (h *handler) CreatePlanAddon() CreatePlanAddonHandler {
 				return CreatePlanAddonRequest{}, fmt.Errorf("failed to parse create plan add-on assignment request [namespace=%s plan.id=%s]: %w",
 					ns, planID, err)
 			}
+
 			req.RejectUnitConfig = true
 			req.RejectUnrepresentableCurrencies = true
 
@@ -182,6 +198,7 @@ func (h *handler) UpdatePlanAddon() UpdatePlanAddonHandler {
 				return UpdatePlanAddonRequest{}, fmt.Errorf("failed to parse update plan add-on assignment request [namespace=%s plan.id=%s addon.id=%s]: %w",
 					ns, params.PlanID, params.AddonID, err)
 			}
+
 			req.RejectUnitConfig = true
 			req.RejectUnrepresentableCurrencies = true
 
@@ -285,9 +302,11 @@ func (h *handler) GetPlanAddon() GetPlanAddonHandler {
 			if a.Plan.HasUnitConfig() || a.Addon.AsProductCatalogAddon().HasUnitConfig() {
 				return GetPlanAddonResponse{}, productcatalog.ErrUnitConfigNotRepresentable
 			}
+
 			if a.Plan.Currency.IsCustom() || a.Addon.Currency.IsCustom() {
 				return GetPlanAddonResponse{}, productcatalog.ErrCurrencyNotRepresentable
 			}
+
 			if a.Plan.HasCurrencyOverrides() || a.Addon.AsProductCatalogAddon().HasCurrencyOverrides() {
 				return GetPlanAddonResponse{}, productcatalog.ErrRateCardCurrencyNotRepresentable
 			}

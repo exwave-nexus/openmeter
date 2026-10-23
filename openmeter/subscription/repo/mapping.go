@@ -50,6 +50,7 @@ func MapDBSubscription(sub *db.Subscription) (subscription.Subscription, error) 
 		if err != nil {
 			return subscription.Subscription{}, fmt.Errorf("mapping subscription cost basis pin: %w", err)
 		}
+
 		costBasisPins = append(costBasisPins, mapped)
 	}
 
@@ -196,6 +197,7 @@ func MapDBSubscriptionItem(item *db.SubscriptionItem) (subscription.Subscription
 			if err != nil {
 				return subscription.SubscriptionItem{}, fmt.Errorf("invalid subscription item currency: %w", err)
 			}
+
 			if customCurrency.Namespace != item.Namespace {
 				return subscription.SubscriptionItem{}, fmt.Errorf(
 					"invalid subscription item currency: namespace mismatch [subscription_item.namespace=%s currency.namespace=%s currency.id=%s]",
@@ -219,7 +221,7 @@ func MapDBSubscriptionItem(item *db.SubscriptionItem) (subscription.Subscription
 		Name:                item.Name,
 		Metadata:            item.Metadata,
 		Description:         item.Description,
-		FeatureKey:          item.FeatureKey,
+		Feature:             productcatalog.NewFeatureReference(nil, item.FeatureKey),
 		EntitlementTemplate: item.EntitlementTemplate,
 		TaxConfig:           item.TaxConfig,
 		Price:               item.Price,
@@ -227,8 +229,7 @@ func MapDBSubscriptionItem(item *db.SubscriptionItem) (subscription.Subscription
 		UnitConfig:          item.UnitConfig,
 		Key:                 item.Key,
 		// NOTE: resolving feature is done on service level as there is no direct relationship between subscription items and features.
-		FeatureID: nil,
-		Currency:  itemCurrency,
+		Currency: itemCurrency,
 	}
 
 	// Map TaxCode if eagerly loaded.
@@ -259,6 +260,7 @@ func MapDBSubscriptionItem(item *db.SubscriptionItem) (subscription.Subscription
 		if cadence == nil {
 			return subscription.SubscriptionItem{}, fmt.Errorf("billing cadence is required for usage based rate cards")
 		}
+
 		rc = &productcatalog.UsageBasedRateCard{
 			BillingCadence: *cadence,
 			RateCardMeta:   rcMeta,

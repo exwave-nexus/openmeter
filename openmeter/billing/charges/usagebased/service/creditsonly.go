@@ -10,6 +10,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/samber/mo"
 
+	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditreconciliation"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
@@ -200,6 +201,7 @@ func (s *CreditsOnlyStateMachine) ActiveClearOverride(ctx context.Context) error
 	}
 
 	s.Charge.State.CurrentRealizationRunID = nil
+
 	return nil
 }
 
@@ -320,6 +322,7 @@ func (s *CreditsOnlyStateMachine) applyPeriodPatch(patch periodPatch) error {
 		fields.FullServicePeriod.To = patch.GetNewFullServicePeriodTo()
 		fields.BillingPeriod.To = patch.GetNewBillingPeriodTo()
 		fields.InvoiceAt = patch.GetNewInvoiceAt()
+
 		return nil
 	}); err != nil {
 		return fmt.Errorf("mutating %s intent: %w", target, err)
@@ -334,6 +337,7 @@ func (s *CreditsOnlyStateMachine) patchCreatedChargePeriod(ctx context.Context, 
 	}
 
 	s.Charge.State.AdvanceAfter = lo.ToPtr(meta.NormalizeTimestamp(s.Charge.Intent.GetEffectiveServicePeriod().From))
+
 	return nil
 }
 
@@ -352,6 +356,7 @@ func (s *CreditsOnlyStateMachine) persistActivePeriodPatch(ctx context.Context) 
 	if err != nil {
 		return fmt.Errorf("update charge after period patch: %w", err)
 	}
+
 	s.Charge.ChargeBase = updatedBase
 
 	return nil
@@ -409,20 +414,32 @@ func (s *CreditsOnlyStateMachine) StartFinalRealizationRun(ctx context.Context) 
 		return fmt.Errorf("get stored at lt: %w", err)
 	}
 
+	featureMeter, err := s.FeatureMeters.Get(s.Charge)
+	if err != nil {
+		return err
+	}
+
 	result, err := s.Runs.CreateRatedRun(ctx, usagebasedrun.CreateRatedRunInput{
 		Charge:             s.Charge,
 		CustomerOverride:   s.CustomerOverride,
-		FeatureMeter:       s.FeatureMeter,
+		FeatureMeter:       featureMeter,
 		Type:               usagebased.RealizationRunTypeFinalRealization,
 		StoredAtLT:         storedAtLT,
 		ServicePeriodTo:    meta.NormalizeTimestamp(s.Charge.Intent.GetEffectiveServicePeriod().To),
 		CurrencyCalculator: s.CurrencyCalculator,
 	})
+	ratingIssues, err := billing.ToValidationIssues(err, billing.RequireWarningsOnly())
 	if err != nil {
 		return err
 	}
 
 	s.Charge = result.Charge
+	s.Charge.ValidationIssues, _ = replaceValidationIssueComponent(
+		s.Charge.ValidationIssues,
+		billing.ValidationComponentBillingRating,
+		ratingIssues,
+	)
+
 	return nil
 }
 
@@ -438,13 +455,19 @@ func (s *CreditsOnlyStateMachine) FinalizeRealizationRun(ctx context.Context) er
 
 	storedAtLT := meta.NormalizeTimestamp(currentRun.StoredAtLT)
 
+	featureMeter, err := s.FeatureMeters.Get(s.Charge)
+	if err != nil {
+		return err
+	}
+
 	ratingResult, err := s.Rater.GetDetailedRatingForUsage(ctx, usagebasedrating.GetDetailedRatingForUsageInput{
 		Charge:          s.Charge,
 		StoredAtLT:      storedAtLT,
 		ServicePeriodTo: currentRun.ServicePeriodTo,
 		Customer:        s.CustomerOverride,
-		FeatureMeter:    s.FeatureMeter,
+		FeatureMeter:    featureMeter,
 	})
+	ratingIssues, err := billing.ToValidationIssues(err, billing.RequireWarningsOnly())
 	if err != nil {
 		return fmt.Errorf("get detailed rating for usage: %w", err)
 	}
@@ -474,6 +497,7 @@ func (s *CreditsOnlyStateMachine) FinalizeRealizationRun(ctx context.Context) er
 	}); err != nil {
 		return fmt.Errorf("upsert run detailed lines: %w", err)
 	}
+
 	currentRun.DetailedLines = mo.Some(ratingResult.DetailedLines)
 
 	currentRunBase, err := s.Adapter.UpdateRealizationRun(ctx, usagebased.UpdateRealizationRunInput{
@@ -486,6 +510,7 @@ func (s *CreditsOnlyStateMachine) FinalizeRealizationRun(ctx context.Context) er
 	if err != nil {
 		return fmt.Errorf("update realization run: %w", err)
 	}
+
 	currentRun.RealizationRunBase = currentRunBase
 
 	if err := s.Charge.Realizations.SetRealizationRun(currentRun); err != nil {
@@ -500,6 +525,12 @@ func (s *CreditsOnlyStateMachine) FinalizeRealizationRun(ctx context.Context) er
 	if err := s.RefetchCharge(ctx); err != nil {
 		return fmt.Errorf("refetch charge: %w", err)
 	}
+
+	s.Charge.ValidationIssues, _ = replaceValidationIssueComponent(
+		s.Charge.ValidationIssues,
+		billing.ValidationComponentBillingRating,
+		ratingIssues,
+	)
 
 	return nil
 }

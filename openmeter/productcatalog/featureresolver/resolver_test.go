@@ -55,6 +55,7 @@ func Test_NamespacedFeatureResolver(t *testing.T) {
 
 		features = append(features, feat)
 	}
+
 	require.NotEmptyf(t, features, "list of Features must not be empty")
 	require.Lenf(t, features, len(meters), "list of Features must have the same length as the list of Meters")
 
@@ -137,7 +138,7 @@ func Test_NamespacedFeatureResolver(t *testing.T) {
 			t.Run(test.name, func(t *testing.T) {
 				var f *feature.Feature
 
-				f, err = namespacedResolver.Resolve(t.Context(), test.featureID, test.featureKey)
+				f, err = namespacedResolver.Resolve(t.Context(), feature.FeatureReference{ID: test.featureID, Key: test.featureKey})
 				if test.expectedError != nil {
 					assert.ErrorAsf(t, err, &test.expectedError, "expected error %v", test.expectedError)
 				} else {

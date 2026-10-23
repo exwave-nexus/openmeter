@@ -14,14 +14,32 @@ type AppsService struct {
 	client *Client
 }
 
+type AppFilter struct {
+	ID     *StringExactFilter
+	Name   *StringFilter
+	Type   *StringExactFilter
+	Status *StringExactFilter
+}
+
 type AppListParams struct {
-	Page *PageParams
+	Page   *PageParams
+	Sort   *Sort
+	Filter *AppFilter
 }
 
 func (p AppListParams) values() url.Values {
 	q := url.Values{}
 
 	addPageParams(q, p.Page)
+
+	addSort(q, "sort", p.Sort)
+
+	if p.Filter != nil {
+		addStringExactFilter(q, "filter[id]", p.Filter.ID)
+		addStringFilter(q, "filter[name]", p.Filter.Name)
+		addStringExactFilter(q, "filter[type]", p.Filter.Type)
+		addStringExactFilter(q, "filter[status]", p.Filter.Status)
+	}
 
 	return q
 }
@@ -123,6 +141,30 @@ func (s *AppsService) Update(ctx context.Context, appID string, request UpdateAp
 	path = replacePathParam(path, "appId", appID)
 
 	req, err := s.client.newRequestWithContentType(ctx, http.MethodPut, path, nil, request, "application/json", "application/json")
+	if err != nil {
+		return nil, err
+	}
+
+	var out App
+	if err := s.client.doJSON(req, &out); err != nil {
+		return nil, err
+	}
+
+	return &out, nil
+}
+
+// Execute an operator action on an installed app. The action must be listed in the
+// app's `actions`; otherwise the request is rejected.
+func (s *AppsService) ExecuteAction(ctx context.Context, appID string, request AppActionRequest) (*App, error) {
+	if appID == "" {
+		return nil, fmt.Errorf("openmeter: %s must not be empty: %w", "appID", ErrEmptyID)
+	}
+
+	path := "/openmeter/apps/{appId}/action"
+
+	path = replacePathParam(path, "appId", appID)
+
+	req, err := s.client.newRequestWithContentType(ctx, http.MethodPost, path, nil, request, "application/json", "application/json")
 	if err != nil {
 		return nil, err
 	}

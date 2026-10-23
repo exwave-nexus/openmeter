@@ -29,6 +29,7 @@ type ChargeUsageBased struct {
 func (ChargeUsageBased) Mixin() []ent.Mixin {
 	return []ent.Mixin{
 		ChargesMetaMixin{},
+		ChargeValidationIssuesMixin{},
 	}
 }
 
@@ -61,7 +62,9 @@ func (ChargeUsageBased) Fields() []ent.Field {
 			NotEmpty().
 			SchemaType(map[string]string{
 				dialect.Postgres: "char(26)",
-			}),
+			}).
+			Optional().
+			Nillable(),
 
 		field.Enum("rating_engine").
 			GoType(usagebased.RatingEngine("")),
@@ -136,8 +139,7 @@ func (ChargeUsageBased) Edges() []ent.Edge {
 		edge.From("subscription_phase", SubscriptionPhase.Type).
 			Ref("charges_usage_based").
 			Field("subscription_phase_id").
-			Unique().
-			Immutable(),
+			Unique(),
 		edge.From("subscription_item", SubscriptionItem.Type).
 			Ref("charges_usage_based").
 			Field("subscription_item_id").
@@ -151,8 +153,7 @@ func (ChargeUsageBased) Edges() []ent.Edge {
 		edge.From("feature", Feature.Type).
 			Field("feature_id").
 			Ref("usage_based_charges").
-			Unique().
-			Required(),
+			Unique(),
 		edge.From("tax_code", TaxCode.Type).
 			Ref("charge_usage_based").
 			Field("tax_code_id").
@@ -360,6 +361,20 @@ func (ChargeUsageBasedRuns) Fields() []ent.Field {
 		field.Time("service_period_to").
 			Immutable(),
 
+		field.Int("schema_level").
+			Default(usagebased.CurrentRealizationRunSchemaLevel).
+			SchemaType(map[string]string{
+				dialect.Postgres: "smallint",
+			}),
+
+		field.String("prior_run_id").
+			SchemaType(map[string]string{
+				dialect.Postgres: "char(26)",
+			}).
+			Optional().
+			Nillable().
+			Immutable(),
+
 		field.Bool("detailed_lines_present"),
 
 		field.Bool("detailed_lines_include_credit_allocations").
@@ -388,6 +403,12 @@ func (ChargeUsageBasedRuns) Fields() []ent.Field {
 			}),
 
 		field.Bool("no_fiat_transaction_required"),
+
+		field.Bool("immutable").
+			Default(false),
+
+		field.Bool("fiat_overage_credit_allocation_completed").
+			Default(false),
 	}
 }
 
@@ -416,6 +437,13 @@ func (ChargeUsageBasedRuns) Edges() []ent.Edge {
 			Unique().
 			Immutable().
 			Annotations(entsql.OnDelete(entsql.SetNull)),
+		edge.To("next_runs", ChargeUsageBasedRuns.Type).
+			StorageKey(edge.Symbol("charge_ub_run_prior_run")),
+		edge.From("prior_run", ChargeUsageBasedRuns.Type).
+			Ref("next_runs").
+			Field("prior_run_id").
+			Unique().
+			Immutable(),
 		edge.To("credit_allocations", ChargeUsageBasedRunCreditAllocations.Type).
 			StorageKey(edge.Symbol("charge_ub_run_credit_alloc_run")).
 			Annotations(entsql.OnDelete(entsql.Cascade)),

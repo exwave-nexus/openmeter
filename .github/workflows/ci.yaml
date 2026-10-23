@@ -8,144 +8,21 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !contains(github.ref, 'refs/heads/main') && !contains(github.ref, 'refs/tags/') }}
-
 jobs:
-  cache-rebuild:
-    name: Rebuild GitHub Actions Caches
-    runs-on: depot-ubuntu-latest-4
-    # To test e2e feel free to comment this out for a branch, then a branch specific cache will be created
-    if: github.event_name == 'push'
-
-    steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
-        with:
-          egress-policy: audit
-          use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
-          api-key: ${{ secrets.STEP_SECURITY_API_KEY }}
-
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            keep-env-derivations = true
-            keep-outputs = true
-
-      - name: Build nix environment
-        run: |
-          nix flake check --impure
-          nix develop --impure .#ci
-      - name: Save Nix store cache
-        uses: nix-community/cache-nix-action/save@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{ hashFiles('flake.*') }}
-          save: "true"
-
-      - name: Populate go caches - go mod download
-        run: nix develop --impure .#ci -c go mod download
-
-      - name: Save go caches - go mod
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .devenv/state/go
-          key: ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-
-  build:
-    name: Build
-    runs-on: depot-ubuntu-latest-8
-
-    steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
-        with:
-          egress-policy: audit
-          use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
-          api-key: ${{ secrets.STEP_SECURITY_API_KEY }}
-
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            keep-env-derivations = true
-            keep-outputs = true
-
-      - name: Restore Nix store
-        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{ hashFiles('flake.*') }}
-          restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
-
-      - name: Restore go.mod cache if exists
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .devenv/state/go
-          key: ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-          # Prefer to restore the branch cache over the main cache
-          restore-keys: |
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-go-modules-main-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-main
-
-      - name: Validate Nix flake
-        run: nix flake check --impure
-
-      - name: Validate Node version file
-        run: |
-          FILE_NODE_VERSION="$(tr -d '\r\n' < .nvmrc)"
-          NIX_NODE_VERSION="$(nix develop --impure .#ci -c node -v)"
-
-          if [ "$NIX_NODE_VERSION" != "$FILE_NODE_VERSION" ]; then
-            echo ".nvmrc is out of sync with the Nix CI shell"
-            echo "nix develop --impure .#ci -c node -v => $NIX_NODE_VERSION"
-            echo ".nvmrc => $FILE_NODE_VERSION"
-            exit 1
-          fi
-
-      - name: Build components
-        run: |
-          # On Depot runners, cgo external linking can spill large temporary linker
-          # files into /run via the default temp dir. Keep Go and system temp files
-          # on the workspace disk for this step to avoid "no space left on device",
-          # while still allowing each parallel go build to get its own temp dir.
-          mkdir -p \
-            "$GITHUB_WORKSPACE/.tmp/go-work" \
-            "$GITHUB_WORKSPACE/.tmp/system"
-          env \
-            GOTMPDIR="$GITHUB_WORKSPACE/.tmp/go-work" \
-            TMPDIR="$GITHUB_WORKSPACE/.tmp/system" \
-            nix develop --impure .#ci -c make -j 4 build
-
-      - name: Validate commit messages
-        run: |
-          nix develop --impure .#ci -c prek run -a
-          nix develop --impure .#ci -c prek run --stage manual
+  cancel-older-runs:
+    # Fork and Dependabot tokens cannot cancel runs in this repository.
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
+    permissions:
+      contents: read
+      actions: write # Required by the cancellation job; other jobs retain their own permissions.
+    uses: $/.github/workflows/cancel-stale-pr-runs.yaml
 
   generators-openapi:
     name: Code Generators / OpenAPI
-    runs-on: depot-ubuntu-latest-8
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -156,40 +33,44 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            keep-env-derivations = true
-            keep-outputs = true
+          go-version-file: .go-version
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            collector/go.sum
+            api/v3/client/go.sum
+            e2e/go.sum
 
-      - name: Restore Nix store
-        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        env:
+          # action-setup uses npm to install a temporary pnpm bootstrap package.
+          # Its audit does not inspect api/spec dependencies; Dependency Review covers repository dependency changes.
+          NPM_CONFIG_AUDIT: "false"
         with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{ hashFiles('flake.*') }}
-          restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
+          package_json_file: api/spec/package.json
 
-      - name: Restore go.mod cache if exists
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          path: .devenv/state/go
-          key: ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-          # Prefer to restore the branch cache over the main cache
-          restore-keys: |
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-go-modules-main-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-main
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: api/spec/pnpm-lock.yaml
+
+      - name: Record Go cache configuration
+        run: go env GOCACHE GOCACHEPROG
+
+      - name: Verify runner tools
+        run: |
+          yq --version
 
       - name: Ensure code generators are run
         run: |
-          nix develop --impure .#ci -c make update-openapi
+          make update-openapi
+          pnpm -C api/spec --filter @openmeter/typespec-go run check
 
           # does not detect new files
           if [ -n "$(git diff --exit-code)" ]; then
@@ -207,16 +88,12 @@ jobs:
             exit 1
           fi
 
-      - name: Run TypeSpec Go emitter checks
-        run: |
-          nix develop --impure .#ci -c pnpm -C api/spec --filter @openmeter/typespec-go run check
-
   generators-javascript-sdk:
     name: Code Generators / JavaScript SDK
-    runs-on: depot-ubuntu-latest-8
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -228,7 +105,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: api/client/javascript/package.json
 
@@ -261,10 +138,10 @@ jobs:
 
   generators-go:
     name: Code Generators / Go
-    runs-on: depot-ubuntu-latest-8
+    runs-on: depot-ubuntu-24.04-4
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -275,41 +152,37 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            keep-env-derivations = true
-            keep-outputs = true
+          go-version-file: .go-version
+          cache: false
 
-      - name: Restore Nix store
-        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{ hashFiles('flake.*') }}
-          restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
-
-      - name: Restore go.mod cache if exists
+      - name: Restore Go module cache
+        id: go-module-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .devenv/state/go
-          key: ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-          # Prefer to restore the branch cache over the main cache
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-openmeter-go-modules-${{ hashFiles('go.*', 'collector/go.*', 'api/v3/client/go.*', 'e2e/go.*') }}
           restore-keys: |
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-go-modules-main-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-main
+            ${{ runner.os }}-openmeter-go-modules-
+
+      - name: Verify Depot Go cache
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          cache_program="$(go env GOCACHEPROG)"
+
+          if [[ "${cache_program}" != *"depot gocache"* ]]; then
+            echo "Depot Go cache is unavailable with upstream Go"
+            exit 1
+          fi
+
+          echo "Using ${cache_program}"
 
       - name: Ensure code generators are run
         run: |
-          nix develop --impure .#ci -c make patch-oapi-templates
-          nix develop --impure .#ci -c go generate ./...
+          make patch-oapi-templates
+          go generate ./...
 
           # does not detect new files
           if [ -n "$(git diff --exit-code)" ]; then
@@ -327,12 +200,19 @@ jobs:
             exit 1
           fi
 
+      - name: Save Go module cache
+        if: steps.go-module-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ steps.go-module-cache.outputs.cache-primary-key }}
+
   go-sdk:
     name: Go SDK
-    runs-on: depot-ubuntu-latest-4
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -343,34 +223,32 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            keep-env-derivations = true
-            keep-outputs = true
+          go-version-file: .go-version
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            collector/go.sum
+            api/v3/client/go.sum
+            e2e/go.sum
 
-      - name: Restore Nix store
-        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{ hashFiles('flake.*') }}
-          restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
+      - name: Record Go cache configuration
+        run: go env GOCACHE GOCACHEPROG
 
       - name: Run Go SDK checks
-        run: nix develop --impure .#ci -c make test-go-sdk
+        run: make test-go-sdk
 
   test:
     name: Test
-    runs-on: depot-ubuntu-latest-8
+    runs-on: depot-ubuntu-24.04-16
+    env:
+      COMPOSE_FILE: docker-compose.yaml:docker-compose.postgres-test.yaml:.github/docker-compose.depot-registry.yaml
+      COMPOSE_PROFILES: redis,depot-registry-svix
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -381,45 +259,28 @@ jobs:
         with:
           persist-credentials: false
 
-      # Let's start docker-compose early so that by the time we have the nix env set up it's already running
+      # Start dependencies before toolchain setup so their readiness overlaps CI setup.
       - name: Start docker-compose dependencies
         run: |
           docker compose up postgres svix redis clickhouse -d
 
-      - name: Set up Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            keep-env-derivations = true
-            keep-outputs = true
+          go-version-file: .go-version
+          cache: false
 
-      - name: Restore Nix store
-        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{ hashFiles('flake.*') }}
-          restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
+      - name: Verify Depot Go cache
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          cache_program="$(go env GOCACHEPROG)"
 
-      - name: Upsert Nix store
-        run: nix develop --impure .#ci
+          if [[ "${cache_program}" != *"depot gocache"* ]]; then
+            echo "Depot Go cache is unavailable with upstream Go"
+            exit 1
+          fi
 
-      # This shaves off 5s or so
-      - name: Restore go.mod cache if exists
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .devenv/state/go
-          key: ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-          # Prefer to restore the branch cache over the main cache
-          restore-keys: |
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-go-modules-main-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-main
+          echo "Using ${cache_program}"
 
       - name: Wait for dependencies to be ready
         run: |
@@ -427,7 +288,7 @@ jobs:
 
       - name: Run tests
         env:
-          GO_TEST_PACKAGE_PARALLELISM: 32
+          GO_TEST_PACKAGE_PARALLELISM: 16
           SVIX_HOST: localhost
           TEST_CLICKHOUSE_DSN: ${{ vars.TEST_CLICKHOUSE_DSN }}
           # Dev JWT secret, non-sensitive
@@ -443,7 +304,7 @@ jobs:
           env \
             GOTMPDIR="$GITHUB_WORKSPACE/.tmp/go-work" \
             TMPDIR="$GITHUB_WORKSPACE/.tmp/system" \
-            nix develop --impure .#ci -c make test-nocache
+            make test-nocache GO_BUILD_FLAGS=
 
       - name: Stop docker-compose dependencies
         if: always()
@@ -452,10 +313,14 @@ jobs:
 
   migrations:
     name: Migration Checks
-    runs-on: depot-ubuntu-latest-8
+    runs-on: ubuntu-24.04
+    env:
+      ATLAS_SHA256_AMD64: d88aae186a55e5893c318f3b11c838a3372adf4dac1e2fd3bc7d2b55944c5797
+      ATLAS_SHA256_ARM64: bb8a22a08ccd9a6cb93f0a16205b7bbeb067dd7fec1f60227c687d8de93d6088
+      ATLAS_VERSION: 0.36.0
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -467,45 +332,55 @@ jobs:
           fetch-depth: 0 # Needed to compare against base branch
           persist-credentials: false
 
-      - name: Set up Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            keep-env-derivations = true
-            keep-outputs = true
+          go-version-file: .go-version
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            collector/go.sum
+            api/v3/client/go.sum
+            e2e/go.sum
 
-      - name: Restore Nix store
-        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{ hashFiles('flake.*') }}
-          restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
+      - name: Record Go cache configuration
+        run: go env GOCACHE GOCACHEPROG
 
-      - name: Restore go.mod cache if exists
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .devenv/state/go
-          key: ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-go-modules-main-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-main
+      - name: Install Atlas
+        run: |
+          case "$(uname -m)" in
+            x86_64)
+              atlas_arch="amd64"
+              atlas_sha256="${ATLAS_SHA256_AMD64}"
+              ;;
+            aarch64|arm64)
+              atlas_arch="arm64"
+              atlas_sha256="${ATLAS_SHA256_ARM64}"
+              ;;
+            *)
+              echo "Unsupported architecture: $(uname -m)"
+              exit 1
+              ;;
+          esac
+
+          atlas_path="${RUNNER_TEMP}/bin/atlas"
+          mkdir -p "$(dirname "${atlas_path}")"
+          curl -fsSL \
+            "https://release.ariga.io/atlas/atlas-linux-${atlas_arch}-v${ATLAS_VERSION}" \
+            -o "${atlas_path}"
+          echo "${atlas_sha256}  ${atlas_path}" | sha256sum --check
+          chmod +x "${atlas_path}"
+          dirname "${atlas_path}" >> "${GITHUB_PATH}"
 
       - name: Run migration checks
-        run: nix develop --impure .#ci -c make migrate-check
+        run: make migrate-check
 
-  lint:
-    name: Lint
-    runs-on: depot-ubuntu-latest-8
+  lint-go:
+    name: Lint / Go
+    runs-on: depot-ubuntu-24.04-8
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -516,70 +391,36 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            keep-env-derivations = true
-            keep-outputs = true
+          go-version-file: .go-version
+          cache: false
 
-      - name: Restore Nix store
-        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+      - name: Read GolangCI-Lint version
+        id: golangci-lint-version
+        run: echo "version=$(cat .golangci.version)" >> "$GITHUB_OUTPUT"
+
+      - name: Install GolangCI-Lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{ hashFiles('flake.*') }}
-          restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
+          version: ${{ steps.golangci-lint-version.outputs.version }}
+          install-only: true
+          skip-cache: true
 
-      - name: Upsert Nix store
-        run: nix develop --impure .#ci
-
-      # This shaves off 5s or so
-      - name: Restore go.mod cache if exists
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .devenv/state/go
-          key: ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-          # Prefer to restore the branch cache over the main cache
-          restore-keys: |
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-go-modules-main-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-main
-
-      - name: Get main fork point
-        id: base-commit
+      - name: Verify Depot Go cache
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
-          git fetch origin main
+          cache_program="$(go env GOCACHEPROG)"
 
-          echo "base candidate:"
-          git log -1 --reverse --boundary HEAD ^origin/main
-
-          BASE_COMMIT=$(git log -1 --reverse --boundary --format=%h HEAD ^origin/main)
-          if [ -z "$BASE_COMMIT" ]; then
-            BASE_COMMIT=$(git log -1 --format=%h)
+          if [[ "${cache_program}" != *"depot gocache"* ]]; then
+            echo "Depot Go cache is unavailable with upstream Go"
+            exit 1
           fi
-          echo "sha=${BASE_COMMIT}" >> "$GITHUB_OUTPUT"
 
-          echo "sha=${BASE_COMMIT}"
+          echo "Using ${cache_program}"
 
-      - name: Lint cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .devenv/golangci-lint-cache
-          key: ${{ runner.os }}-openmeter-golangci-lint-cache-${{ steps.base-commit.outputs.sha }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-openmeter-golangci-lint-cache-${{ steps.base-commit.outputs.sha }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-golangci-lint-cache-${{ steps.base-commit.outputs.sha }}-
-            ${{ runner.os }}-openmeter-golangci-lint-cache-
-
-      - name: Run linters - go
-        env:
-          GOLANGCI_LINT_CACHE: ${{ github.workspace }}/.devenv/golangci-lint-cache
+      - name: Run Go linters
         run: |
           # On Depot runners, golangci-lint still uses Go/system temp space for
           # transient analysis artifacts. Keep those temp files on the workspace
@@ -590,52 +431,56 @@ jobs:
           env \
             GOTMPDIR="$GITHUB_WORKSPACE/.tmp/go-work" \
             TMPDIR="$GITHUB_WORKSPACE/.tmp/system" \
-            nix develop --impure .#ci -c make lint-go
+            make lint-go
 
-      - name: Run linters - api spec
+  lint-other:
+    name: Lint / Other
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+          use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
+          api-key: ${{ secrets.STEP_SECURITY_API_KEY }}
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: api/spec/package.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: api/spec/pnpm-lock.yaml
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.18.1
+
+      - name: Run non-Go checks
         run: |
-          nix develop --impure .#ci -c make lint-api-spec
+          make lint-api-spec
+          make test-api-spec
+          pnpm dlx @stoplight/spectral-cli@6.16.0 lint api/openapi.yaml api/openapi.cloud.yaml api/v3/openapi.yaml
+          make lint-helm
 
-      - name: Run tests - api spec SDK
-        run: |
-          nix develop --impure .#ci -c make test-api-spec
-
-      - name: Run linters - openapi
-        run: |
-          nix develop --impure .#ci -c make lint-openapi
-
-      - name: Run linters - helm
-        run: |
-          nix develop --impure .#ci -c make lint-helm
-
-  trusted-artifacts:
-    name: Artifacts
-    uses: ./.github/workflows/artifacts.yaml
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    with:
-      publish: ${{ github.event_name == 'push' }}
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      security-events: write
-
-  untrusted-artifacts:
-    name: Untrusted Artifacts
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-    uses: ./.github/workflows/untrusted-artifacts.yaml
-    permissions:
-      contents: read
-
-  artifacts-pass:
-    name: Artifacts
-    needs:
-      - trusted-artifacts
-      - untrusted-artifacts
-    if: ${{ always() }}
-    uses: ./.github/workflows/workflow-result.yaml
-    with:
-      result: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || !contains(needs.*.result, 'success')) && 'fail' || 'pass' }}
+      - name: Validate commit messages
+        # Fork contributions are squash-merged, so their individual commit messages need not conform.
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: pipx run --spec commitizen==4.16.5 cz check --allow-abort --rev-range "${BASE_SHA}..${HEAD_SHA}"
 
   dependency-review:
     name: Dependency review
@@ -643,7 +488,7 @@ jobs:
     if: github.event_name == 'pull_request'
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -656,355 +501,3 @@ jobs:
 
       - name: Dependency Review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-
-  fossa-scan:
-    name: FOSSA Scan
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    environment: prod
-
-    steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
-        with:
-          egress-policy: audit
-          use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
-          api-key: ${{ secrets.STEP_SECURITY_API_KEY }}
-
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Run FOSSA Scan
-        uses: fossas/fossa-action@29693cc50323968e039056be419b32989fc5880c # v2.0.0
-        with:
-          api-key: ${{secrets.FOSSA_API_KEY}}
-
-  quickstart:
-    name: Quickstart
-    runs-on: depot-ubuntu-latest-8
-    needs:
-      - trusted-artifacts
-      - untrusted-artifacts
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && contains(needs.*.result, 'success') }}
-
-    steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
-        with:
-          egress-policy: audit
-          use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
-          api-key: ${{ secrets.STEP_SECURITY_API_KEY }}
-
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Create override files for quickstart
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        env:
-          DEPOT_IMAGE_URL: ${{ needs.trusted-artifacts.outputs.container-image-url-depot }}
-        run: |
-          cat > quickstart/docker-compose.override.yaml <<EOF
-          services:
-            openmeter:
-              image: $DEPOT_IMAGE_URL
-            sink-worker:
-              image: $DEPOT_IMAGE_URL
-            balance-worker:
-              image: $DEPOT_IMAGE_URL
-            notification-service:
-              image: $DEPOT_IMAGE_URL
-            billing-worker:
-              image: $DEPOT_IMAGE_URL
-            openmeter-jobs:
-              image: $DEPOT_IMAGE_URL
-          EOF
-
-          cat quickstart/docker-compose.override.yaml
-
-      - name: Debug quickstart runner state
-        run: |
-          echo "### DEBUG"
-          ss -ltnp | grep ':49000 ' || true
-          docker ps -a
-          docker network ls
-          echo "### DEBUG"
-      - name: Build as part of quickstart
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-        run: |
-          cat > quickstart/docker-compose.override.yaml <<EOF
-          services:
-            openmeter:
-              image: openmeter-quickstart-openmeter:ci
-              pull_policy: build
-              build: ..
-            sink-worker:
-              image: openmeter-quickstart-sink-worker:ci
-              pull_policy: build
-              build: ..
-            balance-worker:
-              image: openmeter-quickstart-balance-worker:ci
-              pull_policy: build
-              build: ..
-            notification-service:
-              image: openmeter-quickstart-notification-service:ci
-              pull_policy: build
-              build: ..
-            billing-worker:
-              image: openmeter-quickstart-billing-worker:ci
-              pull_policy: build
-              build: ..
-            openmeter-jobs:
-              image: openmeter-quickstart-openmeter-jobs:ci
-              pull_policy: build
-              build: ..
-          EOF
-      - name: Launch Docker Compose
-        run: docker compose -f docker-compose.yaml -f docker-compose.override.yaml up -d
-        working-directory: quickstart
-
-      - name: Set up Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            keep-env-derivations = true
-            keep-outputs = true
-
-      - name: Restore Nix store
-        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{ hashFiles('flake.*') }}
-          restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
-
-      - name: Restore go.mod cache if exists
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .devenv/state/go
-          key: ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-          # Prefer to restore the branch cache over the main cache
-          restore-keys: |
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-go-modules-main-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-main
-
-      - name: Check container health
-        run: docker inspect --format "{{json .State.Health }}" $(docker container list --all --filter 'name=^*-openmeter-*' --format '{{.Names}}')
-        if: always()
-        continue-on-error: true
-
-      - name: Wait for worker to become ready
-        run: |
-          curl --retry 10 --retry-max-time 120 --retry-all-errors http://localhost:40000/healthz
-          docker ps
-
-      - name: Run tests
-        env:
-          OPENMETER_ADDRESS: http://localhost:48888
-        run: |
-          nix develop --impure .#ci -c go test -v -count=1 ./quickstart/
-
-      - name: Cleanup Docker Compose
-        run: docker compose -f docker-compose.yaml -f docker-compose.override.yaml down -v
-        working-directory: quickstart
-        if: always()
-
-  e2e:
-    name: E2E
-    runs-on: depot-ubuntu-latest-8
-    # Note: This check is running against the image that is going to be pushed.
-    needs:
-      - trusted-artifacts
-      - untrusted-artifacts
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && contains(needs.*.result, 'success') }}
-
-    steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
-        with:
-          egress-policy: audit
-          use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
-          api-key: ${{ secrets.STEP_SECURITY_API_KEY }}
-
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Create override files for e2e
-        env:
-          DEPOT_IMAGE_URL: ${{ needs.trusted-artifacts.outputs.container-image-url-depot }}
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        run: |
-          cat > e2e/docker-compose.override.yaml <<EOF
-          services:
-            openmeter:
-              image: $DEPOT_IMAGE_URL
-            sink-worker:
-              image: $DEPOT_IMAGE_URL
-            billing-worker:
-              image: $DEPOT_IMAGE_URL
-          EOF
-
-          cat e2e/docker-compose.override.yaml
-
-      - name: Debug E2E runner state
-        run: |
-          echo "### DEBUG"
-          ss -ltnp | grep ':39000 ' || true
-          docker ps -a
-          docker network ls
-          echo "### DEBUG"
-      - name: Build as part of e2e
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-        run: |
-          cat > e2e/docker-compose.override.yaml <<EOF
-          services:
-            openmeter:
-              build: ..
-            sink-worker:
-              build: ..
-            billing-worker:
-              build: ..
-          EOF
-
-          cat e2e/docker-compose.override.yaml
-
-      - name: Launch Docker Compose infra
-        id: launch_e2e
-        run: docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml up -d
-        working-directory: e2e
-
-      - name: Start Docker Compose log stream for base tests
-        if: always() && steps.launch_e2e.outcome != 'skipped'
-        working-directory: e2e
-        run: |
-          mkdir -p artifacts/logs/docker-compose/base
-          docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml logs --no-color --timestamps --follow > artifacts/logs/docker-compose/base/compose-follow.log 2>&1 &
-          echo "$!" > artifacts/logs/docker-compose/base/compose-follow.pid
-
-      - name: Set up Nix
-        uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          nix_conf: |
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-            keep-env-derivations = true
-            keep-outputs = true
-
-      - name: Restore Nix store
-        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
-        with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{ hashFiles('flake.*') }}
-          restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
-
-      - name: Restore go.mod cache if exists
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .devenv/state/go
-          key: ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-          # Prefer to restore the branch cache over the main cache
-          restore-keys: |
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-go-modules-main-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-main
-
-      - name: Check container health
-        run: docker inspect --format "{{json .State.Health }}" $(docker container list --all --filter 'name=^*-openmeter-*' --format '{{.Names}}')
-        if: always()
-        continue-on-error: true
-
-      - name: Wait for worker to become ready
-        run: |
-          curl --fail --retry 10 --retry-max-time 120 --retry-all-errors http://localhost:30000/healthz
-          curl --fail --retry 10 --retry-max-time 120 --retry-all-errors http://localhost:30001/healthz
-          docker ps
-
-      - name: Run base tests
-        id: run_base_tests
-        env:
-          OPENMETER_ADDRESS: http://localhost:38888
-          TZ: UTC
-        run: |
-          nix develop --impure .#ci -c make -C e2e test-base
-
-      - name: Capture Docker Compose logs after base tests
-        if: always() && steps.launch_e2e.outcome != 'skipped'
-        working-directory: e2e
-        run: |
-          mkdir -p artifacts/logs/docker-compose/base
-          if [ -f artifacts/logs/docker-compose/base/compose-follow.pid ]; then
-            kill "$(cat artifacts/logs/docker-compose/base/compose-follow.pid)" 2>/dev/null || true
-            sleep 1
-          fi
-          docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml ps --all > artifacts/logs/docker-compose/base/compose-ps.txt 2>&1 || true
-          for service in $(docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml config --services); do
-            docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml logs --no-color --timestamps "$service" > "artifacts/logs/docker-compose/base/${service}.log" 2>&1 || true
-          done
-
-      - name: Restart Docker Compose infra for credits-disabled tests
-        id: restart_credits_disabled_e2e
-        run: |
-          docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml down -v
-          docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml -f docker-compose.credits-disabled.yaml up -d
-        working-directory: e2e
-
-      - name: Start Docker Compose log stream for credits-disabled tests
-        if: always() && steps.restart_credits_disabled_e2e.outcome != 'skipped'
-        working-directory: e2e
-        run: |
-          mkdir -p artifacts/logs/docker-compose/credits-disabled
-          docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml -f docker-compose.credits-disabled.yaml logs --no-color --timestamps --follow > artifacts/logs/docker-compose/credits-disabled/compose-follow.log 2>&1 &
-          echo "$!" > artifacts/logs/docker-compose/credits-disabled/compose-follow.pid
-
-      - name: Wait for worker to become ready with credits disabled
-        run: |
-          curl --fail --retry 10 --retry-max-time 120 --retry-all-errors http://localhost:30000/healthz
-          curl --fail --retry 10 --retry-max-time 120 --retry-all-errors http://localhost:30001/healthz
-          docker ps
-
-      - name: Run credits-disabled tests
-        id: run_credits_disabled_tests
-        env:
-          OPENMETER_ADDRESS: http://localhost:38888
-          TZ: UTC
-        run: |
-          nix develop --impure .#ci -c make -C e2e test-credits-disabled
-
-      - name: Capture Docker Compose logs after credits-disabled tests
-        if: always() && steps.restart_credits_disabled_e2e.outcome != 'skipped'
-        working-directory: e2e
-        run: |
-          mkdir -p artifacts/logs/docker-compose/credits-disabled
-          if [ -f artifacts/logs/docker-compose/credits-disabled/compose-follow.pid ]; then
-            kill "$(cat artifacts/logs/docker-compose/credits-disabled/compose-follow.pid)" 2>/dev/null || true
-            sleep 1
-          fi
-          docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml -f docker-compose.credits-disabled.yaml ps --all > artifacts/logs/docker-compose/credits-disabled/compose-ps.txt 2>&1 || true
-          for service in $(docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml -f docker-compose.credits-disabled.yaml config --services); do
-            docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml -f docker-compose.credits-disabled.yaml logs --no-color --timestamps "$service" > "artifacts/logs/docker-compose/credits-disabled/${service}.log" 2>&1 || true
-          done
-
-      - name: Cleanup Docker Compose
-        run: docker compose -f docker-compose.infra.yaml -f docker-compose.openmeter.yaml -f docker-compose.override.yaml down -v
-        working-directory: e2e
-        if: always()
-
-      - name: Upload Openmeter logs as artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        with:
-          name: "[${{ github.job }}] Openmeter logs"
-          path: |
-            e2e/logs/**
-            e2e/artifacts/logs/**
-          retention-days: 14

@@ -8,7 +8,6 @@ import (
 
 	"github.com/samber/lo"
 
-	"github.com/openmeterio/openmeter/api"
 	"github.com/openmeterio/openmeter/openmeter/app"
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/customer"
@@ -25,6 +24,7 @@ import (
 	taxcodeadapter "github.com/openmeterio/openmeter/openmeter/taxcode/adapter"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/convert"
+	"github.com/openmeterio/openmeter/pkg/filter"
 	"github.com/openmeterio/openmeter/pkg/framework/entutils"
 	"github.com/openmeterio/openmeter/pkg/models"
 	"github.com/openmeterio/openmeter/pkg/pagination"
@@ -138,8 +138,10 @@ func (a *adapter) createWorkflowConfig(ctx context.Context, ns string, input bil
 			if db.IsNotFound(err) {
 				return nil, taxcode.NewTaxCodeNotFoundError(*saved.TaxCodeID)
 			}
+
 			return nil, fmt.Errorf("fetching tax code edge after workflow config create: %w", err)
 		}
+
 		saved.Edges.TaxCode = tc
 	}
 
@@ -177,22 +179,25 @@ func (a *adapter) ListProfiles(ctx context.Context, input billing.ListProfilesIn
 		query = query.Where(billingprofile.DeletedAtIsNil())
 	}
 
+	query = filter.ApplyToQuery(query, input.ID, billingprofile.FieldID)
+	query = filter.ApplyToQuery(query, input.Name, billingprofile.FieldName)
+
 	order := entutils.GetOrdering(sortx.OrderDefault)
 	if !input.Order.IsDefaultValue() {
 		order = entutils.GetOrdering(input.Order)
 	}
 
 	switch input.OrderBy {
-	case api.BillingProfileOrderByCreatedAt:
-		query = query.Order(billingprofile.ByCreatedAt(order...))
-	case api.BillingProfileOrderByUpdatedAt:
-		query = query.Order(billingprofile.ByUpdatedAt(order...))
-	case api.BillingProfileOrderByName:
-		query = query.Order(billingprofile.ByName(order...))
-	case api.BillingProfileOrderByDefault:
-		query = query.Order(billingprofile.ByDefault(order...))
+	case billing.ProfileOrderByID:
+		query = query.Order(billingprofile.ByID(order...))
+	case billing.ProfileOrderByUpdatedAt:
+		query = query.Order(billingprofile.ByUpdatedAt(order...), billingprofile.ByID(order...))
+	case billing.ProfileOrderByName:
+		query = query.Order(billingprofile.ByName(order...), billingprofile.ByID(order...))
+	case billing.ProfileOrderByDefault:
+		query = query.Order(billingprofile.ByDefault(order...), billingprofile.ByID(order...))
 	default:
-		query = query.Order(billingprofile.ByCreatedAt(order...))
+		query = query.Order(billingprofile.ByCreatedAt(order...), billingprofile.ByID(order...))
 	}
 
 	response := pagination.Result[billing.BaseProfile]{
@@ -459,8 +464,10 @@ func (a *adapter) updateWorkflowConfig(ctx context.Context, ns string, id string
 			if db.IsNotFound(err) {
 				return nil, taxcode.NewTaxCodeNotFoundError(*saved.TaxCodeID)
 			}
+
 			return nil, fmt.Errorf("fetching tax code edge after workflow config update: %w", err)
 		}
+
 		saved.Edges.TaxCode = tc
 	}
 
@@ -521,6 +528,7 @@ func (a *adapter) mapWorkflowConfigFromDB(ctx context.Context, namespace string,
 		a.logger.ErrorContext(ctx, "billing workflow config namespace isolation violation",
 			"expected_namespace", namespace,
 		)
+
 		return billing.WorkflowConfig{}, models.NewGenericNotFoundError(fmt.Errorf("billing workflow config not found"))
 	}
 
@@ -531,6 +539,7 @@ func (a *adapter) mapWorkflowConfigFromDB(ctx context.Context, namespace string,
 			"expected_namespace", namespace,
 			"tax_code_id", *dbWC.TaxCodeID,
 		)
+
 		return billing.WorkflowConfig{}, taxcode.NewTaxCodeNotFoundError(*dbWC.TaxCodeID)
 	}
 

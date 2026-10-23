@@ -15,7 +15,10 @@ import "./llmcost/index.tsp";
 import "./productcatalog/index.tsp";
 import "./defaults/index.tsp";
 import "./entitlement-access/index.tsp";
+import "./grants/index.tsp";
 import "./invoices/index.tsp";
+import "./charges/index.tsp";
+import "./notifications/index.tsp";
 
 using TypeSpec.Http;
 using TypeSpec.OpenAPI;
@@ -66,6 +69,10 @@ using TypeSpec.OpenAPI;
   #{ description: Shared.ProductCatalogDescription }
 )
 @tagMetadata(Shared.DefaultsTag, #{ description: Shared.DefaultsDescription })
+@tagMetadata(
+  Shared.NotificationsTag,
+  #{ description: Shared.NotificationsDescription }
+)
 namespace OpenMeter;
 
 @route("/openmeter/events")
@@ -91,8 +98,31 @@ interface CustomerBillingEndpoints
 
 @route("/openmeter/customers/{customerId}/entitlement-access")
 @tag(Shared.EntitlementsTag)
-interface CustomerEntitlementsEndpoints
+interface CustomerEntitlementAccessEndpoints
   extends Entitlements.CustomerEntitlementsOperations {}
+
+@route("/openmeter/customers/{customerId}/entitlements")
+@tag(Shared.EntitlementsTag)
+interface CustomerEntitlementsEndpoints
+  extends Customers.Entitlements.CustomerEntitlementsOperations {}
+
+@route("/openmeter/entitlements")
+@tag(Shared.EntitlementsTag)
+interface EntitlementsEndpoints extends Entitlements.EntitlementsOperations {}
+
+@route("/openmeter/customers/{customerId}/entitlements/{entitlementId}/grants")
+@tag(Shared.EntitlementsTag)
+interface CustomerEntitlementGrantsEndpoints
+  extends Customers.Entitlements.Grants.CustomerEntitlementGrantsOperations {}
+
+@route("/openmeter/customers/{customerId}/entitlements")
+@tag(Shared.EntitlementsTag)
+interface CustomerEntitlementValueEndpoints
+  extends Entitlements.CustomerEntitlementValueOperations {}
+
+@route("/openmeter/grants")
+@tag(Shared.EntitlementsTag)
+interface GrantsEndpoints extends Grants.GrantsOperations {}
 
 @route("/openmeter/customers/{customerId}/credits/grants")
 @tag(Shared.CustomersTag)
@@ -155,6 +185,10 @@ interface BillingProfilesEndpoints extends Billing.BillingProfilesOperations {}
 @tag(Shared.BillingTag)
 interface BillingInvoicesEndpoints extends Invoices.InvoicesOperations {}
 
+@route("/openmeter/charges")
+@tag(Shared.BillingTag)
+interface ChargesEndpoints extends Charges.ChargesOperations {}
+
 @route("/openmeter/tax-codes")
 @tag(Shared.TaxTag)
 interface TaxCodesEndpoints extends Tax.TaxCodesOperations {}
@@ -181,10 +215,12 @@ interface FeaturesEndpoints extends Features.FeatureOperations {}
 @tag(Shared.FeaturesTag)
 interface FeatureCostEndpoints extends Features.FeatureCostOperations {}
 
+#deprecated "Not supported anymore"
 @route("/openmeter/llm-cost/prices")
 @tag(Shared.LLMCostTag)
 interface LLMCostPricesEndpoints extends LLMCost.LLMCostPricesOperations {}
 
+#deprecated "Not supported anymore"
 @route("/openmeter/llm-cost/overrides")
 @tag(Shared.LLMCostTag)
 interface LLMCostOverridesEndpoints
@@ -211,3 +247,18 @@ interface OrganizationDefaultTaxCodesEndpoints
 @tag(Shared.EntitlementsTag)
 interface EntitlementAccessEndpoints
   extends EntitlementAccess.EntitlementAccessOperations {}
+
+@route("/openmeter/notification/channels")
+@tag(Shared.NotificationsTag)
+interface NotificationChannelsEndpoints
+  extends Notifications.NotificationChannelOperations {}
+
+@route("/openmeter/notification/rules")
+@tag(Shared.NotificationsTag)
+interface NotificationRulesEndpoints
+  extends Notifications.NotificationRuleOperations {}
+
+@route("/openmeter/notification/events")
+@tag(Shared.NotificationsTag)
+interface NotificationEventsEndpoints
+  extends Notifications.NotificationEventOperations {}

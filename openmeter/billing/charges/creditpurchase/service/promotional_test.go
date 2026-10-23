@@ -11,7 +11,7 @@ import (
 
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase"
 	creditpurchaserealizations "github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase/service/realizations"
-	"github.com/openmeterio/openmeter/openmeter/billing/charges/lineage"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/ledgertransaction"
 	currenciestestutils "github.com/openmeterio/openmeter/openmeter/currencies/testutils"
@@ -223,6 +223,7 @@ func advancePromotionalChargeUntilStable(t *testing.T, stateMachine *Promotional
 	}
 
 	charge := stateMachine.GetCharge()
+
 	return &charge, nil
 }
 
@@ -236,17 +237,15 @@ func newPromotionalStateMachineTestMachine(
 	adapter := &promotionalStateMachineAdapter{}
 	lineageService := &promotionalStateMachineLineage{}
 	handler := &promotionalStateMachineHandler{
-		onPromotionalCreditPurchase: func(ctx context.Context, charge creditpurchase.Charge) (ledgertransaction.GroupReference, error) {
-			return ledgertransaction.GroupReference{
-				TransactionGroupID: "ledger-tx-1",
-			}, nil
+		onPromotionalCreditPurchase: func(ctx context.Context, charge creditpurchase.Charge) (creditpurchase.CreditGrantResult, error) {
+			return creditpurchase.CreditGrantResult{GroupReference: ledgertransaction.GroupReference{TransactionGroupID: "ledger-tx-1"}}, nil
 		},
 	}
 	realizationsService := newPromotionalStateMachineRealizations(t, adapter, handler, lineageService)
 
 	lineageService.On("BackfillAdvanceLineageSegments",
 		mock.Anything,
-		mock.MatchedBy(func(input lineage.BackfillAdvanceLineageSegmentsInput) bool {
+		mock.MatchedBy(func(input legacylineage.BackfillAdvanceLineageSegmentsInput) bool {
 			return input.Namespace == charge.Namespace &&
 				input.CustomerID == charge.Intent.CustomerID &&
 				input.Currency.GetCode() == charge.Intent.Currency.GetCode() &&
@@ -270,7 +269,7 @@ func newPromotionalStateMachineRealizations(
 	t *testing.T,
 	adapter creditpurchase.Adapter,
 	handler creditpurchase.Handler,
-	lineageService lineage.Service,
+	lineageService legacylineage.Service,
 ) *creditpurchaserealizations.Service {
 	t.Helper()
 
@@ -338,6 +337,7 @@ type promotionalStateMachineAdapter struct {
 func (a *promotionalStateMachineAdapter) UpdateCharge(ctx context.Context, charge creditpurchase.ChargeBase) (creditpurchase.ChargeBase, error) {
 	a.updateChargeCalls++
 	a.updatedBase = charge
+
 	return charge, nil
 }
 
@@ -345,6 +345,7 @@ func (a *promotionalStateMachineAdapter) CreateCreditGrant(ctx context.Context, 
 	a.createCreditGrantCalls++
 	a.createdGrantChargeID = chargeID
 	a.createdGrantInput = input
+
 	return ledgertransaction.TimedGroupReference{
 		GroupReference: ledgertransaction.GroupReference{
 			TransactionGroupID: input.TransactionGroupID,
@@ -356,28 +357,32 @@ func (a *promotionalStateMachineAdapter) CreateCreditGrant(ctx context.Context, 
 type promotionalStateMachineHandler struct {
 	creditpurchase.Handler
 
-	onPromotionalCreditPurchase func(ctx context.Context, charge creditpurchase.Charge) (ledgertransaction.GroupReference, error)
+	onPromotionalCreditPurchase func(ctx context.Context, charge creditpurchase.Charge) (creditpurchase.CreditGrantResult, error)
 }
 
-func (h *promotionalStateMachineHandler) OnPromotionalCreditPurchase(ctx context.Context, charge creditpurchase.Charge) (ledgertransaction.GroupReference, error) {
+func (h *promotionalStateMachineHandler) OnPromotionalCreditPurchase(ctx context.Context, input creditpurchase.CreditGrantInput) (creditpurchase.CreditGrantResult, error) {
 	if h.onPromotionalCreditPurchase == nil {
-		return ledgertransaction.GroupReference{}, nil
+		return creditpurchase.CreditGrantResult{}, nil
 	}
 
-	return h.onPromotionalCreditPurchase(ctx, charge)
+	return h.onPromotionalCreditPurchase(ctx, input.Charge)
 }
 
 type promotionalStateMachineLineage struct {
-	lineage.Service
+	legacylineage.Service
 	mock.Mock
 }
 
-func (l *promotionalStateMachineLineage) BackfillAdvanceLineageSegments(ctx context.Context, input lineage.BackfillAdvanceLineageSegmentsInput) error {
+func (l *promotionalStateMachineLineage) BackfillAdvanceLineageSegments(ctx context.Context, input legacylineage.BackfillAdvanceLineageSegmentsInput) error {
 	args := l.Called(ctx, input)
 	return args.Error(0)
 }
 
 var (
 	_ creditpurchase.Handler = (*promotionalStateMachineHandler)(nil)
-	_ lineage.Service        = (*promotionalStateMachineLineage)(nil)
+	_ legacylineage.Service  = (*promotionalStateMachineLineage)(nil)
 )
+
+func (*promotionalStateMachineLineage) LoadLineagesByCustomer(context.Context, legacylineage.LoadLineagesByCustomerInput) ([]legacylineage.Lineage, error) {
+	return nil, nil
+}

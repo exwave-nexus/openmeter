@@ -152,27 +152,28 @@ export interface AppStripeCreateCustomerPortalSessionOptions {
  */
 export type CreateLabels = Record<string, string>
 
-/** The tax config for Stripe. */
-export interface TaxConfigStripe {
-  /** Product [tax code](https://docs.stripe.com/tax/tax-codes). */
-  code: string
+/** An integer version comparison. Exactly one operator must be provided. */
+export interface CreateVersionFilter {
+  /** Match this exact version. */
+  eq?: number
+  /** Match one of these versions. */
+  oeq?: number[]
+  /** Match this version and later versions. */
+  gte?: number
+  /** Match this version and earlier versions. */
+  lte?: number
 }
 
-/** External invoicing tax config. */
-export interface TaxConfigExternalInvoicing {
-  /** The tax code should be interpreted by the external invoicing provider. */
-  code: string
-}
-
-/**
- * Discounts applicable to flat fee charges.
- *
- * This is the same as `ProductCatalog.Discounts` but without the `usage` field,
- * which is not applicable to flat fee charges.
- */
-export interface ChargeFlatFeeDiscounts {
-  /** Percentage discount applied to the price (0–100). */
-  percentage?: number
+/** An integer version comparison. Exactly one operator must be provided. */
+export interface VersionFilter {
+  /** Match this exact version. */
+  eq?: number
+  /** Match one of these versions. */
+  oeq?: number[]
+  /** Match this version and later versions. */
+  gte?: number
+  /** Match this version and earlier versions. */
+  lte?: number
 }
 
 /** Free price. */
@@ -199,86 +200,16 @@ export interface RateCardBooleanEntitlement {
   type: 'boolean'
 }
 
-/**
- * Labels store metadata of an entity that can be used for filtering an entity list
- * or for searching across entity types.
- *
- * Keys must be of length 1-63 characters, and cannot start with "kong", "konnect",
- * "mesh", "kic", or "\_".
- */
-export type UpdateLabels = Record<string, string>
-
-/** Model for installing an app from the catalog with an API key. */
-export interface InstallAppStripeWithApiKey {
-  /** Type of the app. */
-  type: 'stripe'
-  /** Name of the app. */
-  name: string
-  /**
-   * If true, a billing profile will be created for the app. The Stripe app will be
-   * also set as the default billing profile if the current default is a Sandbox app.
-   */
-  createBillingProfile: boolean
-  /** API key for the app. */
-  apiKey: string
+/** The tax config for Stripe. */
+export interface TaxConfigStripe {
+  /** Product [tax code](https://docs.stripe.com/tax/tax-codes). */
+  code: string
 }
 
-/** Base model for installing an app from the catalog. */
-export interface InstallAppSandbox {
-  /** Type of the app. */
-  type: 'sandbox'
-  /** Name of the app. */
-  name: string
-  /**
-   * If true, a billing profile will be created for the app. The Stripe app will be
-   * also set as the default billing profile if the current default is a Sandbox app.
-   */
-  createBillingProfile: boolean
-}
-
-/** Base model for installing an app from the catalog. */
-export interface InstallAppExternalInvoicing {
-  /** Type of the app. */
-  type: 'external_invoicing'
-  /** Name of the app. */
-  name: string
-  /**
-   * If true, a billing profile will be created for the app. The Stripe app will be
-   * also set as the default billing profile if the current default is a Sandbox app.
-   */
-  createBillingProfile: boolean
-}
-
-/**
- * BillingWorkflowCollectionAlignmentSubscription specifies the alignment for
- * collecting the pending line items into an invoice.
- */
-export interface WorkflowCollectionAlignmentSubscription {
-  /** The type of alignment. */
-  type: 'subscription'
-}
-
-/**
- * Payment settings for a billing workflow when the collection method is charge
- * automatically.
- */
-export interface WorkflowPaymentChargeAutomaticallySettings {
-  /** The collection method for the invoice. */
-  collectionMethod: 'charge_automatically'
-}
-
-/**
- * Payment settings for a billing workflow when the collection method is send
- * invoice.
- */
-export interface WorkflowPaymentSendInvoiceSettings {
-  /** The collection method for the invoice. */
-  collectionMethod: 'send_invoice'
-  /**
-   * The period after which the invoice is due. With some payment solutions it's only
-   * applicable for manual collection method.
-   */
-  dueAfter: string
+/** External invoicing tax config. */
+export interface TaxConfigExternalInvoicing {
+  /** The tax code should be interpreted by the external invoicing provider. */
+  code: string
 }
 
 /** External identifiers assigned to an invoice by third-party systems. */
@@ -309,6 +240,127 @@ export interface InvoiceWorkflowInvoicingSettings {
   draftPeriod: string
   /** The period after which the invoice is considered overdue if not paid. */
   dueAfter?: string
+}
+
+/**
+ * Payment settings for a billing workflow when the collection method is charge
+ * automatically.
+ */
+export interface WorkflowPaymentChargeAutomaticallySettings {
+  /** The collection method for the invoice. */
+  collectionMethod: 'charge_automatically'
+}
+
+/**
+ * Payment settings for a billing workflow when the collection method is send
+ * invoice.
+ */
+export interface WorkflowPaymentSendInvoiceSettings {
+  /** The collection method for the invoice. */
+  collectionMethod: 'send_invoice'
+  /**
+   * The period after which the invoice is due. With some payment solutions it's only
+   * applicable for manual collection method.
+   */
+  dueAfter: string
+}
+
+/**
+ * Discounts applicable to flat fee charges.
+ *
+ * This is the same as `ProductCatalog.Discounts` but without the `usage` field,
+ * which is not applicable to flat fee charges.
+ */
+export interface ChargeFlatFeeDiscounts {
+  /** Percentage discount applied to the price (0–100). */
+  percentage?: number
+}
+
+/** Remove a rate card from a phase. */
+export interface SubscriptionEditRemoveItem {
+  /** Discriminator for the remove-item operation. */
+  type: 'remove_item'
+  /** The key of the phase to remove the item from. */
+  phaseKey: string
+  /** The key of the item to remove. */
+  itemKey: string
+}
+
+/**
+ * Discard any scheduled edits on the current phase, reverting it to its previously
+ * persisted state.
+ */
+export interface SubscriptionEditUnscheduleEdit {
+  /** Discriminator for the unschedule-edit operation. */
+  type: 'unschedule_edit'
+}
+
+/**
+ * Labels store metadata of an entity that can be used for filtering an entity list
+ * or for searching across entity types.
+ *
+ * Keys must be of length 1-63 characters, and cannot start with "kong", "konnect",
+ * "mesh", "kic", or "\_".
+ */
+export type UpdateLabels = Record<string, string>
+
+/**
+ * Request to reconcile the app's webhook events with the latest supported event
+ * set.
+ */
+export interface AppReconcileWebhookEventsActionRequest {
+  /** The action to execute. */
+  actionType: 'reconcile_webhook_events'
+}
+
+/** Model for installing an app from the catalog with an API key. */
+export interface InstallAppStripeWithApiKey {
+  /** Type of the app. */
+  type: 'stripe'
+  /** Name of the app. */
+  name: string
+  /**
+   * If true, a billing profile will be created for the app. The Stripe app will be
+   * also set as the default billing profile if the current default is a Sandbox app.
+   */
+  createBillingProfile: boolean
+  /** API key for the app. */
+  apiKey: string
+}
+
+/** Base model for installing an app from the catalog. */
+export interface InstallAppSandbox {
+  /** Type of the app. */
+  type: 'sandbox'
+  /** Name of the app. */
+  name: string
+  /**
+   * If true, a billing profile will be created for the app. The Stripe app will be
+   * also set as the default billing profile if the current default is a Sandbox app.
+   */
+  createBillingProfile: boolean
+}
+
+/** Model for installing an External Invoicing app from the catalog. */
+export interface InstallAppExternalInvoicing {
+  /** Type of the app. */
+  type: 'external_invoicing'
+  /** Name of the app. */
+  name: string
+  /**
+   * If true, creates the Auto Collection preset with an OpenMeter supplier in the US
+   * (postal code 94114), without replacing the default profile.
+   */
+  createBillingProfile: boolean
+}
+
+/**
+ * BillingWorkflowCollectionAlignmentSubscription specifies the alignment for
+ * collecting the pending line items into an invoice.
+ */
+export interface WorkflowCollectionAlignmentSubscription {
+  /** The type of alignment. */
+  type: 'subscription'
 }
 
 /** External identifiers for an invoice line item assigned by third-party systems. */
@@ -406,6 +458,24 @@ export interface EntitlementAccessQueryRequestCustomers {
 export interface EntitlementAccessQueryRequestFeatures {
   /** List of feature keys to evaluate access for. */
   keys: string[]
+}
+
+/**
+ * The response the recipient returned for a delivery attempt. For webhook channels
+ * this is the HTTP response.
+ */
+export interface NotificationEventDeliveryAttemptResponse {
+  /**
+   * The HTTP status code returned by the recipient. Absent when no response was
+   * received.
+   */
+  statusCode?: number
+  /** The response body returned by the recipient. Empty when no body was received. */
+  body: string
+  /** How long the delivery attempt took, in milliseconds. */
+  durationMs: bigint
+  /** The URL the event was delivered to. Only set for webhook channels. */
+  url?: string
 }
 
 /**
@@ -547,6 +617,22 @@ export interface AppCustomerDataExternalInvoicing {
   labels?: Labels
 }
 
+/** Cost basis resolved at the charge's full service period start. */
+export interface CreateChargeCostBasisDynamic {
+  /** Discriminator selecting the cost basis mode. */
+  type: 'dynamic'
+  /** The fiat currency the charge amount is converted into for invoicing. */
+  fiatCurrency: string
+}
+
+/** Cost basis resolved at the charge's full service period start. */
+export interface ChargeCostBasisDynamic {
+  /** Discriminator selecting the cost basis mode. */
+  type: 'dynamic'
+  /** The fiat currency the charge amount is converted into for invoicing. */
+  fiatCurrency: string
+}
+
 /** Currency describes a currency supported by the billing system. */
 export interface CurrencyFiat {
   /** The type of the currency. */
@@ -617,10 +703,80 @@ export interface CreateCurrencyCustomRequest {
   code: string
 }
 
-/** Monetary amount in a specific currency. */
-export interface CurrencyAmount {
+/**
+ * Balance details of a metered entitlement at the evaluation time, which is the
+ * `at` query parameter when given and the current time otherwise.
+ */
+export interface EntitlementAccessValue {
+  /**
+   * The remaining balance of the entitlement in the usage period at the evaluation
+   * time.
+   */
+  balance: string
+  /** The usage recorded in the usage period at the evaluation time. */
+  usage: string
+  /**
+   * The usage exceeding the available balance in the usage period at the evaluation
+   * time.
+   */
+  overage: string
+  /**
+   * The total amount granted and available to the entitlement at the evaluation
+   * time.
+   */
+  totalAvailableGrantAmount: string
+  /** The remaining balance of each grant, keyed by grant ID. */
+  grantBalances: Record<string, string>
+}
+
+/**
+ * Usage granted automatically after each reset of a metered entitlement. The
+ * balance returns to `amount` after every reset.
+ */
+export interface EntitlementIssueAfterReset {
+  /** The amount granted after each reset, in the feature's unit. */
   amount: string
-  currency: string
+  /**
+   * The priority of the grant created after each reset. Lower values have higher
+   * priority.
+   */
+  priority: number
+}
+
+/** Entitlement balance at the boundaries of a burndown segment. */
+export interface EntitlementBurndownBalance {
+  /** The balance at the start of the segment. */
+  start: string
+  /** The balance at the end of the segment. */
+  end: string
+}
+
+/** Grant balances at the boundaries of a burndown segment, keyed by grant ID. */
+export interface EntitlementBurndownGrantBalances {
+  /** The balance of each active grant at the start of the segment. */
+  start: Record<string, string>
+  /** The balance of each active grant at the end of the segment. */
+  end: Record<string, string>
+}
+
+/** Cost basis with an explicit conversion rate supplied with the charge. */
+export interface CreateChargeCostBasisManual {
+  /** Discriminator selecting the cost basis mode. */
+  type: 'manual'
+  /** The fiat currency the charge amount is converted into for invoicing. */
+  fiatCurrency?: string
+  /** Fiat amount per one unit of the custom currency. */
+  rate: string
+}
+
+/** Cost basis with an explicit conversion rate supplied with the charge. */
+export interface ChargeCostBasisManual {
+  /** Discriminator selecting the cost basis mode. */
+  type: 'manual'
+  /** The fiat currency the charge amount is converted into for invoicing. */
+  fiatCurrency?: string
+  /** Fiat amount per one unit of the custom currency. */
+  rate: string
 }
 
 /** Flat price. */
@@ -634,14 +790,25 @@ export interface PriceFlat {
 /**
  * Unit price.
  *
- * Charges a fixed rate per billing unit. When UnitConfig is present on the rate
- * card, billing units are the converted quantities (e.g. GB instead of bytes).
+ * Charges a fixed rate per billing unit. When UnitConfig is present on the object,
+ * billing units are the converted quantities (e.g. GB instead of bytes).
  */
 export interface PriceUnit {
   /** The type of the price. */
   type: 'unit'
   /** The amount of the unit price. */
   amount: string
+}
+
+/**
+ * Spend commitments for a usage-based price. The customer is committed to spend at
+ * least the minimum amount and at most the maximum amount.
+ */
+export interface SpendCommitments {
+  /** The customer is committed to spend at least the amount. */
+  minimumAmount?: string
+  /** The customer is limited to spend at most the amount. */
+  maximumAmount?: string
 }
 
 /** Discount configuration for a rate card. */
@@ -676,15 +843,54 @@ export interface Totals {
   total: string
 }
 
-/**
- * Spend commitments for a rate card. The customer is committed to spend at least
- * the minimum amount and at most the maximum amount.
- */
-export interface SpendCommitments {
-  /** The customer is committed to spend at least the amount. */
-  minimumAmount?: string
-  /** The customer is limited to spend at most the amount. */
-  maximumAmount?: string
+/** A credit allocation applied to a charge realization detailed line. */
+export interface ChargeRealizationDetailedLineCreditApplied {
+  /** The monetary amount credited. */
+  amount: string
+  /** Human-readable description of the credit allocation. */
+  description?: string
+  /** The ID of the credit realization (allocation) this credit was applied from. */
+  creditRealizationId: string
+}
+
+/** A discount applied to a charge realization detailed line. */
+export interface ChargeRealizationAmountDiscount {
+  /** The amount of the discount applied to the charge. */
+  amount: string
+  /** The reason for the discount applied to the charge. */
+  reason: string
+  /** Optional human-readable description of the discount. */
+  description?: string
+  /**
+   * The discount amount applied to the charge, rounded to the nearest cent (or
+   * currency equivalent) and adjusted to compensate for rounding errors across
+   * multiple discounted detail lines.
+   */
+  roundingAmount?: string
+  /** Unique reference ID of the discount applied to the charge. */
+  childUniqueReferenceId: string
+}
+
+/** A fixed per-unit cost amount. */
+export interface FeatureManualUnitCost {
+  /** The type discriminator for manual unit cost. */
+  type: 'manual'
+  /** Fixed per-unit cost amount in USD. */
+  amount: string
+}
+
+/** Resolved per-token pricing from the LLM cost database. */
+export interface FeatureLlmUnitCostPricing {
+  /** Cost per input token in USD. */
+  inputPerToken: string
+  /** Cost per output token in USD. */
+  outputPerToken: string
+  /** Cost per cache read token in USD. */
+  cacheReadPerToken?: string
+  /** Cost per reasoning token in USD. */
+  reasoningPerToken?: string
+  /** Cost per cache write token in USD. */
+  cacheWritePerToken?: string
 }
 
 /** A credit allocation applied to an invoice line item. */
@@ -723,8 +929,8 @@ export interface UpdatePriceFlat {
 /**
  * Unit price.
  *
- * Charges a fixed rate per billing unit. When UnitConfig is present on the rate
- * card, billing units are the converted quantities (e.g. GB instead of bytes).
+ * Charges a fixed rate per billing unit. When UnitConfig is present on the object,
+ * billing units are the converted quantities (e.g. GB instead of bytes).
  */
 export interface UpdatePriceUnit {
   /** The type of the price. */
@@ -745,28 +951,6 @@ export interface UpdateDiscounts {
   usage?: string
 }
 
-/** A fixed per-unit cost amount. */
-export interface FeatureManualUnitCost {
-  /** The type discriminator for manual unit cost. */
-  type: 'manual'
-  /** Fixed per-unit cost amount in USD. */
-  amount: string
-}
-
-/** Resolved per-token pricing from the LLM cost database. */
-export interface FeatureLlmUnitCostPricing {
-  /** Cost per input token in USD. */
-  inputPerToken: string
-  /** Cost per output token in USD. */
-  outputPerToken: string
-  /** Cost per cache read token in USD. */
-  cacheReadPerToken?: string
-  /** Cost per reasoning token in USD. */
-  reasoningPerToken?: string
-  /** Cost per cache write token in USD. */
-  cacheWritePerToken?: string
-}
-
 /** Token pricing for an LLM model, denominated per token. */
 export interface LlmCostModelPricing {
   /** Input price per token (USD). */
@@ -779,6 +963,12 @@ export interface LlmCostModelPricing {
   cacheWritePerToken?: string
   /** Reasoning output price per token (USD). */
   reasoningPerToken?: string
+}
+
+/** Monetary amount in a specific fiat currency. */
+export interface FiatCurrencyAmount {
+  amount: string
+  currency: string
 }
 
 /**
@@ -848,9 +1038,42 @@ export interface ProfileReference {
   id: string
 }
 
+/** Feature reference. */
+export interface FeatureReference {
+  id: string
+}
+
+/** Usage taken from a single grant. */
+export interface EntitlementGrantUsage {
+  /** The ID of the grant. */
+  grantId: string
+  /** The usage taken from the grant. */
+  usage: string
+}
+
+/** Cost basis pinned to a specific cost basis resource of the custom currency. */
+export interface CreateChargeCostBasisPinned {
+  /** Discriminator selecting the cost basis mode. */
+  type: 'pinned'
+  /** The fiat currency the charge amount is converted into for invoicing. */
+  fiatCurrency: string
+  /** ID of the custom currency's cost basis resource to pin. */
+  costBasisId: string
+}
+
 /** TaxCode reference. */
 export interface CreateResourceReference {
   id: string
+}
+
+/** Cost basis pinned to a specific cost basis resource of the custom currency. */
+export interface ChargeCostBasisPinned {
+  /** Discriminator selecting the cost basis mode. */
+  type: 'pinned'
+  /** The fiat currency the charge amount is converted into for invoicing. */
+  fiatCurrency: string
+  /** ID of the custom currency's cost basis resource to pin. */
+  costBasisId: string
 }
 
 /** TaxCode reference. */
@@ -866,21 +1089,9 @@ export interface CreditGrantInvoiceReference {
   line?: { id: string }
 }
 
-/** Customer reference. */
-export interface BillingCustomerReference {
-  /** The ID of the customer. */
+/** CurrencyCustom reference. */
+export interface CurrencyCustomReference {
   id: string
-}
-
-/**
- * Subscription reference represents a reference to the specific subscription item
- * this entity represents.
- */
-export interface SubscriptionReference {
-  /** The ID of the subscription. */
-  id: string
-  /** The phase of the subscription. */
-  phase: { id: string; item: { id: string } }
 }
 
 /** A cost basis pinned to a custom-currency pair for the subscription. */
@@ -893,19 +1104,37 @@ export interface SubscriptionCostBasisPin {
   costBasisId: string
 }
 
-/** Addon reference. */
-export interface AddonReference {
+/**
+ * Subscription reference represents a reference to the specific subscription item
+ * this entity represents.
+ */
+export interface SubscriptionReference {
+  /** The ID of the subscription. */
   id: string
-}
-
-/** Feature reference. */
-export interface FeatureReference {
-  id: string
+  /**
+   * The display name of the subscription.
+   *
+   * Only populated where the referencing endpoint documents a `subscription` expand
+   * that resolves it.
+   */
+  name?: string
+  /** The phase of the subscription. */
+  phase: { id: string; item: { id: string } }
 }
 
 /** App reference. */
 export interface AppReference {
   /** The ID of the app. */
+  id: string
+}
+
+/** ChargeRealizationInvoice reference. */
+export interface ChargeRealizationInvoiceReference {
+  id: string
+}
+
+/** Addon reference. */
+export interface AddonReference {
   id: string
 }
 
@@ -918,6 +1147,74 @@ export interface ChargeReference {
 /** TaxCode reference. */
 export interface UpdateResourceReference {
   id: string
+}
+
+/** NotificationChannel reference. */
+export interface NotificationChannelReference {
+  id: string
+}
+
+/** A reference to the feature of an entitlement notification event. */
+export interface NotificationEventFeatureReference {
+  /** The unique identifier of the feature. */
+  id: string
+  /** The immutable key of the feature. */
+  key: string
+}
+
+/** A reference to the invoice of an invoice notification event. */
+export interface NotificationEventInvoiceReference {
+  /** The unique identifier of the invoice. */
+  id: string
+  /** The human-readable invoice number. */
+  number: string
+}
+
+/** Request body for resending a notification event. */
+export interface ResendBillingNotificationEventRequest {
+  /**
+   * The channels to resend the event to. When omitted or empty, the event is resent
+   * to every enabled channel of the rule. Channels not targeted by the rule or
+   * disabled are rejected.
+   */
+  channels?: string[]
+}
+
+/** Customer reference. */
+export interface BillingCustomerReference {
+  /** The ID of the customer. */
+  id: string
+  /**
+   * The display name of the customer.
+   *
+   * Only populated where the referencing endpoint documents a `customer` expand that
+   * resolves it.
+   */
+  name?: string
+}
+
+/**
+ * The feature associated with a charge.
+ *
+ * `key` is always present and is set at charge creation time. `id` and `name` are
+ * only resolved with the `feature` expand, since resolving them requires an
+ * additional lookup against the feature catalog.
+ */
+export interface ChargeFeature {
+  /** The ID of the feature. */
+  id: string
+  /**
+   * The key of the feature.
+   *
+   * Requires the `feature` expand.
+   */
+  key?: string
+  /**
+   * The display name of the feature.
+   *
+   * Requires the `feature` expand.
+   */
+  name?: string
 }
 
 /** Metering event following the CloudEvents specification. */
@@ -1043,6 +1340,44 @@ export interface ClosedPeriod {
    * The period is exclusive at the end.
    */
   to: Date
+}
+
+/** Request body for resetting the usage of a metered entitlement. */
+export interface ResetCustomerEntitlementUsageRequest {
+  /**
+   * The time the reset takes effect. Defaults to the current time and cannot be in
+   * the future. Truncated to the minute.
+   */
+  effectiveAt?: Date
+  /**
+   * Whether the usage period anchor is kept. When false, the anchor moves to
+   * `effective_at`.
+   */
+  retainAnchor: boolean
+  /**
+   * Whether overage carries over into the new usage period. Defaults to the
+   * entitlement's own setting.
+   */
+  preserveOverage?: boolean
+}
+
+/**
+ * Fiat conversion rate a custom-currency charge is invoiced at. Present once the
+ * cost basis is resolved; dynamic cost bases are exposed only after the service
+ * period has started.
+ */
+export interface ChargeResolvedCostBasis {
+  /** The fiat currency the charge amount is converted into for invoicing. */
+  fiatCurrency: string
+  /** Fiat amount per one unit of the custom currency. */
+  rate: string
+  /**
+   * ID of the custom currency's cost basis resource the rate was taken from. Absent
+   * for manual cost bases.
+   */
+  costBasisId?: string
+  /** When the rate was resolved. */
+  resolvedAt: Date
 }
 
 /** A subscription add-on event. */
@@ -1347,22 +1682,17 @@ export interface NotImplemented extends BaseError {}
 /** Not Available. */
 export interface NotAvailable extends BaseError {}
 
-/** Filters for the credit grant. */
-export interface CreateCreditGrantFilters {
-  /**
-   * Limit the credit grant to specific features. If no features are specified, the
-   * credit grant can be used for any feature.
-   */
-  features?: string[]
-}
-
-/** Filters for the credit grant. */
-export interface CreditGrantFilters {
-  /**
-   * Limit the credit grant to specific features. If no features are specified, the
-   * credit grant can be used for any feature.
-   */
-  features?: string[]
+/**
+ * A reference to the plan a subscription was created from, pinned to an exact
+ * revision.
+ */
+export interface SubscriptionPlanReference {
+  /** The plan ID (exact revision). */
+  id: string
+  /** The plan key. References the plan across versions. */
+  key: string
+  /** The plan version. */
+  version: number
 }
 
 /** PlanAddon upsert request. */
@@ -1731,12 +2061,8 @@ export interface CustomerStripeCreateCustomerPortalSessionRequest {
   stripeOptions: AppStripeCreateCustomerPortalSessionOptions
 }
 
-/** Entitlement access result. */
-export interface EntitlementAccessResult {
-  /** The type of the entitlement. */
-  type: 'metered' | 'static' | 'boolean'
-  /** The feature key of the entitlement. */
-  featureKey: string
+/** Entitlement access check result. */
+export interface EntitlementAccessCheckResult {
   /**
    * Whether the customer has access to the feature. Always true for `boolean` and
    * `static` entitlements. Depends on balance for `metered` entitlements.
@@ -1747,29 +2073,32 @@ export interface EntitlementAccessResult {
    * configuration of the entitlement. Useful to describe per customer configuration.
    */
   config?: string
+  /**
+   * The type of the entitlement.
+   *
+   * If not provided, the feature has no entitlement defined (has access is always
+   * false in this case)
+   */
+  type?: 'metered' | 'static' | 'boolean'
 }
 
-/** Purchase and payment terms of the grant. */
-export interface CreateCreditGrantPurchase {
-  /** Currency of the purchase amount. */
-  currency: string
-  /**
-   * Cost basis per credit unit used to calculate the purchase amount.
-   *
-   * If `per_unit_cost_basis` is 0.50 and credit amount is
-   * $100.00, the total
-   * charge is $50.00. The value must be greater than 0. If the
-   * cost basis is 0, use `funding_method=none` instead.
-   *
-   * Defaults to 1.0.
-   */
-  perUnitCostBasis: string
-  /**
-   * Controls when credits become available for consumption.
-   *
-   * Defaults to `on_creation`.
-   */
-  availabilityPolicy: 'on_creation'
+/**
+ * Recurring period input. The anchor is optional; the owning resource defines the
+ * default, typically its creation time.
+ */
+export interface RecurringPeriodInput {
+  /** The interval duration in ISO 8601 format. */
+  interval: string
+  /** A date-time anchor to base the recurring period on. */
+  anchor?: Date
+}
+
+/** Recurring period with an anchor and an interval. */
+export interface RecurringPeriod {
+  /** A date-time anchor to base the recurring period on. */
+  anchor: Date
+  /** The interval duration in ISO 8601 format. */
+  interval: string
 }
 
 /** The entitlement template of a metered entitlement. */
@@ -1795,39 +2124,64 @@ export interface RateCardMeteredEntitlement {
   usagePeriod?: string
 }
 
-/** Recurring period with an anchor and an interval. */
-export interface RecurringPeriod {
-  /** A date-time anchor to base the recurring period on. */
-  anchor: Date
-  /** The interval duration in ISO 8601 format. */
-  interval: string
+/** The definition of a new subscription phase to add via an edit. */
+export interface SubscriptionPhaseCreate {
+  /** A locally unique identifier for the phase. */
+  key: string
+  /** The name of the phase. */
+  name: string
+  /** An optional description of the phase. */
+  description?: string
+  /**
+   * The ISO-8601 interval after the subscription start at which the phase begins.
+   * When null, the phase starts immediately after the subscription starts.
+   */
+  startAfter: string | null
+  /**
+   * The intended ISO-8601 duration of the phase. Required unless the phase will be
+   * the last phase of the subscription.
+   */
+  duration?: string
 }
 
-/** Purchase and payment terms of the grant. */
-export interface CreditGrantPurchase {
-  /** Currency of the purchase amount. */
-  currency: string
+/** Extend the duration of a phase, shifting later phases by the same amount. */
+export interface SubscriptionEditStretchPhase {
+  /** Discriminator for the stretch-phase operation. */
+  type: 'stretch_phase'
+  /** The key of the phase to stretch. */
+  phaseKey: string
+  /** The ISO-8601 duration to extend the phase by. */
+  extendBy: string
+}
+
+/** Filter options for getting a credit balance. */
+export interface GetCreditBalanceParamsFilter {
   /**
-   * Cost basis per credit unit used to calculate the purchase amount.
-   *
-   * If `per_unit_cost_basis` is 0.50 and credit amount is
-   * $100.00, the total
-   * charge is $50.00. The value must be greater than 0. If the
-   * cost basis is 0, use `funding_method=none` instead.
-   *
-   * Defaults to 1.0.
+   * Filter credit balance by currency code. When historical custom currencies reuse
+   * a code, each managed currency is returned as a separate balance row.
    */
-  perUnitCostBasis: string
-  /** The purchase amount. Calculated from `per_unit_cost_basis` and credit `amount`. */
-  amount: string
+  currency?: StringFieldFilterExact
   /**
-   * Controls when credits become available for consumption.
-   *
-   * Defaults to `on_creation`.
+   * Filter credit balance by feature key. Omit to return the total portfolio value.
+   * Use `exists=false` to return only unrestricted balance.
    */
-  availabilityPolicy: 'on_creation'
-  /** Current payment settlement status. */
-  settlementStatus?: 'pending' | 'authorized' | 'settled'
+  featureKey?: StringFieldFilter
+}
+
+/** Filter options for listing plans. */
+export interface ListPlansParamsFilter {
+  key?: StringFieldFilter
+  name?: StringFieldFilter
+  status?: StringFieldFilterExact
+  currency?: StringFieldFilterExact
+}
+
+/** A plan key and an optional version constraint for matching credit grants. */
+export interface CreateCreditGrantPlanFilter {
+  /** The plan key in the customer's namespace. */
+  key: string
+  /** Omission matches all versions, including future versions. */
+  version?: CreateVersionFilter
 }
 
 /**
@@ -1837,6 +2191,14 @@ export interface CreditGrantPurchase {
 export interface UpdateCreditGrantExternalSettlementRequest {
   /** The new payment settlement status. */
   status: 'pending' | 'authorized' | 'settled'
+}
+
+/** A plan key and an optional version constraint for matching credit grants. */
+export interface CreditGrantPlanFilter {
+  /** The plan key in the customer's namespace. */
+  key: string
+  /** Omission matches all versions, including future versions. */
+  version?: VersionFilter
 }
 
 /** Filter options for listing credit grants. */
@@ -1849,40 +2211,20 @@ export interface ListCreditGrantsParamsFilter {
   key?: StringFieldFilter
 }
 
-/** Filter options for getting a credit balance. */
-export interface GetCreditBalanceParamsFilter {
-  /** Filter credit balance by currency. */
-  currency?: StringFieldFilterExact
-  /**
-   * Filter credit balance by feature key. Omit to return the total portfolio value.
-   * Use `exists=false` to return only unrestricted balance.
-   */
-  featureKey?: StringFieldFilter
-}
-
-/** Filter options for listing charges. */
-export interface ListChargesParamsFilter {
-  /**
-   * Filter charges by status.
-   *
-   * Supported statuses are:
-   *
-   * - `created`
-   * - `active`
-   * - `final`
-   * - `deleted`
-   *
-   * If omitted, all statuses are returned except for `deleted`.
-   */
-  status?: StringFieldFilterExact
-}
-
-/** Filter options for listing plans. */
-export interface ListPlansParamsFilter {
-  key?: StringFieldFilter
-  name?: StringFieldFilter
-  status?: StringFieldFilterExact
-  currency?: StringFieldFilterExact
+/** A validation issue found while processing a billing resource. */
+export interface ValidationIssue {
+  /** Machine-readable error code. */
+  code: string
+  /** Human-readable description of the error. */
+  message: string
+  /** Additional structured context. */
+  attributes?: Record<string, unknown>
+  /** Severity of the validation issue. */
+  severity: 'critical' | 'warning'
+  /** JSON path to the field that caused the validation issue, if applicable. */
+  field?: string
+  /** Component that reported the validation issue, if applicable. */
+  component?: string
 }
 
 /** Request body for voiding a credit grant. */
@@ -1897,52 +2239,26 @@ export interface VoidCreditGrantRequest {
   paymentAdjustment: 'none'
 }
 
+/** The pro-rating configuration of a subscription. */
+export interface SubscriptionProRatingConfig {
+  /** Whether pro-rating is enabled. */
+  enabled: boolean
+  /** How pro-rating is calculated when enabled. */
+  mode: 'no_proration' | 'prorate_prices'
+}
+
 /** The proration configuration of the rate card. */
 export interface RateCardProrationConfiguration {
   /** The proration mode of the rate card. */
   mode: 'no_proration' | 'prorate_prices'
 }
 
-/** Subscription create request. */
-export interface SubscriptionCreate {
-  labels?: Labels
-  /**
-   * Settlement mode for billing.
-   *
-   * Values:
-   *
-   * - `credit_then_invoice`: Credits are applied first, then any remainder is
-   * invoiced.
-   * - `credit_only`: Usage is settled exclusively against credits.
-   */
-  settlementMode?: 'credit_then_invoice' | 'credit_only'
-  /** The customer to create the subscription for. */
-  customer: { id?: string; key?: string }
-  /** The plan reference of the subscription. */
-  plan: { id?: string; key?: string; version?: number }
-  /**
-   * A billing anchor is the fixed point in time that determines the subscription's
-   * recurring billing cycle. It affects when charges occur and how prorations are
-   * calculated. Common anchors:
-   *
-   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
-   * - Subscription anniversary (day customer signed up)
-   * - Custom date (customer-specified day)
-   *
-   * If not provided, the subscription will be created with the subscription's
-   * creation time as the billing anchor.
-   */
-  billingAnchor?: Date
-  /** Controls how custom-currency cost bases are selected for the subscription. */
-  costBasisMode: 'dynamic' | 'pinned'
-}
-
 /**
  * Unit conversion configuration.
  *
  * Transforms raw metered quantities into billing-ready units before pricing and
- * entitlement evaluation. Applied at the rate card level so the same feature can
- * be billed in different units across plans.
+ * entitlement evaluation. Stored with a resource's rating configuration so the
+ * same metered feature can be billed in different units across plans and charges.
  *
  * Examples:
  *
@@ -1996,6 +2312,59 @@ export interface UnitConfig {
   displayUnit?: string
 }
 
+/**
+ * Identity stores the details required to identify an entity for tax purposes in a
+ * specific country.
+ */
+export interface PartyTaxIdentity {
+  /** Normalized tax identification code shown on the original identity document. */
+  code?: string
+}
+
+/**
+ * Identity stores the details required to identify an entity for tax purposes in a
+ * specific country.
+ */
+export interface UpdateBillingPartyTaxIdentity {
+  /** Normalized tax identification code shown on the original identity document. */
+  code?: string
+}
+
+/**
+ * The set of state-transition actions available for an invoice in its current
+ * status.
+ *
+ * A field is present only when that action is permitted from the current state.
+ */
+export interface InvoiceAvailableActions {
+  /** Advance the invoice to the next workflow step. */
+  advance?: InvoiceAvailableActionDetails
+  /** Approve the invoice for issuance. */
+  approve?: InvoiceAvailableActionDetails
+  /** Delete the invoice. */
+  delete?: InvoiceAvailableActionDetails
+  /** Retry a failed workflow step. */
+  retry?: InvoiceAvailableActionDetails
+  /** Snapshot the current usage quantities. */
+  snapshotQuantities?: InvoiceAvailableActionDetails
+}
+
+/** Payment state of a charge realization. */
+export interface ChargeRealizationPayment {
+  /** The settlement status of the payment. */
+  status: 'authorized' | 'settled'
+}
+
+/** Remove a phase from the subscription. */
+export interface SubscriptionEditRemovePhase {
+  /** Discriminator for the remove-phase operation. */
+  type: 'remove_phase'
+  /** The key of the phase to remove. */
+  phaseKey: string
+  /** The direction to shift surrounding phases to fill the removed phase's span. */
+  shift: 'next' | 'prev'
+}
+
 /** Mapping of app types to tax codes. */
 export interface TaxCodeAppMapping {
   /** The app type that the tax code is associated with. */
@@ -2018,6 +2387,14 @@ export interface AppCapability {
   /** Name of the capability. */
   name: string
   /** Description of the capability. */
+  description: string
+}
+
+/** An action the operator should take on an installed app. */
+export interface AppAction {
+  /** The action type. */
+  type: 'reconcile_webhook_events'
+  /** Human readable explanation of why the action is needed. */
   description: string
 }
 
@@ -2104,24 +2481,6 @@ export interface UpdateAppExternalInvoicingRequest {
   enableIssuingSyncHook: boolean
 }
 
-/**
- * Identity stores the details required to identify an entity for tax purposes in a
- * specific country.
- */
-export interface PartyTaxIdentity {
-  /** Normalized tax identification code shown on the original identity document. */
-  code?: string
-}
-
-/**
- * Identity stores the details required to identify an entity for tax purposes in a
- * specific country.
- */
-export interface UpdateBillingPartyTaxIdentity {
-  /** Normalized tax identification code shown on the original identity document. */
-  code?: string
-}
-
 /** Invoice settings for a billing workflow. */
 export interface WorkflowInvoicingSettings {
   /** Whether to automatically issue the invoice after the draftPeriod has passed. */
@@ -2132,49 +2491,6 @@ export interface WorkflowInvoicingSettings {
   progressiveBilling: boolean
   /** Controls how subscription-ending shortened service periods are billed. */
   subscriptionEndProrationMode: 'bill_full_period' | 'bill_actual_period'
-}
-
-/**
- * A validation issue found during invoice processing.
- *
- * Converges on the same structure used by plan and subscription validation errors:
- * a machine-readable `code`, a human-readable `message`, optional structured
- * `attributes`, plus a `severity` and optional `field` path.
- */
-export interface InvoiceValidationIssue {
-  /** Machine-readable error code. */
-  code: string
-  /** Human-readable description of the error. */
-  message: string
-  /** Additional structured context. */
-  attributes?: Record<string, unknown>
-  /** Severity of the validation issue. */
-  severity: 'critical' | 'warning'
-  /**
-   * JSON path to the field that caused this validation issue, if applicable.
-   *
-   * For example: `lines/0/rate_card/price`.
-   */
-  field?: string
-}
-
-/**
- * The set of state-transition actions available for an invoice in its current
- * status.
- *
- * A field is present only when that action is permitted from the current state.
- */
-export interface InvoiceAvailableActions {
-  /** Advance the invoice to the next workflow step. */
-  advance?: InvoiceAvailableActionDetails
-  /** Approve the invoice for issuance. */
-  approve?: InvoiceAvailableActionDetails
-  /** Delete the invoice. */
-  delete?: InvoiceAvailableActionDetails
-  /** Retry a failed workflow step. */
-  retry?: InvoiceAvailableActionDetails
-  /** Snapshot the current usage quantities. */
-  snapshotQuantities?: InvoiceAvailableActionDetails
 }
 
 /** A monetary amount discount applied to an invoice line item. */
@@ -2263,20 +2579,192 @@ export interface EntitlementAccessQueryError {
   customer?: string
 }
 
+/**
+ * A notification channel delivers notification events, such as entitlement balance
+ * threshold crossings, to an external system. Today the only supported channel
+ * type is a webhook delivered via Svix.
+ */
+export interface NotificationChannel {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of the channel. Immutable after creation. */
+  type: 'webhook'
+  /**
+   * Whether the channel is disabled. Disabled channels do not receive notification
+   * events.
+   */
+  disabled: boolean
+  /** The URL that webhook notification events are delivered to. */
+  url: string
+  /**
+   * Custom HTTP headers to include on every webhook delivery request, keyed by
+   * header name.
+   */
+  customHeaders?: Record<string, string>
+  /**
+   * Secret used to sign outgoing webhook payloads so recipients can verify their
+   * authenticity. If omitted on create, a secret is generated automatically by the
+   * delivery provider. This is a sensitive credential returned in responses (unlike
+   * most secrets) specifically so clients can retrieve a server-generated value and
+   * verify webhook signatures; handle it with the same care as any other credential.
+   */
+  signingSecret?: string
+}
+
+/** NotificationChannel create request. */
+export interface CreateNotificationChannelRequest {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** The type of the channel. Immutable after creation. */
+  type: 'webhook'
+  /**
+   * Whether the channel is disabled. Disabled channels do not receive notification
+   * events.
+   */
+  disabled: boolean
+  /** The URL that webhook notification events are delivered to. */
+  url: string
+  /**
+   * Custom HTTP headers to include on every webhook delivery request, keyed by
+   * header name.
+   */
+  customHeaders?: Record<string, string>
+  /**
+   * Secret used to sign outgoing webhook payloads so recipients can verify their
+   * authenticity. If omitted on create, a secret is generated automatically by the
+   * delivery provider. This is a sensitive credential returned in responses (unlike
+   * most secrets) specifically so clients can retrieve a server-generated value and
+   * verify webhook signatures; handle it with the same care as any other credential.
+   */
+  signingSecret?: string
+}
+
+/**
+ * Request body for updating a notification channel. Updates replace the channel's
+ * mutable state rather than merging it: `type`, `name`, and `url` must always be
+ * provided, and omitting `disabled`, `labels`, or `custom_headers` resets them to
+ * their defaults (enabled, no labels, no custom headers). `signing_secret` is the
+ * one exception: omitting it keeps the channel's current signing secret instead of
+ * clearing the credential.
+ */
+export interface UpdateBillingNotificationChannelRequest {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /** The type of the channel. Immutable after creation. */
+  type: 'webhook'
+  /** The URL that webhook notification events are delivered to. */
+  url: string
+  labels?: Labels
+  /**
+   * Whether the channel is disabled. Disabled channels do not receive notification
+   * events.
+   */
+  disabled: boolean
+  /**
+   * Custom HTTP headers to include on every webhook delivery request, keyed by
+   * header name.
+   */
+  customHeaders?: Record<string, string>
+  /**
+   * Secret used to sign outgoing webhook payloads so recipients can verify their
+   * authenticity. If omitted on create, a secret is generated automatically by the
+   * delivery provider. This is a sensitive credential returned in responses (unlike
+   * most secrets) specifically so clients can retrieve a server-generated value and
+   * verify webhook signatures; handle it with the same care as any other credential.
+   */
+  signingSecret?: string
+}
+
+/**
+ * A balance threshold of a notification rule. Crossing it generates an
+ * `entitlements.balance.threshold` event.
+ */
+export interface NotificationBalanceThreshold {
+  /** What the threshold value is measured against. */
+  type: 'balance_value' | 'usage_percentage' | 'usage_value'
+  /** The threshold value. */
+  value: number
+}
+
+/** A reference to the notification rule that generated an event. */
+export interface NotificationRuleReference {
+  /** The unique identifier of the rule. */
+  id: string
+  /** The type of event the rule generates. */
+  type:
+    | 'entitlements.balance.threshold'
+    | 'entitlements.reset'
+    | 'invoice.created'
+    | 'invoice.updated'
+  /** The user-provided name of the rule. */
+  name: string
+}
+
+/** A single delivery attempt to a channel. */
+export interface NotificationEventDeliveryAttempt {
+  /** The delivery state reached by this attempt. */
+  state: 'success' | 'failed' | 'sending' | 'pending' | 'resending'
+  /** The response returned by the recipient. */
+  response: NotificationEventDeliveryAttemptResponse
+  /** When the attempt was made. */
+  timestamp: Date
+}
+
 /** App customer data. */
 export interface AppCustomerData {
-  /** Used if the customer has a linked Stripe app. */
-  stripe?: AppCustomerDataStripe
-  /** Used if the customer has a linked external invoicing app. */
-  externalInvoicing?: AppCustomerDataExternalInvoicing
+  /**
+   * Used if the customer has a linked Stripe app.
+   *
+   * Set to `null` to remove the Stripe data of the customer; omit to leave it
+   * unchanged.
+   */
+  stripe?: AppCustomerDataStripe | null
+  /**
+   * Used if the customer has a linked external invoicing app.
+   *
+   * Set to `null` to remove the external invoicing data of the customer; omit to
+   * leave it unchanged.
+   */
+  externalInvoicing?: AppCustomerDataExternalInvoicing | null
 }
 
 /** AppCustomerData upsert request. */
 export interface UpsertAppCustomerDataRequest {
-  /** Used if the customer has a linked Stripe app. */
-  stripe?: AppCustomerDataStripe
-  /** Used if the customer has a linked external invoicing app. */
-  externalInvoicing?: AppCustomerDataExternalInvoicing
+  /**
+   * Used if the customer has a linked Stripe app.
+   *
+   * Set to `null` to remove the Stripe data of the customer; omit to leave it
+   * unchanged.
+   */
+  stripe?: AppCustomerDataStripe | null
+  /**
+   * Used if the customer has a linked external invoicing app.
+   *
+   * Set to `null` to remove the external invoicing data of the customer; omit to
+   * leave it unchanged.
+   */
+  externalInvoicing?: AppCustomerDataExternalInvoicing | null
 }
 
 /**
@@ -2301,25 +2789,6 @@ export interface CreditAdjustment {
    */
   description?: string
   labels?: Labels
-}
-
-/** The credit balance by currency. */
-export interface CreditBalance {
-  currency: BillingCurrencyCode
-  /**
-   * Credits available after applying currently live charge impacts.
-   *
-   * Always zero for historical balance queries using the `timestamp` parameter
-   * because live charge impacts cannot be reconstructed historically.
-   */
-  live: string
-  /** Credits that have been booked on the ledger as of the balance timestamp. */
-  settled: string
-  /**
-   * Credits that have been granted but are not yet written to the ledger, or are
-   * written to the ledger with a future booked time.
-   */
-  pending: string
 }
 
 /** CreditAdjustment create request. */
@@ -2347,7 +2816,10 @@ export interface CreateCreditAdjustmentRequest {
 export interface ListCreditTransactionsParamsFilter {
   /** Filter credit transactions by type. */
   type?: 'funded' | 'consumed' | 'expired' | 'voided'
-  /** Filter credit transactions by currency. */
+  /**
+   * Filter credit transactions by currency code. Custom-currency rows retain their
+   * managed currency identifier.
+   */
   currency?: BillingCurrencyCode
   /**
    * Filter credit transactions by feature key. Omit to return all credit
@@ -2357,50 +2829,74 @@ export interface ListCreditTransactionsParamsFilter {
   featureKey?: StringFieldFilter
 }
 
-/**
- * A credit transaction represents a single credit movement on the customer's
- * balance.
- *
- * Credit transactions are immutable.
- */
-export interface CreditTransaction {
-  id: string
-  /**
-   * Display name of the resource.
-   *
-   * Between 1 and 256 characters.
-   */
-  name: string
-  /**
-   * Optional description of the resource.
-   *
-   * Maximum 1024 characters.
-   */
-  description?: string
-  labels?: Labels
-  /** An ISO-8601 timestamp representation of entity creation date. */
-  createdAt: Date
-  /** The date and time the transaction was booked. */
-  bookedAt: Date
-  /** The type of credit transaction. */
-  type: 'funded' | 'consumed' | 'expired' | 'voided'
-  /** Currency of the balance affected by the transaction. */
-  currency: BillingCurrencyCode
-  /**
-   * Signed amount of the credit movement. Positive values add balance, negative
-   * values reduce balance.
-   */
+/** Monetary amount in a fiat or custom currency. */
+export interface CurrencyAmount {
+  /** The amount as an arbitrary-precision decimal string. */
   amount: string
-  /** The available balance before and after the transaction. */
-  availableBalance: { before: string; after: string }
+  /** The fiat or custom currency code of the amount. */
+  currency: BillingCurrencyCode
+}
+
+/** Entitlement value result. */
+export interface EntitlementValueResult {
+  /** The type of the entitlement. */
+  type: 'metered' | 'static' | 'boolean'
+  /** The feature key being evaluated. */
+  featureKey: string
+  /**
+   * Whether the customer has access to the feature. Always true for `boolean` and
+   * `static` entitlements. Depends on balance for `metered` entitlements.
+   */
+  hasAccess: boolean
+  /**
+   * Only available for static entitlements. Config is the JSON parsable
+   * configuration of the entitlement. Useful to describe per customer configuration.
+   */
+  config?: string
+  /**
+   * Only available for metered entitlements. The balance details of the entitlement
+   * at the evaluation time. Requires the `value` expand.
+   */
+  value?: EntitlementAccessValue
+}
+
+/**
+ * Entitlement value looked up by feature key. A missing entitlement has no type
+ * and does not grant access.
+ */
+export interface EntitlementFeatureValueResult {
+  /** The feature key being evaluated. */
+  featureKey: string
+  /**
+   * Whether the customer has access to the feature. Always true for `boolean` and
+   * `static` entitlements. Depends on balance for `metered` entitlements.
+   */
+  hasAccess: boolean
+  /**
+   * Only available for static entitlements. Config is the JSON parsable
+   * configuration of the entitlement. Useful to describe per customer configuration.
+   */
+  config?: string
+  /**
+   * Only available for metered entitlements. The balance details of the entitlement
+   * at the evaluation time. Requires the `value` expand.
+   */
+  value?: EntitlementAccessValue
+  /**
+   * The type of the entitlement.
+   *
+   * If not provided, the feature has no entitlement defined (has access is always
+   * false in this case)
+   */
+  type?: 'metered' | 'static' | 'boolean'
 }
 
 /**
  * A price tier used in graduated and volume pricing.
  *
  * At least one price component (flat_price or unit_price) must be set. When
- * UnitConfig is present on the rate card, up_to_amount is expressed in converted
- * billing units.
+ * UnitConfig is present on the containing resource, up_to_amount is expressed in
+ * converted billing units.
  */
 export interface PriceTier {
   /**
@@ -2415,38 +2911,22 @@ export interface PriceTier {
 }
 
 /**
- * The totals of a change.
+ * The totals of a charge.
  *
- * RealTime is only expanded when the `real_time_usage` expand is used.
+ * `realtime` is only populated when the `real_time_usage` expand is used.
  */
 export interface ChargeTotals {
   /** The amount of the charge already booked to the internal accounting system. */
   booked: Totals
   /**
-   * The realtime amount of the charge.
+   * The realtime amount of the charge, i.e. the whole usage rated at the charge's
+   * price for its full service period, ignoring what has already been booked to a
+   * realization. This differs from the `usage` of a realization with type
+   * `outstanding`, which only covers the quantity not yet booked.
    *
-   * Requires the `realtime_usage` expand.
+   * Requires the `real_time_usage` expand.
    */
   realtime?: Totals
-}
-
-/**
- * A price tier used in graduated and volume pricing.
- *
- * At least one price component (flat_price or unit_price) must be set. When
- * UnitConfig is present on the rate card, up_to_amount is expressed in converted
- * billing units.
- */
-export interface UpdatePriceTier {
-  /**
-   * Up to and including this quantity will be contained in the tier. If undefined,
-   * the tier is open-ended (the last tier).
-   */
-  upToAmount?: string
-  /** The flat price component of the tier. Charged once when the tier is entered. */
-  flatPrice?: UpdatePriceFlat
-  /** The unit price component of the tier. Charged per billing unit within the tier. */
-  unitPrice?: UpdatePriceUnit
 }
 
 /**
@@ -2501,6 +2981,25 @@ export interface FeatureLlmUnitCost {
    * meter group-by filters with exact matches.
    */
   pricing?: FeatureLlmUnitCostPricing
+}
+
+/**
+ * A price tier used in graduated and volume pricing.
+ *
+ * At least one price component (flat_price or unit_price) must be set. When
+ * UnitConfig is present on the containing resource, up_to_amount is expressed in
+ * converted billing units.
+ */
+export interface UpdatePriceTier {
+  /**
+   * Up to and including this quantity will be contained in the tier. If undefined,
+   * the tier is open-ended (the last tier).
+   */
+  upToAmount?: string
+  /** The flat price component of the tier. Charged once when the tier is entered. */
+  flatPrice?: UpdatePriceFlat
+  /** The unit price component of the tier. Charged per billing unit within the tier. */
+  unitPrice?: UpdatePriceUnit
 }
 
 /**
@@ -2562,6 +3061,36 @@ export interface ListCustomersParamsFilter {
   billingProfileId?: UlidFieldFilter
 }
 
+/** Filter options for listing customer entitlements. */
+export interface ListCustomerEntitlementsParamsFilter {
+  /** Filter entitlements by feature ID. */
+  featureId?: UlidFieldFilter
+  /** Filter entitlements by feature key. */
+  featureKey?: StringFieldFilterExact
+  /** Filter entitlements by type (`metered`, `static` or `boolean`). */
+  type?: StringFieldFilterExact
+}
+
+/** Filter options for listing entitlements. */
+export interface ListEntitlementsParamsFilter {
+  /** Filter entitlements by feature ID. */
+  featureId?: UlidFieldFilter
+  /** Filter entitlements by feature key. */
+  featureKey?: StringFieldFilterExact
+  /** Filter entitlements by type (`metered`, `static` or `boolean`). */
+  type?: StringFieldFilterExact
+  /** Filter entitlements by customer ID. */
+  customerId?: UlidFieldFilter
+}
+
+/** Filter options for listing grants. */
+export interface ListGrantsParamsFilter {
+  /** Filter grants by the ID of the customer that owns the entitlement. */
+  customerId?: UlidFieldFilter
+  /** Filter grants by the ID of the entitlement's feature. */
+  featureId?: UlidFieldFilter
+}
+
 /** Filter options for listing subscriptions. */
 export interface ListSubscriptionsParamsFilter {
   id?: UlidFieldFilter
@@ -2569,6 +3098,20 @@ export interface ListSubscriptionsParamsFilter {
   status?: StringFieldFilterExact
   planId?: UlidFieldFilter
   planKey?: StringFieldFilterExact
+}
+
+/** Filter options for listing apps. */
+export interface ListAppsParamsFilter {
+  id?: UlidFieldFilter
+  name?: StringFieldFilter
+  type?: StringFieldFilterExact
+  status?: StringFieldFilterExact
+}
+
+/** Filter options for listing billing profiles. */
+export interface ListBillingProfilesParamsFilter {
+  id?: UlidFieldFilter
+  name?: StringFieldFilter
 }
 
 /** Filter options for listing features. */
@@ -2587,30 +3130,56 @@ export interface ListAddonsParamsFilter {
   currency?: StringFieldFilterExact
 }
 
-/**
- * Tax configuration for a credit grant.
- *
- * Tax configuration should be provided to ensure correct revenue recognition,
- * including for externally funded grants.
- */
-export interface CreateCreditGrantTaxConfig {
-  /** Tax behavior applied to the invoice line item. */
-  behavior?: 'inclusive' | 'exclusive'
-  /** Tax code applied to the invoice line item. */
-  taxCode?: CreateResourceReference
+/** Filter options for listing plan add-ons. */
+export interface ListPlanAddonsParamsFilter {
+  id?: UlidFieldFilter
+  planKey?: StringFieldFilter
+  addonId?: UlidFieldFilter
+  addonKey?: StringFieldFilter
+  addonName?: StringFieldFilter
+  planCurrency?: StringFieldFilter
 }
 
 /**
- * Tax configuration for a credit grant.
+ * Tax configuration for a billable resource.
  *
- * Tax configuration should be provided to ensure correct revenue recognition,
- * including for externally funded grants.
+ * Applies a tax code and tax behavior to the resulting invoice line items. When
+ * not set, the applicable default is used: the billing profile default tax
+ * configuration, then the organization default tax code.
  */
-export interface CreditGrantTaxConfig {
-  /** Tax behavior applied to the invoice line item. */
+export interface CreateTaxCodeConfig {
+  /**
+   * Tax behavior.
+   *
+   * This enum is used to specify whether tax is included in the price or excluded
+   * from the price. If not specified, the billing profile is used to determine the
+   * tax behavior. If not specified in the billing profile, the provider's default
+   * behavior is used.
+   */
   behavior?: 'inclusive' | 'exclusive'
   /** Tax code applied to the invoice line item. */
-  taxCode?: TaxCodeReference
+  code?: CreateResourceReference
+}
+
+/**
+ * Tax configuration for a billable resource.
+ *
+ * Applies a tax code and tax behavior to the resulting invoice line items. When
+ * not set, the applicable default is used: the billing profile default tax
+ * configuration, then the organization default tax code.
+ */
+export interface TaxCodeConfig {
+  /**
+   * Tax behavior.
+   *
+   * This enum is used to specify whether tax is included in the price or excluded
+   * from the price. If not specified, the billing profile is used to determine the
+   * tax behavior. If not specified in the billing profile, the provider's default
+   * behavior is used.
+   */
+  behavior?: 'inclusive' | 'exclusive'
+  /** Tax code applied to the invoice line item. */
+  code?: TaxCodeReference
 }
 
 /** Set of provider specific tax configs. */
@@ -2638,12 +3207,6 @@ export interface TaxConfig {
   taxCode?: TaxCodeReference
 }
 
-/** The tax config of the rate card. */
-export interface RateCardTaxConfig {
-  behavior?: 'inclusive' | 'exclusive'
-  code: TaxCodeReference
-}
-
 /**
  * Organization-level default tax code references.
  *
@@ -2669,51 +3232,88 @@ export interface UpdateOrganizationDefaultTaxCodesRequest {
   creditGrantTaxCode?: TaxCodeReference
 }
 
-/** Subscription. */
-export interface Subscription {
+/** The credit balance by currency. */
+export interface CreditBalance {
+  currency: BillingCurrencyCode
+  /** Managed currency reference. Present only for custom currencies. */
+  customCurrency?: CurrencyCustomReference
+  /**
+   * Credits available after applying currently live charge impacts.
+   *
+   * Always zero for historical balance queries using the `timestamp` parameter
+   * because live charge impacts cannot be reconstructed historically.
+   */
+  live: string
+  /** Credits that have been booked on the ledger as of the balance timestamp. */
+  settled: string
+  /**
+   * Credits that have been granted but are not yet written to the ledger, or are
+   * written to the ledger with a future booked time.
+   */
+  pending: string
+}
+
+/**
+ * A credit transaction represents a single credit movement on the customer's
+ * balance.
+ *
+ * Credit transactions are immutable.
+ */
+export interface CreditTransaction {
   id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
   labels?: Labels
   /** An ISO-8601 timestamp representation of entity creation date. */
   createdAt: Date
-  /** An ISO-8601 timestamp representation of entity last update date. */
-  updatedAt: Date
-  /** An ISO-8601 timestamp representation of entity deletion date. */
-  deletedAt?: Date
-  /** The customer ID of the subscription. */
-  customerId: string
-  /** The plan ID of the subscription. Set if subscription is created from a plan. */
-  planId?: string
-  /** The fiat currency in which the subscription is invoiced. */
-  invoiceCurrency: string
+  /** The date and time the transaction was booked. */
+  bookedAt: Date
+  /** The type of credit transaction. */
+  type: 'funded' | 'consumed' | 'expired' | 'voided'
+  /** Currency of the balance affected by the transaction. */
+  currency: BillingCurrencyCode
+  /** Managed currency reference. Present only for custom currencies. */
+  customCurrency?: CurrencyCustomReference
   /**
-   * Controls whether custom-currency cost bases are resolved dynamically or pinned
-   * when their currency pair is introduced to the subscription.
+   * Signed amount of the credit movement. Positive values add balance, negative
+   * values reduce balance.
    */
-  costBasisMode: 'dynamic' | 'pinned'
-  /** Cost bases pinned to custom-currency pairs for this subscription. */
-  costBasisPins: SubscriptionCostBasisPin[]
-  /**
-   * A billing anchor is the fixed point in time that determines the subscription's
-   * recurring billing cycle. It affects when charges occur and how prorations are
-   * calculated. Common anchors:
-   *
-   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
-   * - Subscription anniversary (day customer signed up)
-   * - Custom date (customer-specified day)
-   */
-  billingAnchor: Date
-  /** The status of the subscription. */
-  status: 'active' | 'inactive' | 'canceled' | 'scheduled'
-  /**
-   * Settlement mode for billing.
-   *
-   * Values:
-   *
-   * - `credit_then_invoice`: Credits are applied first, then any remainder is
-   * invoiced.
-   * - `credit_only`: Usage is settled exclusively against credits.
-   */
-  settlementMode?: 'credit_then_invoice' | 'credit_only'
+  amount: string
+  /** The available balance before and after the transaction. */
+  availableBalance: { before: string; after: string }
+}
+
+/**
+ * BillingInvoiceWorkflowAppsReferences represents the references (id) to the apps
+ * used by a billing profile
+ */
+export interface InvoiceWorkflowAppsReferences {
+  /** The tax app used for this workflow */
+  tax: AppReference
+  /** The invoicing app used for this workflow */
+  invoicing: AppReference
+  /** The payment app used for this workflow */
+  payment: AppReference
+}
+
+/** References to the applications used by a billing profile. */
+export interface ProfileAppReferences {
+  /** The tax app used for this workflow. */
+  tax: AppReference
+  /** The invoicing app used for this workflow. */
+  invoicing: AppReference
+  /** The payment app used for this workflow. */
+  payment: AppReference
 }
 
 /**
@@ -2782,33 +3382,196 @@ export interface CreatePlanAddonRequest {
   maxQuantity?: number
 }
 
-/** References to the applications used by a billing profile. */
-export interface ProfileAppReferences {
-  /** The tax app used for this workflow. */
-  tax: AppReference
-  /** The invoicing app used for this workflow. */
-  invoicing: AppReference
-  /** The payment app used for this workflow. */
-  payment: AppReference
-}
-
 /**
- * BillingInvoiceWorkflowAppsReferences represents the references (id) to the apps
- * used by a billing profile
+ * Tax configuration for a billable resource.
+ *
+ * Applies a tax code and tax behavior to the resulting invoice line items. When
+ * not set, the applicable default is used: the billing profile default tax
+ * configuration, then the organization default tax code.
  */
-export interface InvoiceWorkflowAppsReferences {
-  /** The tax app used for this workflow */
-  tax: AppReference
-  /** The invoicing app used for this workflow */
-  invoicing: AppReference
-  /** The payment app used for this workflow */
-  payment: AppReference
+export interface UpdateTaxCodeConfig {
+  /**
+   * Tax behavior.
+   *
+   * This enum is used to specify whether tax is included in the price or excluded
+   * from the price. If not specified, the billing profile is used to determine the
+   * tax behavior. If not specified in the billing profile, the provider's default
+   * behavior is used.
+   */
+  behavior?: 'inclusive' | 'exclusive'
+  /** Tax code applied to the invoice line item. */
+  code?: UpdateResourceReference
 }
 
-/** The tax config of the rate card. */
-export interface UpdateRateCardTaxConfig {
-  behavior?: 'inclusive' | 'exclusive'
-  code: UpdateResourceReference
+/** A rule that generates an event when an entitlement usage period is reset. */
+export interface NotificationRuleEntitlementReset {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'entitlements.reset'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+  /**
+   * The features the rule applies to. When omitted, the rule applies to every
+   * feature.
+   */
+  features?: FeatureReference[]
+}
+
+/** A rule that generates an event when an invoice is created. */
+export interface NotificationRuleInvoiceCreated {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'invoice.created'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+}
+
+/** A rule that generates an event when an invoice is updated. */
+export interface NotificationRuleInvoiceUpdated {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'invoice.updated'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+}
+
+/** Request body for an entitlement reset rule. */
+export interface NotificationRuleEntitlementResetRequest {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'entitlements.reset'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+  /**
+   * The features the rule applies to. When omitted, the rule applies to every
+   * feature.
+   */
+  features?: FeatureReference[]
+}
+
+/** Request body for an invoice created rule. */
+export interface NotificationRuleInvoiceCreatedRequest {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'invoice.created'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+}
+
+/** Request body for an invoice updated rule. */
+export interface NotificationRuleInvoiceUpdatedRequest {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'invoice.updated'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+}
+
+/** The invoice an invoice notification event refers to. */
+export interface NotificationEventInvoiceData {
+  /** The invoice the event was generated for. */
+  invoice: NotificationEventInvoiceReference
+  /** The identifier of the customer the invoice was issued to. */
+  customerId?: string
+  /** The currency the invoice is denominated in. */
+  currency: string
+  /** The status of the invoice at the time the event was generated. */
+  status: string
+  /** The invoice total, including taxes, at the time the event was generated. */
+  total: string
 }
 
 /** Filter options for listing ingested events. */
@@ -2831,6 +3594,31 @@ export interface ListEventsParamsFilter {
   storedAt?: DateTimeFieldFilter
 }
 
+/** Filter options for listing charges. */
+export interface ListCustomerChargesParamsFilter {
+  /**
+   * Filter charges by status.
+   *
+   * Supported statuses are:
+   *
+   * - `created`
+   * - `active`
+   * - `final`
+   * - `deleted`
+   *
+   * If omitted, all statuses are returned except for `deleted`.
+   */
+  status?: StringFieldFilterExact
+  /** Filter charges by the ID of their associated feature. */
+  featureId?: UlidFieldFilter
+  /** Filter charges by the key of their associated feature. */
+  featureKey?: StringFieldFilterExact
+  /** Filter charges by the start of their service period. */
+  servicePeriodFrom?: DateTimeFieldFilter
+  /** Filter charges by the end of their service period. */
+  servicePeriodTo?: DateTimeFieldFilter
+}
+
 /** Filter options for listing invoices. */
 export interface ListInvoicesParamsFilter {
   /** Filter by invoice status. */
@@ -2845,6 +3633,96 @@ export interface ListInvoicesParamsFilter {
   createdAt?: DateTimeFieldFilter
 }
 
+/** Filter options for listing charges across customers. */
+export interface ListChargesParamsFilter {
+  /**
+   * Filter charges by status.
+   *
+   * Supported statuses are:
+   *
+   * - `created`
+   * - `active`
+   * - `final`
+   * - `deleted`
+   *
+   * If omitted, all statuses are returned except for `deleted`.
+   */
+  status?: StringFieldFilterExact
+  /** Filter charges by the ID of their associated feature. */
+  featureId?: UlidFieldFilter
+  /** Filter charges by the key of their associated feature. */
+  featureKey?: StringFieldFilterExact
+  /** Filter charges by the start of their service period. */
+  servicePeriodFrom?: DateTimeFieldFilter
+  /** Filter charges by the end of their service period. */
+  servicePeriodTo?: DateTimeFieldFilter
+  /** Filter charges by the ID of their customer. */
+  customerId?: UlidFieldFilter
+}
+
+/** Filter options for listing notification channels. */
+export interface ListNotificationChannelsParamsFilter {
+  id?: UlidFieldFilter
+  name?: StringFieldFilter
+  type?: StringFieldFilterExact
+  disabled?: BooleanFieldFilter
+  createdAt?: DateTimeFieldFilter
+  updatedAt?: DateTimeFieldFilter
+}
+
+/** Filter options for listing notification rules. */
+export interface ListNotificationRulesParamsFilter {
+  id?: UlidFieldFilter
+  name?: StringFieldFilter
+  type?: StringFieldFilterExact
+  disabled?: BooleanFieldFilter
+  createdAt?: DateTimeFieldFilter
+  updatedAt?: DateTimeFieldFilter
+  /**
+   * Filter by an assigned channel. Matches rules that deliver to at least one of the
+   * given channels. Only `eq` and `oeq` are supported.
+   */
+  channelId?: UlidFieldFilter
+}
+
+/** Filter options for listing notification events. */
+export interface ListNotificationEventsParamsFilter {
+  id?: UlidFieldFilter
+  type?: StringFieldFilterExact
+  createdAt?: DateTimeFieldFilter
+  ruleId?: UlidFieldFilter
+  /**
+   * Filter by a channel of the generating rule. Matches events whose rule targets at
+   * least one of the given channels. Only `eq` and `oeq` are supported.
+   */
+  channelId?: UlidFieldFilter
+  /**
+   * Filter by delivery state. Matches events where delivery to at least one channel
+   * is in one of the given states. Only `eq` and `oeq` are supported.
+   */
+  deliveryStatus?: StringFieldFilterExact
+  /**
+   * Filter by the key of the subject the event refers to. Events without a subject
+   * never match, not even with `neq`.
+   */
+  subjectKey?: StringFieldFilterExact
+  /**
+   * Filter by the id of the subject the event refers to. Events without a subject
+   * never match, not even with `neq`.
+   */
+  subjectId?: UlidFieldFilter
+  /**
+   * Filter by the key of the feature the event refers to. Events without a feature
+   * never match, not even with `neq`.
+   */
+  featureKey?: StringFieldFilterExact
+  /**
+   * Filter by the id of the feature the event refers to. Events without a feature
+   * never match, not even with `neq`.
+   */
+  featureId?: UlidFieldFilter
+}
+
 /** Resource filters. */
 export interface ResourceFilters {
   name?: StringFieldFilter
@@ -2857,7 +3735,7 @@ export interface ResourceFilters {
 
 /** Field filters with all supported types. */
 export interface FieldFilters {
-  boolean?: boolean | { eq: boolean }
+  boolean?: BooleanFieldFilter
   numeric?:
     | number
     | {
@@ -2898,6 +3776,92 @@ export interface MeterQueryResult {
   to?: Date
   /** The usage data. If no data is available, an empty array is returned. */
   data: MeterQueryRow[]
+}
+
+/** Usage and balance of a single history window. */
+export interface EntitlementHistoryWindow {
+  /** The period the window covers. */
+  period: ClosedPeriod
+  /** The usage recorded in the window. */
+  usage: string
+  /** The entitlement balance at the start of the window. */
+  balanceAtStart: string
+}
+
+/** A period in which grants were consumed in a fixed order. */
+export interface EntitlementBurndownSegment {
+  /** The period the segment covers. */
+  period: ClosedPeriod
+  /** The usage recorded in the segment. */
+  usage: string
+  /** The usage in the segment not covered by any grant. */
+  overage: string
+  /** The entitlement balance at the start and at the end of the segment. */
+  balance: EntitlementBurndownBalance
+  /**
+   * The balance of each active grant at the start and at the end of the segment,
+   * keyed by grant ID.
+   */
+  grantBalances: EntitlementBurndownGrantBalances
+  /** The grants consumed in the segment and the usage taken from each. */
+  grantUsages: EntitlementGrantUsage[]
+}
+
+/** A detailed line produced by a flat fee charge's realization run. */
+export interface ChargeRealizationDetailedLineFlatFee {
+  id: string
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of the charge the realization belongs to. */
+  type: 'flat_fee'
+  /** The service period covered by this detailed line. */
+  servicePeriod: ClosedPeriod
+  /** Aggregated financial totals for the detailed line. */
+  totals: Totals
+  /** The cost category of this detailed line. */
+  category: 'regular' | 'commitment'
+  /** Credits applied to this detailed line. */
+  creditsApplied?: ChargeRealizationDetailedLineCreditApplied[]
+  /** The unit price of the detailed line. */
+  unitPrice: string
+  /** The amount discounts applied to the detailed line. */
+  amountDiscounts: ChargeRealizationAmountDiscount[]
+}
+
+/** A detailed line produced by a usage-based charge's realization run. */
+export interface ChargeRealizationDetailedLineUsageBased {
+  id: string
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of the charge the realization belongs to. */
+  type: 'usage_based'
+  /** The service period covered by this detailed line. */
+  servicePeriod: ClosedPeriod
+  /** Aggregated financial totals for the detailed line. */
+  totals: Totals
+  /** The cost category of this detailed line. */
+  category: 'regular' | 'commitment'
+  /** Credits applied to this detailed line. */
+  creditsApplied?: ChargeRealizationDetailedLineCreditApplied[]
+  /** The unit price of the detailed line. */
+  unitPrice: string
+  /** The amount discounts applied to the detailed line. */
+  amountDiscounts: ChargeRealizationAmountDiscount[]
+  /** The quantity of the detailed line. */
+  quantity: string
+  /**
+   * The ID of a prior realization run this detailed line corrects. Only set if the
+   * detailed line's totals are negative.
+   */
+  correctsRunId?: string
 }
 
 /** Describes custom currency. */
@@ -3144,10 +4108,262 @@ export interface AppStripeCreateCheckoutSessionConsentCollection {
   termsOfService?: 'none' | 'required'
 }
 
-/** List customer entitlement access response data. */
-export interface ListCustomerEntitlementAccessResponseData {
-  /** The list of entitlement access results. */
-  data: EntitlementAccessResult[]
+/** A grant to issue for a metered entitlement. */
+export interface EntitlementGrantCreateRequest {
+  /** The amount to grant, in the feature's unit. Must be positive. */
+  amount: string
+  /**
+   * The priority of the grant. Lower values have higher priority. Grants are
+   * consumed in priority order, then by closest expiration, then by earliest
+   * creation.
+   */
+  priority?: number
+  /**
+   * The time the grant becomes effective and the anchor for recurring grants. The
+   * value is truncated to the start of the minute.
+   */
+  effectiveAt: Date
+  /**
+   * The duration after which the grant expires, counted from `effective_at`. Only
+   * single-unit durations are accepted, such as `PT12H`, `P7D`, `P2W`, `P3M`, or
+   * `P1Y`. If omitted, the grant never expires.
+   */
+  expiresAfter?: string
+  /**
+   * The maximum balance carried over at reset. The balance after a reset is
+   * `MIN(max_rollover_amount, MAX(balance_before_reset, min_rollover_amount))`.
+   * Defaults to `amount`.
+   */
+  maxRolloverAmount?: string
+  /**
+   * The minimum balance carried over at reset. The balance after a reset is
+   * `MIN(max_rollover_amount, MAX(balance_before_reset, min_rollover_amount))`.
+   * Defaults to `0`.
+   */
+  minRolloverAmount?: string
+  labels?: Labels
+  /**
+   * The recurrence of the grant. When set, the amount is issued again every
+   * interval. The anchor defaults to `effective_at`.
+   */
+  recurrence?: RecurringPeriodInput
+}
+
+/** Static entitlement create request. */
+export interface CreateEntitlementStaticRequest {
+  /** The type of the entitlement. */
+  type: 'static'
+  /** The feature the customer is entitled to use. */
+  feature: FeatureReference
+  labels?: Labels
+  /**
+   * The entitlement configuration as a JSON value. Returned when checking
+   * entitlement access.
+   */
+  config: unknown
+  /**
+   * The usage period of the entitlement. The anchor defaults to the entitlement
+   * creation time.
+   */
+  usagePeriod?: RecurringPeriodInput
+}
+
+/** Boolean entitlement create request. */
+export interface CreateEntitlementBooleanRequest {
+  /** The type of the entitlement. */
+  type: 'boolean'
+  /** The feature the customer is entitled to use. */
+  feature: FeatureReference
+  labels?: Labels
+  /**
+   * The usage period of the entitlement. The anchor defaults to the entitlement
+   * creation time.
+   */
+  usagePeriod?: RecurringPeriodInput
+}
+
+/**
+ * A metered entitlement grants a usage allowance for a feature. Access is
+ * determined by the balance: the allowance provided by grants is burnt down by
+ * usage.
+ */
+export interface EntitlementMetered {
+  id: string
+  /** The type of the entitlement. */
+  type: 'metered'
+  /** The feature the customer is entitled to use. */
+  feature: FeatureReference
+  /** The customer the entitlement belongs to. */
+  customer: CustomerReference
+  labels?: Labels
+  /** The time from which the entitlement is active. */
+  activeFrom: Date
+  /**
+   * The time until which the entitlement is active. If not set, the entitlement is
+   * active until deleted.
+   */
+  activeTo?: Date
+  /** The time the entitlement was created. */
+  createdAt: Date
+  /** The time the entitlement was last updated. */
+  updatedAt: Date
+  /** The time the entitlement was deleted. */
+  deletedAt?: Date
+  /**
+   * The usage period of the entitlement. The balance resets at the start of every
+   * period.
+   */
+  usagePeriod: RecurringPeriod
+  /** The current usage period of the entitlement. */
+  currentUsagePeriod: ClosedPeriod
+  /**
+   * If true, the customer keeps access to the feature after the balance is
+   * exhausted.
+   */
+  isSoftLimit: boolean
+  /** Usage granted automatically after each reset. Cannot be combined with `grants`. */
+  issue?: EntitlementIssueAfterReset
+  /** The amount granted automatically after each reset. */
+  issueAfterReset?: string
+  /** The priority of the grant created after each reset. */
+  issueAfterResetPriority: number
+  /** If true, the overage is preserved at reset. If false, the usage is reset to 0. */
+  preserveOverageAtReset: boolean
+  /** The time from which usage is measured. */
+  measureUsageFrom: Date
+  /** The time of the last reset. */
+  lastReset: Date
+}
+
+/** A static entitlement grants access to a feature together with a configuration. */
+export interface EntitlementStatic {
+  id: string
+  /** The type of the entitlement. */
+  type: 'static'
+  /** The feature the customer is entitled to use. */
+  feature: FeatureReference
+  /** The customer the entitlement belongs to. */
+  customer: CustomerReference
+  labels?: Labels
+  /** The usage period of the entitlement. */
+  usagePeriod?: RecurringPeriod
+  /** The current usage period of the entitlement. */
+  currentUsagePeriod?: ClosedPeriod
+  /** The time from which the entitlement is active. */
+  activeFrom: Date
+  /**
+   * The time until which the entitlement is active. If not set, the entitlement is
+   * active until deleted.
+   */
+  activeTo?: Date
+  /** The time the entitlement was created. */
+  createdAt: Date
+  /** The time the entitlement was last updated. */
+  updatedAt: Date
+  /** The time the entitlement was deleted. */
+  deletedAt?: Date
+  /**
+   * The entitlement configuration as a JSON value. Returned when checking
+   * entitlement access.
+   */
+  config: unknown
+}
+
+/** A boolean entitlement grants access to a feature. */
+export interface EntitlementBoolean {
+  id: string
+  /** The type of the entitlement. */
+  type: 'boolean'
+  /** The feature the customer is entitled to use. */
+  feature: FeatureReference
+  /** The customer the entitlement belongs to. */
+  customer: CustomerReference
+  labels?: Labels
+  /** The usage period of the entitlement. */
+  usagePeriod?: RecurringPeriod
+  /** The current usage period of the entitlement. */
+  currentUsagePeriod?: ClosedPeriod
+  /** The time from which the entitlement is active. */
+  activeFrom: Date
+  /**
+   * The time until which the entitlement is active. If not set, the entitlement is
+   * active until deleted.
+   */
+  activeTo?: Date
+  /** The time the entitlement was created. */
+  createdAt: Date
+  /** The time the entitlement was last updated. */
+  updatedAt: Date
+  /** The time the entitlement was deleted. */
+  deletedAt?: Date
+}
+
+/**
+ * A grant issued for a metered entitlement. Each grant adds its amount to the
+ * entitlement's balance from its effective time until it expires, and usage is
+ * deducted from the grants in priority order.
+ *
+ * Grants are immutable, so the balance is deterministic regardless of when it is
+ * queried. Deleting a grant ends it at the time of the deletion.
+ */
+export interface EntitlementGrant {
+  id: string
+  /** The ID of the entitlement the grant belongs to. */
+  entitlementId: string
+  /** The ID of the customer the grant belongs to. */
+  customerId?: string
+  /** The granted amount, in the feature's unit. */
+  amount: string
+  /**
+   * The priority of the grant. Lower values are consumed first: a grant with
+   * priority 1 is consumed before one with priority 2. Among equal priorities, the
+   * grant closest to expiration is consumed first, then the earliest created.
+   */
+  priority: number
+  /** The time the grant takes effect. */
+  effectiveAt: Date
+  /**
+   * The duration after which the grant expires, counted from `effective_at`. Always
+   * a single-unit duration (for example `PT12H`, `P7D`, `P2W`, `P3M`, `P1Y`). Absent
+   * when the grant never expires.
+   */
+  expiresAfter?: string
+  /**
+   * The time the grant expires, calculated from `effective_at` and `expires_after`.
+   * The grant is no longer in effect from this time. Absent when the grant never
+   * expires.
+   */
+  expiresAt?: Date
+  /**
+   * The maximum balance the grant carries over at reset. The balance after a reset
+   * is `MIN(max_rollover_amount, MAX(balance_before_reset, min_rollover_amount))`.
+   */
+  maxRolloverAmount: string
+  /**
+   * The minimum balance the grant carries over at reset. The balance after a reset
+   * is `MIN(max_rollover_amount, MAX(balance_before_reset, min_rollover_amount))`.
+   */
+  minRolloverAmount: string
+  /**
+   * The recurrence of the grant. When set, the grant amount is re-issued every
+   * interval from the anchor, which defaults to `effective_at`. Absent for
+   * non-recurring grants.
+   */
+  recurrence?: RecurringPeriod
+  /** The next time the grant recurs. Absent for non-recurring grants. */
+  nextRecurrence?: Date
+  /**
+   * The time the grant was voided. A voided grant is no longer in effect from this
+   * time.
+   */
+  voidedAt?: Date
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
 }
 
 /**
@@ -3162,55 +4378,111 @@ export interface WorkflowCollectionAlignmentAnchored {
 }
 
 /**
- * Flat fee intent fields from the system lifecycle controller shadowed by a manual
- * override.
+ * Add a new phase to the subscription. The phase is created without items; use
+ * add-item operations to populate it.
  */
-export interface ChargeFlatFeeSystemIntent {
+export interface SubscriptionEditAddPhase {
+  /** Discriminator for the add-phase operation. */
+  type: 'add_phase'
+  /** The phase to add. */
+  phase: SubscriptionPhaseCreate
+}
+
+/** Filters for the credit grant. */
+export interface CreateCreditGrantFilters {
   /**
-   * Display name of the resource.
-   *
-   * Between 1 and 256 characters.
+   * Limit the credit grant to specific features. If no features are specified, the
+   * credit grant can be used for any feature.
+   */
+  features?: string[]
+  /**
+   * Limit credits to charges from these plans. Entries are alternatives; when
+   * features are also specified, both dimensions must match. Omission or an empty
+   * list leaves plans unrestricted.
+   */
+  plans?: CreateCreditGrantPlanFilter[]
+}
+
+/** Filters for the credit grant. */
+export interface CreditGrantFilters {
+  /**
+   * Limit the credit grant to specific features. If no features are specified, the
+   * credit grant can be used for any feature.
+   */
+  features?: string[]
+  /**
+   * Limit credits to charges from these plans. Entries are alternatives; when
+   * features are also specified, both dimensions must match. Omission or an empty
+   * list leaves plans unrestricted.
+   */
+  plans?: CreditGrantPlanFilter[]
+}
+
+/** Subscription fields without phases or the current billing period. */
+export interface SubscriptionBase {
+  id: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /**
+   * Display name of the subscription. Defaults to the plan name when the
+   * subscription is created from a plan.
    */
   name: string
-  /**
-   * Optional description of the resource.
-   *
-   * Maximum 1024 characters.
-   */
+  /** Optional description of the subscription. */
   description?: string
-  labels?: Labels
-  /** The timestamp when the charge is intended to be invoiced. */
-  invoiceAt: Date
-  /** The effective service period covered by the charge. */
-  servicePeriod: ClosedPeriod
-  /** The full, unprorated service period of the charge. */
-  fullServicePeriod: ClosedPeriod
-  /** The billing period the charge belongs to. */
-  billingPeriod: ClosedPeriod
-  /** Payment term of the flat fee charge. */
-  paymentTerm: PricePaymentTerm
-  /** The discounts applied to the charge. */
-  discounts?: ChargeFlatFeeDiscounts
-  /** The proration configuration of the charge. */
-  prorationConfiguration: RateCardProrationConfiguration
-  /** The amount before proration of the system lifecycle controller flat fee intent. */
-  amountBeforeProration: CurrencyAmount
   /**
-   * The timestamp when the system lifecycle controller intent was deleted. The
-   * effective charge can remain visible while a manual override is active.
+   * An ISO-8601 timestamp representation of when the subscription became (or will
+   * become) active.
    */
-  deletedAt?: Date
-}
-
-/** Request for canceling a subscription. */
-export interface SubscriptionCancel {
-  /** If not provided the subscription is canceled immediately. */
-  timing: SubscriptionEditTiming
-}
-
-/** Request for changing a subscription. */
-export interface SubscriptionChange {
-  labels?: Labels
+  activeFrom: Date
+  /**
+   * An ISO-8601 timestamp representation of when the subscription stops being
+   * active. Open-ended when not set.
+   */
+  activeTo?: Date
+  /** The customer ID of the subscription. */
+  customerId: string
+  /** The plan ID of the subscription. Set if subscription is created from a plan. */
+  planId?: string
+  /**
+   * The plan the subscription was created from, if any. Includes the plan key and
+   * version so clients can resolve the exact plan revision.
+   */
+  plan?: SubscriptionPlanReference
+  /** The fiat currency in which the subscription is invoiced. */
+  invoiceCurrency: string
+  /**
+   * Controls whether custom-currency cost bases are resolved dynamically or pinned
+   * when their currency pair is introduced to the subscription.
+   */
+  costBasisMode: 'dynamic' | 'pinned'
+  /** Cost bases pinned to custom-currency pairs for this subscription. */
+  costBasisPins: SubscriptionCostBasisPin[]
+  /**
+   * The billing cadence of the subscription in ISO-8601 duration format. Defines how
+   * often the customer is billed. Examples: `P1M` (monthly), `P3M` (quarterly),
+   * `P1Y` (annually).
+   */
+  billingCadence: string
+  /** The pro-rating configuration of the subscription. */
+  proRatingConfig?: SubscriptionProRatingConfig
+  /**
+   * A billing anchor is the fixed point in time that determines the subscription's
+   * recurring billing cycle. It affects when charges occur and how prorations are
+   * calculated. Common anchors:
+   *
+   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
+   * - Subscription anniversary (day customer signed up)
+   * - Custom date (customer-specified day)
+   */
+  billingAnchor: Date
+  /** The status of the subscription. */
+  status: 'active' | 'inactive' | 'canceled' | 'scheduled'
   /**
    * Settlement mode for billing.
    *
@@ -3221,31 +4493,66 @@ export interface SubscriptionChange {
    * - `credit_only`: Usage is settled exclusively against credits.
    */
   settlementMode?: 'credit_then_invoice' | 'credit_only'
-  /** The customer to create the subscription for. */
-  customer: { id?: string; key?: string }
-  /** The plan reference of the subscription. */
-  plan: { id?: string; key?: string; version?: number }
+}
+
+/** Detailed status information for a standard invoice. */
+export interface InvoiceStatusDetails {
+  /** Whether the invoice is immutable (i.e. cannot be modified or deleted). */
+  immutable: boolean
+  /** Whether the invoice is in a failed state. */
+  failed: boolean
   /**
-   * A billing anchor is the fixed point in time that determines the subscription's
-   * recurring billing cycle. It affects when charges occur and how prorations are
-   * calculated. Common anchors:
-   *
-   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
-   * - Subscription anniversary (day customer signed up)
-   * - Custom date (customer-specified day)
-   *
-   * If not provided, the subscription will be created with the subscription's
-   * creation time as the billing anchor.
+   * Fine-grained internal status string providing additional workflow detail beyond
+   * the top-level status enum.
    */
-  billingAnchor?: Date
-  /** Controls how custom-currency cost bases are selected for the subscription. */
-  costBasisMode: 'dynamic' | 'pinned'
+  extendedStatus: string
+  /** The set of state-transition actions currently available for this invoice. */
+  availableActions: InvoiceAvailableActions
+}
+
+/**
+ * Invoice-level snapshot of the workflow configuration.
+ *
+ * Contains only the settings that are meaningful for an already-created invoice:
+ * invoicing behaviour and payment settings. Collection alignment and tax policy
+ * are gather-time / profile-wide concerns and are not included.
+ */
+export interface InvoiceWorkflow {
+  /** Invoicing settings for this invoice. */
+  invoicing?: InvoiceWorkflowInvoicingSettings
+  /** Payment settings for this invoice. */
+  payment?: WorkflowPaymentSettings
+}
+
+/** Request for canceling a subscription. */
+export interface SubscriptionCancel {
+  /** If not provided the subscription is canceled immediately. */
+  timing: SubscriptionEditTiming
+}
+
+/** Request for migrating to a later version of the subscription's current plan. */
+export interface SubscriptionMigrate {
   /**
-   * Timing configuration for the change, when the change should take effect. For
-   * changing a subscription, the accepted values depend on the subscription
-   * configuration.
+   * When the migration takes effect: immediately (default), at the next billing
+   * cycle, or at an explicit billing-aligned timestamp. In-place migrations may
+   * target a later phase when the phase timelines match. The target plan reference
+   * is saved now; changed items take effect at the requested time.
    */
   timing: SubscriptionEditTiming
+  /** A strictly later version of the current plan. Omit to use its latest version. */
+  targetVersion?: number
+  /**
+   * Explicitly replace the subscription, starting in this target plan phase. Always
+   * selects replacement, even when the phase matches the current one. Replacement
+   * may produce billing adjustments and does not transfer addons.
+   */
+  startingPhase?: string
+  /**
+   * Providing a different billing anchor explicitly replaces the subscription. The
+   * supplied anchor is preserved and may be before or after the replacement's start
+   * time. Omit to retain the existing anchor.
+   */
+  billingAnchor?: Date
 }
 
 /** SubscriptionAddon create request. */
@@ -3258,6 +4565,23 @@ export interface CreateSubscriptionAddonRequest {
   /**
    * The timing of the operation. After the create or update, a new entry will be
    * created in the timeline.
+   */
+  timing: SubscriptionEditTiming
+}
+
+/**
+ * Request for updating a subscription add-on. Only the quantity can be changed;
+ * the timing controls when the new quantity takes effect.
+ */
+export interface SubscriptionAddonUpdate {
+  /**
+   * The new quantity of the add-on. Must be at least 0. A quantity of 0 removes the
+   * add-on from the point the timing resolves to.
+   */
+  quantity: number
+  /**
+   * The timing of the update. A new entry is appended to the add-on's timeline at
+   * this point.
    */
   timing: SubscriptionEditTiming
 }
@@ -3347,35 +4671,6 @@ export interface AppCatalogItem {
   installMethods: ('with_oauth2' | 'with_api_key' | 'no_credentials_required')[]
 }
 
-/**
- * Invoice-level snapshot of the workflow configuration.
- *
- * Contains only the settings that are meaningful for an already-created invoice:
- * invoicing behaviour and payment settings. Collection alignment and tax policy
- * are gather-time / profile-wide concerns and are not included.
- */
-export interface InvoiceWorkflow {
-  /** Invoicing settings for this invoice. */
-  invoicing?: InvoiceWorkflowInvoicingSettings
-  /** Payment settings for this invoice. */
-  payment?: WorkflowPaymentSettings
-}
-
-/** Detailed status information for a standard invoice. */
-export interface InvoiceStatusDetails {
-  /** Whether the invoice is immutable (i.e. cannot be modified or deleted). */
-  immutable: boolean
-  /** Whether the invoice is in a failed state. */
-  failed: boolean
-  /**
-   * Fine-grained internal status string providing additional workflow detail beyond
-   * the top-level status enum.
-   */
-  extendedStatus: string
-  /** The set of state-transition actions currently available for this invoice. */
-  availableActions: InvoiceAvailableActions
-}
-
 /** Discounts applied to an invoice line item. */
 export interface InvoiceLineDiscounts {
   /** Monetary amount discounts (e.g. from maximum spend commitments). */
@@ -3416,6 +4711,100 @@ export interface EntitlementFeatureAccess {
   reason?: EntitlementFeatureAccessReason
 }
 
+/** Page paginated response. */
+export interface NotificationChannelPagePaginatedResponse {
+  data: NotificationChannel[]
+  meta: PaginatedMeta
+}
+
+/**
+ * A rule that generates an event when an entitlement balance crosses one of its
+ * thresholds.
+ */
+export interface NotificationRuleBalanceThreshold {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'entitlements.balance.threshold'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+  /** The thresholds that generate an event when crossed. */
+  thresholds: NotificationBalanceThreshold[]
+  /**
+   * The features the rule applies to. When omitted, the rule applies to every
+   * feature.
+   */
+  features?: FeatureReference[]
+}
+
+/** Request body for a balance threshold rule. */
+export interface NotificationRuleBalanceThresholdRequest {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'entitlements.balance.threshold'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+  /** The thresholds that generate an event when crossed. */
+  thresholds: NotificationBalanceThreshold[]
+  /**
+   * The features the rule applies to. When omitted, the rule applies to every
+   * feature.
+   */
+  features?: FeatureReference[]
+}
+
+/**
+ * The delivery status of a notification event for one channel of the generating
+ * rule.
+ */
+export interface NotificationEventDeliveryStatus {
+  /** The identifier of the channel this delivery status belongs to. */
+  channelId: string
+  /** The current delivery state. */
+  state: 'success' | 'failed' | 'sending' | 'pending' | 'resending'
+  /** The reason for the last state change. Empty for successful deliveries. */
+  reason: string
+  /** When the delivery state was last updated. */
+  updatedAt: Date
+  /**
+   * When the next delivery attempt is scheduled. Absent when no further attempts
+   * will be made.
+   */
+  nextAttempt?: Date
+  /** The delivery attempts made so far, most recent first. */
+  attempts: NotificationEventDeliveryAttempt[]
+}
+
 /** Billing customer data. */
 export interface CustomerData {
   /**
@@ -3440,18 +4829,84 @@ export interface UpsertCustomerBillingDataRequest {
   appData?: AppCustomerData
 }
 
-/** The balances of the credits of a customer. */
-export interface CreditBalances {
-  /** The timestamp of the balance retrieval. */
-  retrievedAt: Date
-  /** The balances by currencies. */
-  balances: CreditBalance[]
+/**
+ * Flat fee intent fields from the system lifecycle controller shadowed by a manual
+ * override.
+ */
+export interface ChargeFlatFeeSystemIntent {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** The timestamp when the charge is intended to be invoiced. */
+  invoiceAt: Date
+  /** The effective service period covered by the charge. */
+  servicePeriod: ClosedPeriod
+  /** The full, unprorated service period of the charge. */
+  fullServicePeriod: ClosedPeriod
+  /** The billing period the charge belongs to. */
+  billingPeriod: ClosedPeriod
+  /** Payment term of the flat fee charge. */
+  paymentTerm: PricePaymentTerm
+  /** The discounts applied to the charge. */
+  discounts?: ChargeFlatFeeDiscounts
+  /** The proration configuration of the charge. */
+  prorationConfiguration: RateCardProrationConfiguration
+  /** The amount before proration of the system lifecycle controller flat fee intent. */
+  amountBeforeProration: CurrencyAmount
+  /**
+   * The timestamp when the system lifecycle controller intent was deleted. The
+   * effective charge can remain visible while a manual override is active.
+   */
+  deletedAt?: Date
 }
 
-/** Cursor paginated response. */
-export interface CreditTransactionPaginatedResponse {
-  data: CreditTransaction[]
-  meta: CursorMeta
+/** List customer entitlement access response data. */
+export interface ListCustomerEntitlementAccessResponseData {
+  /** The list of entitlement access results. */
+  data: EntitlementValueResult[]
+}
+
+/** The entities and threshold a balance threshold event refers to. */
+export interface NotificationEventBalanceThresholdData {
+  /** The identifier of the entitlement that triggered the event. */
+  entitlementId: string
+  /** The feature the entitlement grants access to. */
+  feature: NotificationEventFeatureReference
+  /** The key of the subject the entitlement belongs to. */
+  subjectKey: string
+  /** The identifier of the customer the subject belongs to, if any. */
+  customerId?: string
+  /** The entitlement value at the time the event was generated. */
+  value: EntitlementValueResult
+  /** The threshold the balance crossed. */
+  threshold: NotificationBalanceThreshold
+}
+
+/**
+ * The entitlement, feature, and subject an entitlement notification event refers
+ * to.
+ */
+export interface NotificationEventEntitlementData {
+  /** The identifier of the entitlement that triggered the event. */
+  entitlementId: string
+  /** The feature the entitlement grants access to. */
+  feature: NotificationEventFeatureReference
+  /** The key of the subject the entitlement belongs to. */
+  subjectKey: string
+  /** The identifier of the customer the subject belongs to, if any. */
+  customerId?: string
+  /** The entitlement value at the time the event was generated. */
+  value: EntitlementValueResult
 }
 
 /**
@@ -3460,8 +4915,8 @@ export interface CreditTransactionPaginatedResponse {
  * Each tier's rate applies only to the usage within that tier. Pricing can change
  * as cumulative usage crosses tier boundaries.
  *
- * When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are
- * expressed in converted billing units.
+ * When UnitConfig is present on the containing resource, tier boundaries
+ * (up_to_amount) are expressed in converted billing units.
  */
 export interface PriceGraduated {
   /** The type of the price. */
@@ -3476,8 +4931,8 @@ export interface PriceGraduated {
  * The maximum quantity within a period determines the per-unit price for all units
  * in that period.
  *
- * When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are
- * expressed in converted billing units.
+ * When UnitConfig is present on the containing resource, tier boundaries
+ * (up_to_amount) are expressed in converted billing units.
  */
 export interface PriceVolume {
   /** The type of the price. */
@@ -3492,8 +4947,8 @@ export interface PriceVolume {
  * Each tier's rate applies only to the usage within that tier. Pricing can change
  * as cumulative usage crosses tier boundaries.
  *
- * When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are
- * expressed in converted billing units.
+ * When UnitConfig is present on the containing resource, tier boundaries
+ * (up_to_amount) are expressed in converted billing units.
  */
 export interface UpdatePriceGraduated {
   /** The type of the price. */
@@ -3508,8 +4963,8 @@ export interface UpdatePriceGraduated {
  * The maximum quantity within a period determines the per-unit price for all units
  * in that period.
  *
- * When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are
- * expressed in converted billing units.
+ * When UnitConfig is present on the containing resource, tier boundaries
+ * (up_to_amount) are expressed in converted billing units.
  */
 export interface UpdatePriceVolume {
   /** The type of the price. */
@@ -3524,136 +4979,86 @@ export interface PricePagePaginatedResponse {
   meta: PaginatedMeta
 }
 
-/** CreditGrant create request. */
-export interface CreateCreditGrantRequest {
+/** Purchase and payment terms of the grant. */
+export interface CreateCreditGrantPurchase {
   /**
-   * Display name of the resource.
+   * Fiat currency the purchase is settled in.
    *
-   * Between 1 and 256 characters.
+   * Must equal the grant `currency` for fiat grants and `cost_basis.fiat_currency`
+   * for custom-currency grants.
    */
-  name: string
+  currency: string
   /**
-   * Optional description of the resource.
+   * Fiat cost basis per credit unit of a fiat-currency grant.
    *
-   * Maximum 1024 characters.
+   * If `per_unit_cost_basis` is 0.50 and credit amount is
+   * $100.00, the total
+   * charge is $50.00. The value must be greater than 0. If the
+   * cost basis is 0, use `funding_method=none` instead.
+   *
+   * Only applies to fiat grants and cannot be combined with `cost_basis`. Defaults
+   * to 1.0 when neither is provided.
    */
-  description?: string
-  labels?: CreateLabels
-  /** Funding method of the grant. */
-  fundingMethod: 'none' | 'invoice' | 'external'
-  /** The currency of the granted credits. */
-  currency: CreateCurrencyCode
-  /** Granted credit amount. */
-  amount: string
-  /** Present when a funding workflow applies (funding_method is not `none`). */
-  purchase?: CreateCreditGrantPurchase
+  perUnitCostBasis?: string
   /**
-   * Tax configuration for the grant.
+   * Defines how custom-currency credits are priced in the purchase `currency`; the
+   * resolved rate is exposed through `resolved_cost_basis`.
    *
-   * For `invoice` and `external` funding methods, tax configuration should be
-   * provided to ensure correct revenue recognition. When not provided, the default
-   * credit grant tax code is applied, if that's not set the global default taxcode
-   * is used.
+   * Fiat grants accept only a `manual` cost basis without `fiat_currency`, where
+   * `rate` is the fiat cost per credit unit. Custom-currency grants require a cost
+   * basis of any type with `fiat_currency` set and equal to the purchase `currency`.
+   * A `dynamic` cost basis is resolved at the grant's effective time, so the
+   * currency cost basis must be effective by then. Cannot be combined with
+   * `per_unit_cost_basis`.
    */
-  taxConfig?: CreateCreditGrantTaxConfig
-  filters?: CreateCreditGrantFilters
-  /** Draw-down priority of the grant. Lower values have higher priority. */
-  priority: number
+  costBasis?: CreateChargeCostBasis
   /**
-   * The timestamp when the credit grant becomes effective.
+   * Controls when credits become available for consumption.
    *
-   * Defaults to the current date and time.
+   * Defaults to `on_creation`.
    */
-  effectiveAt?: Date
-  /**
-   * The duration after which the credit grant expires.
-   *
-   * Defaults to never expiring.
-   */
-  expiresAfter?: string
-  /**
-   * Idempotency key for the credit grant creation request.
-   *
-   * Unique per customer: reusing the same key for the same customer returns an HTTP
-   * 409 Conflict instead of creating a duplicate grant, which makes create requests
-   * safe to retry. The same key may be reused across different customers.
-   */
-  key?: string
+  availabilityPolicy: 'on_creation'
 }
 
-/**
- * A credit grant allocates credits to a customer.
- *
- * Credits are drawn down against charges according to the settlement mode
- * configured on the rate card.
- */
-export interface CreditGrant {
-  id: string
+/** Purchase and payment terms of the grant. */
+export interface CreditGrantPurchase {
   /**
-   * Display name of the resource.
+   * Fiat currency the purchase is settled in.
    *
-   * Between 1 and 256 characters.
+   * Must equal the grant `currency` for fiat grants and `cost_basis.fiat_currency`
+   * for custom-currency grants.
    */
-  name: string
+  currency: string
   /**
-   * Optional description of the resource.
+   * Fiat cost basis per credit unit of a fiat-currency grant.
    *
-   * Maximum 1024 characters.
+   * If `per_unit_cost_basis` is 0.50 and credit amount is
+   * $100.00, the total
+   * charge is $50.00. The value must be greater than 0. If the
+   * cost basis is 0, use `funding_method=none` instead.
+   *
+   * Only applies to fiat grants and cannot be combined with `cost_basis`. Defaults
+   * to 1.0 when neither is provided.
    */
-  description?: string
-  labels?: Labels
-  /** An ISO-8601 timestamp representation of entity creation date. */
-  createdAt: Date
-  /** An ISO-8601 timestamp representation of entity last update date. */
-  updatedAt: Date
-  /** An ISO-8601 timestamp representation of entity deletion date. */
-  deletedAt?: Date
-  /** Funding method of the grant. */
-  fundingMethod: 'none' | 'invoice' | 'external'
-  /** The currency of the granted credits. */
-  currency: BillingCurrencyCode
-  /** Granted credit amount. */
-  amount: string
-  /** Present when a funding workflow applies (funding_method is not `none`). */
-  purchase?: CreditGrantPurchase
+  perUnitCostBasis?: string
   /**
-   * Tax configuration for the grant.
-   *
-   * For `invoice` and `external` funding methods, tax configuration should be
-   * provided to ensure correct revenue recognition. When not provided, the default
-   * credit grant tax code is applied, if that's not set the global default taxcode
-   * is used.
+   * The rate the purchase is settled at in the purchase `currency`. Present once the
+   * cost basis is resolved.
    */
-  taxConfig?: CreditGrantTaxConfig
-  /** Available when `funding_method` is `invoice`. */
-  invoice?: CreditGrantInvoiceReference
-  filters?: CreditGrantFilters
-  /** Draw-down priority of the grant. Lower values have higher priority. */
-  priority: number
+  resolvedCostBasis?: ChargeResolvedCostBasis
   /**
-   * The timestamp when the credit grant becomes effective.
-   *
-   * Defaults to the current date and time.
+   * The purchase amount, calculated from the resolved cost basis and credit
+   * `amount`. Present once the cost basis is resolved.
    */
-  effectiveAt?: Date
+  amount?: string
   /**
-   * Idempotency key for the credit grant creation request.
+   * Controls when credits become available for consumption.
    *
-   * Unique per customer: reusing the same key for the same customer returns an HTTP
-   * 409 Conflict instead of creating a duplicate grant, which makes create requests
-   * safe to retry. The same key may be reused across different customers.
+   * Defaults to `on_creation`.
    */
-  key?: string
-  /**
-   * The timestamp when the credit grant expires.
-   *
-   * Calculated from the grant effective time and `expires_after` if provided.
-   */
-  expiresAt?: Date
-  /** Timestamp when the grant was voided. */
-  voidedAt?: Date
-  /** Current lifecycle status of the grant. */
-  status: 'pending' | 'active' | 'expired' | 'voided'
+  availabilityPolicy: 'on_creation'
+  /** Current payment settlement status. */
+  settlementStatus?: 'pending' | 'authorized' | 'settled'
 }
 
 /** Flat fee charge create request. */
@@ -3674,7 +5079,14 @@ export interface CreateChargeFlatFeeRequest {
   /** The type of the charge. */
   type: 'flat_fee'
   /** The currency of the charge. */
-  currency: string
+  currency: BillingCurrencyCode
+  /**
+   * Defines how a custom-currency charge is converted into its fiat invoice
+   * currency; the resolved rate is exposed through `resolved_cost_basis`. Required
+   * when `currency` is custom and the charge settles as `credit_then_invoice`; must
+   * be omitted otherwise.
+   */
+  costBasis?: ChargeCostBasis
   /** The timestamp when the charge is intended to be invoiced. */
   invoiceAt: Date
   /** The effective service period covered by the charge. */
@@ -3689,12 +5101,12 @@ export interface CreateChargeFlatFeeRequest {
   paymentTerm: PricePaymentTerm
   /** The discounts applied to the charge. */
   discounts?: ChargeFlatFeeDiscounts
-  /** The feature ID associated with the charge. */
-  featureId?: string
   /** The proration configuration of the charge. */
   prorationConfiguration: RateCardProrationConfiguration
   /** The amount before proration of the charge. */
   amountBeforeProration: CurrencyAmount
+  /** A reference to the feature associated with the charge, when applicable. */
+  feature?: FeatureReference
   /** The full, unprorated service period of the charge. */
   fullServicePeriod?: ClosedPeriod
   /** The billing period the charge belongs to. */
@@ -3726,18 +5138,18 @@ export interface WorkflowTaxSettings {
   defaultTaxConfig?: TaxConfig
 }
 
-/** Page paginated response. */
-export interface SubscriptionPagePaginatedResponse {
-  data: Subscription[]
-  meta: PaginatedMeta
+/** The balances of the credits of a customer. */
+export interface CreditBalances {
+  /** The timestamp of the balance retrieval. */
+  retrievedAt: Date
+  /** The balances by currencies. */
+  balances: CreditBalance[]
 }
 
-/** Response for changing a subscription. */
-export interface SubscriptionChangeResponse {
-  /** The current subscription before the change. */
-  current: Subscription
-  /** The new state of the subscription after the change. */
-  next: Subscription
+/** Cursor paginated response. */
+export interface CreditTransactionPaginatedResponse {
+  data: CreditTransaction[]
+  meta: CursorMeta
 }
 
 /** Page paginated response. */
@@ -3746,10 +5158,49 @@ export interface PlanAddonPagePaginatedResponse {
   meta: PaginatedMeta
 }
 
+/** An invoice created notification event payload. */
+export interface NotificationEventInvoiceCreatedPayload {
+  /** The identifier of the event the payload belongs to. */
+  id: string
+  /** The type of the event. */
+  type: 'invoice.created'
+  /** When the event was generated. */
+  timestamp: Date
+  /** The invoice the event refers to. */
+  data: NotificationEventInvoiceData
+}
+
+/** An invoice updated notification event payload. */
+export interface NotificationEventInvoiceUpdatedPayload {
+  /** The identifier of the event the payload belongs to. */
+  id: string
+  /** The type of the event. */
+  type: 'invoice.updated'
+  /** When the event was generated. */
+  timestamp: Date
+  /** The invoice the event refers to. */
+  data: NotificationEventInvoiceData
+}
+
 /** Cursor paginated response. */
 export interface IngestedEventPaginatedResponse {
   data: IngestedEvent[]
   meta: CursorMeta
+}
+
+/** Balance and usage history of a metered entitlement. */
+export interface EntitlementHistory {
+  /**
+   * Usage in half-open windows of the requested size, aligned to the requested time
+   * zone. Empty windows are included; windows before usage measurement began are
+   * omitted.
+   */
+  windowedHistory: EntitlementHistoryWindow[]
+  /**
+   * Periods in which grants were consumed in a fixed order. A new segment starts
+   * whenever grant priorities change or a usage period starts.
+   */
+  burndownHistory: EntitlementBurndownSegment[]
 }
 
 /** The list of parameters that failed validation. */
@@ -3784,23 +5235,6 @@ export interface CustomerPagePaginatedResponse {
   meta: PaginatedMeta
 }
 
-/** Party represents a person or business entity. */
-export interface Party {
-  /** Unique identifier for the party. */
-  id?: string
-  /** An optional unique key of the party. */
-  key?: string
-  /** Legal name or representation of the party. */
-  name?: string
-  /**
-   * The entity's legal identification used for tax purposes. They may have other
-   * numbers, but we're only interested in those valid for tax purposes.
-   */
-  taxId?: PartyTaxIdentity
-  /** Address for where information should be sent if needed. */
-  addresses?: PartyAddresses
-}
-
 /**
  * Snapshot of the supplier's information at the time the invoice was issued.
  *
@@ -3820,6 +5254,23 @@ export interface Supplier {
   addresses?: PartyAddresses
   /** Unique identifier for the party. */
   id?: string
+}
+
+/** Party represents a person or business entity. */
+export interface Party {
+  /** Unique identifier for the party. */
+  id?: string
+  /** An optional unique key of the party. */
+  key?: string
+  /** Legal name or representation of the party. */
+  name?: string
+  /**
+   * The entity's legal identification used for tax purposes. They may have other
+   * numbers, but we're only interested in those valid for tax purposes.
+   */
+  taxId?: PartyTaxIdentity
+  /** Address for where information should be sent if needed. */
+  addresses?: PartyAddresses
 }
 
 /**
@@ -3937,6 +5388,63 @@ export interface AppStripeCreateCheckoutSessionRequestOptions {
   taxIdCollection?: AppStripeCreateCheckoutSessionTaxIdCollection
 }
 
+/** Metered entitlement create request. */
+export interface CreateEntitlementMeteredRequest {
+  /** The type of the entitlement. */
+  type: 'metered'
+  /** The feature the customer is entitled to use. */
+  feature: FeatureReference
+  labels?: Labels
+  /**
+   * If true, the customer keeps access to the feature after the balance is
+   * exhausted.
+   */
+  isSoftLimit: boolean
+  /** Usage granted automatically after each reset. Cannot be combined with `grants`. */
+  issue?: EntitlementIssueAfterReset
+  /** The amount granted automatically after each reset. */
+  issueAfterReset?: string
+  /** The priority of the grant created after each reset. */
+  issueAfterResetPriority: number
+  /** If true, the overage is preserved at reset. If false, the usage is reset to 0. */
+  preserveOverageAtReset: boolean
+  /**
+   * The usage period of the entitlement. The balance resets at the start of every
+   * period. The anchor defaults to the entitlement creation time.
+   */
+  usagePeriod: RecurringPeriodInput
+  /**
+   * The time from which usage is measured. Defaults to the entitlement creation
+   * time.
+   */
+  measureUsageFrom?: EntitlementMeasureUsageFrom
+  /** Grants created together with the entitlement. Cannot be combined with `issue`. */
+  grants?: EntitlementGrantCreateRequest[]
+}
+
+/** Page paginated response. */
+export interface EntitlementGrantPagePaginatedResponse {
+  data: EntitlementGrant[]
+  meta: PaginatedMeta
+}
+
+/** Snapshot of the billing workflow configuration captured at invoice creation. */
+export interface InvoiceWorkflowSettings {
+  /** The apps that will be used to orchestrate the invoice's workflow. */
+  apps?: InvoiceWorkflowAppsReferences
+  /** The billing profile that was the source of this workflow snapshot. */
+  sourceBillingProfile: ProfileReference
+  /**
+   * The workflow configuration that was active when the invoice was created.
+   *
+   * Only the fields that are meaningful at the per-invoice level are included:
+   * invoicing behaviour (auto-advance, draft period) and payment settings
+   * (collection method, due date). Profile-wide settings such as collection
+   * alignment, progressive billing, and tax policy are omitted.
+   */
+  workflow: InvoiceWorkflow
+}
+
 /** Page paginated response. */
 export interface TaxCodePagePaginatedResponse {
   data: TaxCode[]
@@ -3971,6 +5479,11 @@ export interface AppStripe {
   definition: AppCatalogItem
   /** Status of the app connection. */
   status: 'ready' | 'unauthorized'
+  /**
+   * Actions the operator should take to bring the app up to date. Omitted when no
+   * action is required.
+   */
+  actions?: AppAction[]
   /** The Stripe account ID associated with the connected Stripe account. */
   accountId: string
   /** Indicates whether the app is connected to a live Stripe account. */
@@ -4007,6 +5520,11 @@ export interface AppSandbox {
   definition: AppCatalogItem
   /** Status of the app connection. */
   status: 'ready' | 'unauthorized'
+  /**
+   * Actions the operator should take to bring the app up to date. Omitted when no
+   * action is required.
+   */
+  actions?: AppAction[]
 }
 
 /**
@@ -4056,6 +5574,11 @@ export interface AppExternalInvoicing {
   /** Status of the app connection. */
   status: 'ready' | 'unauthorized'
   /**
+   * Actions the operator should take to bring the app up to date. Omitted when no
+   * action is required.
+   */
+  actions?: AppAction[]
+  /**
    * Enable draft synchronization hook.
    *
    * When enabled, invoices will pause at the draft state and wait for the
@@ -4087,21 +5610,163 @@ export interface AppCatalogItemPagePaginatedResponse {
   meta: PaginatedMeta
 }
 
-/** Snapshot of the billing workflow configuration captured at invoice creation. */
-export interface InvoiceWorkflowSettings {
-  /** The apps that will be used to orchestrate the invoice's workflow. */
-  apps?: InvoiceWorkflowAppsReferences
-  /** The billing profile that was the source of this workflow snapshot. */
-  sourceBillingProfile: ProfileReference
+/** Response of an installed app. */
+export interface InstalledAppStripe {
+  id: string
   /**
-   * The workflow configuration that was active when the invoice was created.
+   * Display name of the resource.
    *
-   * Only the fields that are meaningful at the per-invoice level are included:
-   * invoicing behaviour (auto-advance, draft period) and payment settings
-   * (collection method, due date). Profile-wide settings such as collection
-   * alignment, progressive billing, and tax policy are omitted.
+   * Between 1 and 256 characters.
    */
-  workflow: InvoiceWorkflow
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The app type. */
+  type: 'stripe'
+  /** The app catalog definition that this installed app is based on. */
+  definition: AppCatalogItem
+  /** Status of the app connection. */
+  status: 'ready' | 'unauthorized'
+  /**
+   * Actions the operator should take to bring the app up to date. Omitted when no
+   * action is required.
+   */
+  actions?: AppAction[]
+  /** The Stripe account ID associated with the connected Stripe account. */
+  accountId: string
+  /** Indicates whether the app is connected to a live Stripe account. */
+  livemode: boolean
+  /** The masked Stripe API key that only exposes the first and last few characters. */
+  maskedApiKey: string
+  /** Default capabilities of the installed app. */
+  defaultForCapabilityTypes: (
+    | 'report_usage'
+    | 'report_events'
+    | 'calculate_tax'
+    | 'invoice_customers'
+    | 'collect_payments'
+  )[]
+}
+
+/** Response of an installed app. */
+export interface InstalledAppSandbox {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The app type. */
+  type: 'sandbox'
+  /** The app catalog definition that this installed app is based on. */
+  definition: AppCatalogItem
+  /** Status of the app connection. */
+  status: 'ready' | 'unauthorized'
+  /**
+   * Actions the operator should take to bring the app up to date. Omitted when no
+   * action is required.
+   */
+  actions?: AppAction[]
+  /** Default capabilities of the installed app. */
+  defaultForCapabilityTypes: (
+    | 'report_usage'
+    | 'report_events'
+    | 'calculate_tax'
+    | 'invoice_customers'
+    | 'collect_payments'
+  )[]
+}
+
+/** Response of an installed app. */
+export interface InstalledAppExternalInvoicing {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The app type. */
+  type: 'external_invoicing'
+  /** The app catalog definition that this installed app is based on. */
+  definition: AppCatalogItem
+  /** Status of the app connection. */
+  status: 'ready' | 'unauthorized'
+  /**
+   * Actions the operator should take to bring the app up to date. Omitted when no
+   * action is required.
+   */
+  actions?: AppAction[]
+  /**
+   * Enable draft synchronization hook.
+   *
+   * When enabled, invoices will pause at the draft state and wait for the
+   * integration to call the draft synchronized endpoint before progressing to the
+   * issuing state. This allows the external system to validate and prepare the
+   * invoice data.
+   *
+   * When disabled, invoices automatically progress through the draft state based on
+   * the configured workflow timing.
+   */
+  enableDraftSyncHook: boolean
+  /**
+   * Enable issuing synchronization hook.
+   *
+   * When enabled, invoices will pause at the issuing state and wait for the
+   * integration to call the issuing synchronized endpoint before progressing to the
+   * issued state. This ensures the external invoicing system has successfully
+   * created and finalized the invoice before it is marked as issued.
+   *
+   * When disabled, invoices automatically progress through the issuing state and are
+   * immediately marked as issued.
+   */
+  enableIssuingSyncHook: boolean
+  /** Default capabilities of the installed app. */
+  defaultForCapabilityTypes: (
+    | 'report_usage'
+    | 'report_events'
+    | 'calculate_tax'
+    | 'invoice_customers'
+    | 'collect_payments'
+  )[]
 }
 
 /**
@@ -4189,6 +5854,30 @@ export interface EntitlementAccessQueryResult {
   updatedAt: Date
 }
 
+/** A balance threshold notification event payload. */
+export interface NotificationEventBalanceThresholdPayload {
+  /** The identifier of the event the payload belongs to. */
+  id: string
+  /** The type of the event. */
+  type: 'entitlements.balance.threshold'
+  /** When the event was generated. */
+  timestamp: Date
+  /** The entities and threshold the event refers to. */
+  data: NotificationEventBalanceThresholdData
+}
+
+/** An entitlement reset notification event payload. */
+export interface NotificationEventResetPayload {
+  /** The identifier of the event the payload belongs to. */
+  id: string
+  /** The type of the event. */
+  type: 'entitlements.reset'
+  /** When the event was generated. */
+  timestamp: Date
+  /** The entities the event refers to. */
+  data: NotificationEventEntitlementData
+}
+
 /** A capability or billable dimension offered by a provider. */
 export interface Feature {
   id: string
@@ -4268,10 +5957,153 @@ export interface UpdateFeatureRequest {
   unitCost?: FeatureUnitCost | null
 }
 
-/** Page paginated response. */
-export interface CreditGrantPagePaginatedResponse {
-  data: CreditGrant[]
-  meta: PaginatedMeta
+/** CreditGrant create request. */
+export interface CreateCreditGrantRequest {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: CreateLabels
+  /** Funding method of the grant. */
+  fundingMethod: 'none' | 'invoice' | 'external'
+  /**
+   * The fiat or custom currency of the granted credits.
+   *
+   * Funded custom-currency grants must define `purchase.cost_basis` to settle in a
+   * fiat currency.
+   */
+  currency: CreateCurrencyCode
+  /** Granted credit amount. */
+  amount: string
+  /** Present when a funding workflow applies (funding_method is not `none`). */
+  purchase?: CreateCreditGrantPurchase
+  /**
+   * Tax configuration for the grant.
+   *
+   * For `invoice` and `external` funding methods, tax configuration should be
+   * provided to ensure correct revenue recognition. When not provided, the default
+   * credit grant tax code is applied, if that's not set the global default taxcode
+   * is used.
+   */
+  taxConfig?: CreateTaxCodeConfig
+  filters?: CreateCreditGrantFilters
+  /** Draw-down priority of the grant. Lower values have higher priority. */
+  priority: number
+  /**
+   * The timestamp when the credit grant becomes effective.
+   *
+   * Defaults to the current date and time.
+   */
+  effectiveAt?: Date
+  /**
+   * The duration after which the credit grant expires.
+   *
+   * Defaults to never expiring.
+   */
+  expiresAfter?: string
+  /**
+   * Idempotency key for the credit grant creation request.
+   *
+   * Unique per customer: reusing the same key for the same customer returns an HTTP
+   * 409 Conflict instead of creating a duplicate grant, which makes create requests
+   * safe to retry. The same key may be reused across different customers.
+   */
+  key?: string
+}
+
+/**
+ * A credit grant allocates credits to a customer.
+ *
+ * Credits are drawn down against charges according to the settlement mode
+ * configured on the rate card.
+ */
+export interface CreditGrant {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** Funding method of the grant. */
+  fundingMethod: 'none' | 'invoice' | 'external'
+  /**
+   * The fiat or custom currency of the granted credits.
+   *
+   * Funded custom-currency grants must define `purchase.cost_basis` to settle in a
+   * fiat currency.
+   */
+  currency: BillingCurrencyCode
+  /** Granted credit amount. */
+  amount: string
+  /** Present when a funding workflow applies (funding_method is not `none`). */
+  purchase?: CreditGrantPurchase
+  /**
+   * Tax configuration for the grant.
+   *
+   * For `invoice` and `external` funding methods, tax configuration should be
+   * provided to ensure correct revenue recognition. When not provided, the default
+   * credit grant tax code is applied, if that's not set the global default taxcode
+   * is used.
+   */
+  taxConfig?: TaxCodeConfig
+  /** Available when `funding_method` is `invoice`. */
+  invoice?: CreditGrantInvoiceReference
+  filters?: CreditGrantFilters
+  /** Draw-down priority of the grant. Lower values have higher priority. */
+  priority: number
+  /**
+   * The timestamp when the credit grant becomes effective.
+   *
+   * Defaults to the current date and time.
+   */
+  effectiveAt?: Date
+  /**
+   * Idempotency key for the credit grant creation request.
+   *
+   * Unique per customer: reusing the same key for the same customer returns an HTTP
+   * 409 Conflict instead of creating a duplicate grant, which makes create requests
+   * safe to retry. The same key may be reused across different customers.
+   */
+  key?: string
+  /**
+   * The timestamp when the credit grant expires.
+   *
+   * Calculated from the grant effective time and `expires_after` if provided.
+   */
+  expiresAt?: Date
+  /** Timestamp when the grant was voided. */
+  voidedAt?: Date
+  /** Current lifecycle status of the grant. */
+  status: 'pending' | 'active' | 'expired' | 'voided'
+  /**
+   * Validation issues found while processing the credit grant.
+   *
+   * Present only when there are one or more validation findings. An empty list is
+   * omitted.
+   */
+  validationIssues?: ValidationIssue[]
 }
 
 /** Page paginated response. */
@@ -4333,7 +6165,7 @@ export interface InvoiceBase {
    * Present only when there are one or more validation findings. An empty list is
    * omitted.
    */
-  validationIssues?: InvoiceValidationIssue[]
+  validationIssues?: ValidationIssue[]
   /** External identifiers assigned to this invoice by third-party systems. */
   externalReferences?: InvoiceExternalReferences
 }
@@ -4355,6 +6187,12 @@ export interface CustomerStripeCreateCheckoutSessionRequest {
   stripeOptions: AppStripeCreateCheckoutSessionRequestOptions
 }
 
+/** Page paginated response. */
+export interface EntitlementPagePaginatedResponse {
+  data: Entitlement[]
+  meta: PaginatedMeta
+}
+
 /**
  * Workflow collection specifies how to collect the pending line items for an
  * invoice.
@@ -4372,28 +6210,17 @@ export interface WorkflowCollectionSettings {
   interval: string
 }
 
-/** Response of the entitlement access query. */
-export interface EntitlementAccessQueryResponse {
-  /** Access evaluation results, one entry per resolved customer. */
-  data: EntitlementAccessQueryResult[]
-  /** Partial errors encountered while processing the request. */
-  errors: EntitlementAccessQueryError[]
-  /**
-   * Pagination metadata. The endpoint may return a partial response if the full
-   * response would exceed server-side limits.
-   */
-  meta: CursorMeta
-}
-
-/** A flat fee charge for a customer. */
-export interface ChargeFlatFee {
+/**
+ * The invoice a charge realization was booked to, embedded as a header.
+ *
+ * Matches the standard invoice entity, except that it carries no `customer`
+ * snapshot (the charge context already identifies the customer) and `lines` are
+ * never populated (the realization itself is the line-level breakdown). The shared
+ * invoice contract stays untouched: this model exists so the charges API can slim
+ * the embedding without loosening the invoices API.
+ */
+export interface ChargeRealizationInvoice {
   id: string
-  /**
-   * Display name of the resource.
-   *
-   * Between 1 and 256 characters.
-   */
-  name: string
   /**
    * Optional description of the resource.
    *
@@ -4407,141 +6234,85 @@ export interface ChargeFlatFee {
   updatedAt: Date
   /** An ISO-8601 timestamp representation of entity deletion date. */
   deletedAt?: Date
-  /** The type of the charge. */
-  type: 'flat_fee'
-  /** The customer owning the charge. */
-  customer: BillingCustomerReference
-  /**
-   * Indicates whether the charge lifecycle is controlled by OpenMeter or manually
-   * overridden by the API user.
-   */
-  lifecycleController: 'system' | 'manual'
-  /**
-   * The subscription that originated the charge, when the charge was created from a
-   * subscription item.
-   */
-  subscription?: SubscriptionReference
-  /** The currency of the charge. */
+  /** Human-readable invoice number generated by the invoicing app. */
+  number: string
+  /** Three-letter ISO 4217 currency code for the invoice. */
   currency: string
-  /** The lifecycle status of the charge. */
-  status: 'created' | 'active' | 'final' | 'deleted'
-  /** The timestamp when the charge is intended to be invoiced. */
-  invoiceAt: Date
-  /** The effective service period covered by the charge. */
+  /**
+   * Snapshot of the supplier's contact information at the time the invoice was
+   * issued.
+   */
+  supplier: Supplier
+  /** Aggregated financial totals for the invoice. */
+  totals: Totals
+  /**
+   * The service period covered by this invoice.
+   *
+   * For flat fee the service period can be empty which means `from` will be equals
+   * to `to`. In other cases those fields will be filled with the actual service
+   * period.
+   */
   servicePeriod: ClosedPeriod
-  /** The full, unprorated service period of the charge. */
-  fullServicePeriod: ClosedPeriod
-  /** The billing period the charge belongs to. */
-  billingPeriod: ClosedPeriod
   /**
-   * The earliest time when the charge should be advanced again by background
-   * processing.
+   * Validation issues found during invoice processing.
+   *
+   * Present only when there are one or more validation findings. An empty list is
+   * omitted.
    */
-  advanceAfter?: Date
-  /** Unique reference ID of the charge. */
-  uniqueReferenceId?: string
-  /** Settlement mode of the charge. */
-  settlementMode: 'credit_then_invoice' | 'credit_only'
-  /** Tax configuration of the charge. */
-  taxConfig?: TaxConfig
-  /** Payment term of the flat fee charge. */
-  paymentTerm: PricePaymentTerm
-  /** The discounts applied to the charge. */
-  discounts?: ChargeFlatFeeDiscounts
-  /** The feature associated with the charge, when applicable. */
-  featureKey?: string
-  /** The feature ID associated with the charge. */
-  featureId?: string
-  /** The proration configuration of the charge. */
-  prorationConfiguration: RateCardProrationConfiguration
-  /** The amount after proration of the charge. */
-  amountAfterProration: CurrencyAmount
-  /** The price of the charge. */
-  price: Price
+  validationIssues?: ValidationIssue[]
+  /** External identifiers assigned to this invoice by third-party systems. */
+  externalReferences?: InvoiceExternalReferences
+  /** Discriminator field identifying this as a standard invoice. */
+  type: 'standard'
+  /** Current lifecycle status of the invoice. */
+  status:
+    | 'draft'
+    | 'issuing'
+    | 'issued'
+    | 'payment_processing'
+    | 'overdue'
+    | 'paid'
+    | 'uncollectible'
+    | 'voided'
+  /** Detailed status information including available actions and workflow state. */
+  statusDetails: InvoiceStatusDetails
+  /** Timestamp when the invoice was issued to the customer. */
+  issuedAt?: Date
   /**
-   * Current intent from the system lifecycle controller for a charge that has an
-   * active manual override. The top-level charge fields remain the effective
-   * customer-facing intent.
+   * Timestamp until which the invoice remains in draft state.
+   *
+   * The invoice advances automatically once this time is reached.
    */
-  systemIntent?: ChargeFlatFeeSystemIntent
+  draftUntil?: Date
+  /** Timestamp when usage quantities were last snapshotted for this invoice. */
+  quantitySnapshottedAt?: Date
+  /** Timestamp when collection was initiated for this invoice. */
+  collectionAt?: Date
+  /** Timestamp when payment is due. */
+  dueAt?: Date
+  /** Timestamp when the invoice was sent to the customer. */
+  sentToCustomerAt?: Date
+  /** Workflow configuration snapshot captured at invoice creation time. */
+  workflow: InvoiceWorkflowSettings
 }
 
-/**
- * Usage-based intent fields from the system lifecycle controller shadowed by a
- * manual override.
- */
-export interface ChargeUsageBasedSystemIntent {
+/** Response of the entitlement access query. */
+export interface EntitlementAccessQueryResponse {
+  /** Access evaluation results, one entry per resolved customer. */
+  data: EntitlementAccessQueryResult[]
+  /** Partial errors encountered while processing the request. */
+  errors: EntitlementAccessQueryError[]
   /**
-   * Display name of the resource.
-   *
-   * Between 1 and 256 characters.
+   * Pagination metadata. The endpoint may return a partial response if the full
+   * response would exceed server-side limits.
    */
-  name: string
-  /**
-   * Optional description of the resource.
-   *
-   * Maximum 1024 characters.
-   */
-  description?: string
-  labels?: Labels
-  /** The timestamp when the charge is intended to be invoiced. */
-  invoiceAt: Date
-  /** The effective service period covered by the charge. */
-  servicePeriod: ClosedPeriod
-  /** The full, unprorated service period of the charge. */
-  fullServicePeriod: ClosedPeriod
-  /** The billing period the charge belongs to. */
-  billingPeriod: ClosedPeriod
-  /** Discounts applied to the usage-based charge. */
-  discounts?: RateCardDiscounts
-  /** The price of the charge. */
-  price: Price
-  /**
-   * The timestamp when the system lifecycle controller intent was deleted. The
-   * effective charge can remain visible while a manual override is active.
-   */
-  deletedAt?: Date
+  meta: CursorMeta
 }
 
-/** Usage-based charge create request. */
-export interface CreateChargeUsageBasedRequest {
-  /**
-   * Display name of the resource.
-   *
-   * Between 1 and 256 characters.
-   */
-  name: string
-  /**
-   * Optional description of the resource.
-   *
-   * Maximum 1024 characters.
-   */
-  description?: string
-  labels?: Labels
-  /** The type of the charge. */
-  type: 'usage_based'
-  /** The currency of the charge. */
-  currency: string
-  /** The timestamp when the charge is intended to be invoiced. */
-  invoiceAt: Date
-  /** The effective service period covered by the charge. */
-  servicePeriod: ClosedPeriod
-  /** Unique reference ID of the charge. */
-  uniqueReferenceId?: string
-  /** Settlement mode of the charge. */
-  settlementMode: 'credit_then_invoice' | 'credit_only'
-  /** Tax configuration of the charge. */
-  taxConfig?: TaxConfig
-  /** Discounts applied to the usage-based charge. */
-  discounts?: RateCardDiscounts
-  /** The feature ID associated with the charge. */
-  featureId: string
-  /** The price of the charge. */
-  price: Price
-  /** The full, unprorated service period of the charge. */
-  fullServicePeriod?: ClosedPeriod
-  /** The billing period the charge belongs to. */
-  billingPeriod?: ClosedPeriod
+/** Page paginated response. */
+export interface NotificationRulePagePaginatedResponse {
+  data: NotificationRule[]
+  meta: PaginatedMeta
 }
 
 /** A rate card defines the pricing and entitlement of a feature or service. */
@@ -4598,7 +6369,7 @@ export interface RateCard {
   /** The discounts of the rate card. */
   discounts?: RateCardDiscounts
   /** The tax config of the rate card. */
-  taxConfig?: RateCardTaxConfig
+  taxConfig?: TaxCodeConfig
   /**
    * The entitlement template granted to subscribers of a plan or addon containing
    * this rate card. Requires `feature` to be set.
@@ -4611,7 +6382,7 @@ export interface InvoiceLineRateCard {
   /** The price definition used to calculate charges for this line. */
   price: Price
   /** Tax configuration snapshot for this line. */
-  taxConfig?: RateCardTaxConfig
+  taxConfig?: TaxCodeConfig
   /** The feature key associated with this line's rate card. */
   featureKey?: string
   /** Discount configuration from the rate card. */
@@ -4623,12 +6394,139 @@ export interface InvoiceLineRateCard {
   unitConfig?: UnitConfig
 }
 
+/**
+ * Usage-based intent fields from the system lifecycle controller shadowed by a
+ * manual override.
+ */
+export interface ChargeUsageBasedSystemIntent {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** The timestamp when the charge is intended to be invoiced. */
+  invoiceAt: Date
+  /** The effective service period covered by the charge. */
+  servicePeriod: ClosedPeriod
+  /** The full, unprorated service period of the charge. */
+  fullServicePeriod: ClosedPeriod
+  /** The billing period the charge belongs to. */
+  billingPeriod: ClosedPeriod
+  /** Discounts applied to the usage-based charge. */
+  discounts?: RateCardDiscounts
+  /**
+   * The price of the charge.
+   *
+   * `free` prices are rejected on create: a usage-based charge always carries a
+   * concrete price.
+   */
+  price: PriceUsageBased
+  /** Spend commitments for the charge. */
+  commitments?: SpendCommitments
+  /**
+   * Unit conversion configuration for the charge.
+   *
+   * Synthesized on read for charges created from v1 dynamic or package prices:
+   * dynamic prices map to a unit price with a multiply unit config, and package
+   * prices map to a unit price with a divide unit config.
+   *
+   * Accepted on create only when the UnitConfig feature is enabled on the
+   * deployment; otherwise rejected.
+   */
+  unitConfig?: UnitConfig
+  /**
+   * The timestamp when the system lifecycle controller intent was deleted. The
+   * effective charge can remain visible while a manual override is active.
+   */
+  deletedAt?: Date
+}
+
+/** Usage-based charge create request. */
+export interface CreateChargeUsageBasedRequest {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** The type of the charge. */
+  type: 'usage_based'
+  /** The currency of the charge. */
+  currency: BillingCurrencyCode
+  /**
+   * Defines how a custom-currency charge is converted into its fiat invoice
+   * currency; the resolved rate is exposed through `resolved_cost_basis`. Required
+   * when `currency` is custom and the charge settles as `credit_then_invoice`; must
+   * be omitted otherwise.
+   */
+  costBasis?: ChargeCostBasis
+  /** The timestamp when the charge is intended to be invoiced. */
+  invoiceAt: Date
+  /** The effective service period covered by the charge. */
+  servicePeriod: ClosedPeriod
+  /** Unique reference ID of the charge. */
+  uniqueReferenceId?: string
+  /** Settlement mode of the charge. */
+  settlementMode: 'credit_then_invoice' | 'credit_only'
+  /** Tax configuration of the charge. */
+  taxConfig?: TaxConfig
+  /** Discounts applied to the usage-based charge. */
+  discounts?: RateCardDiscounts
+  /**
+   * The price of the charge.
+   *
+   * `free` prices are rejected on create: a usage-based charge always carries a
+   * concrete price.
+   */
+  price: PriceUsageBased
+  /** Spend commitments for the charge. */
+  commitments?: SpendCommitments
+  /**
+   * Unit conversion configuration for the charge.
+   *
+   * Synthesized on read for charges created from v1 dynamic or package prices:
+   * dynamic prices map to a unit price with a multiply unit config, and package
+   * prices map to a unit price with a divide unit config.
+   *
+   * Accepted on create only when the UnitConfig feature is enabled on the
+   * deployment; otherwise rejected.
+   */
+  unitConfig?: UnitConfig
+  /** A reference to the feature associated with the charge. */
+  feature: FeatureReference
+  /** The full, unprorated service period of the charge. */
+  fullServicePeriod?: ClosedPeriod
+  /** The billing period the charge belongs to. */
+  billingPeriod?: ClosedPeriod
+}
+
+/** Page paginated response. */
+export interface FeaturePagePaginatedResponse {
+  data: Feature[]
+  meta: PaginatedMeta
+}
+
 /** Rate card configuration snapshot for a usage-based invoice line. */
 export interface UpdateInvoiceLineRateCard {
   /** The price definition used to calculate charges for this line. */
   price: UpdatePrice
   /** Tax configuration snapshot for this line. */
-  taxConfig?: UpdateRateCardTaxConfig
+  taxConfig?: UpdateTaxCodeConfig
   /** The feature key associated with this line's rate card. */
   featureKey?: string
   /** Discount configuration from the rate card. */
@@ -4636,8 +6534,8 @@ export interface UpdateInvoiceLineRateCard {
 }
 
 /** Page paginated response. */
-export interface FeaturePagePaginatedResponse {
-  data: Feature[]
+export interface CreditGrantPagePaginatedResponse {
+  data: CreditGrant[]
   meta: PaginatedMeta
 }
 
@@ -4659,18 +6557,6 @@ export interface AppPagePaginatedResponse {
   meta: PaginatedMeta
 }
 
-/** Response of the app install. */
-export interface BillingInstallAppResponse {
-  app: App
-  defaultForCapabilityTypes: (
-    | 'report_usage'
-    | 'report_events'
-    | 'calculate_tax'
-    | 'invoice_customers'
-    | 'collect_payments'
-  )[]
-}
-
 /** Applications used by a billing profile. */
 export interface ProfileApps {
   /** The tax app used for this workflow. */
@@ -4681,89 +6567,43 @@ export interface ProfileApps {
   payment: App
 }
 
-/** A usage-based charge for a customer. */
-export interface ChargeUsageBased {
+/**
+ * A notification event records that a notification rule fired and tracks the
+ * delivery of its payload to each channel of the rule. Events are created by the
+ * system and cannot be modified.
+ */
+export interface NotificationEvent {
+  /** The unique identifier of the event. */
   id: string
-  /**
-   * Display name of the resource.
-   *
-   * Between 1 and 256 characters.
-   */
-  name: string
-  /**
-   * Optional description of the resource.
-   *
-   * Maximum 1024 characters.
-   */
-  description?: string
-  labels?: Labels
-  /** An ISO-8601 timestamp representation of entity creation date. */
+  /** The type of the event. */
+  type:
+    | 'entitlements.balance.threshold'
+    | 'entitlements.reset'
+    | 'invoice.created'
+    | 'invoice.updated'
+  /** When the event was generated. */
   createdAt: Date
-  /** An ISO-8601 timestamp representation of entity last update date. */
-  updatedAt: Date
-  /** An ISO-8601 timestamp representation of entity deletion date. */
-  deletedAt?: Date
-  /** The type of the charge. */
-  type: 'usage_based'
-  /** The customer owning the charge. */
-  customer: BillingCustomerReference
-  /**
-   * Indicates whether the charge lifecycle is controlled by OpenMeter or manually
-   * overridden by the API user.
-   */
-  lifecycleController: 'system' | 'manual'
-  /**
-   * The subscription that originated the charge, when the charge was created from a
-   * subscription item.
-   */
-  subscription?: SubscriptionReference
-  /** The currency of the charge. */
-  currency: string
-  /** The lifecycle status of the charge. */
-  status: 'created' | 'active' | 'final' | 'deleted'
-  /** The timestamp when the charge is intended to be invoiced. */
-  invoiceAt: Date
-  /** The effective service period covered by the charge. */
-  servicePeriod: ClosedPeriod
-  /** The full, unprorated service period of the charge. */
-  fullServicePeriod: ClosedPeriod
-  /** The billing period the charge belongs to. */
-  billingPeriod: ClosedPeriod
-  /**
-   * The earliest time when the charge should be advanced again by background
-   * processing.
-   */
-  advanceAfter?: Date
-  /** Unique reference ID of the charge. */
-  uniqueReferenceId?: string
-  /** Settlement mode of the charge. */
-  settlementMode: 'credit_then_invoice' | 'credit_only'
-  /** Tax configuration of the charge. */
-  taxConfig?: TaxConfig
-  /** Discounts applied to the usage-based charge. */
-  discounts?: RateCardDiscounts
-  /** The feature associated with the charge. */
-  featureKey: string
-  /** The feature ID associated with the charge. */
-  featureId: string
-  /** Aggregated booked and realtime totals for the charge. */
-  totals: ChargeTotals
-  /** The price of the charge. */
-  price: Price
-  /**
-   * Current intent from the system lifecycle controller for a charge that has an
-   * active manual override. The top-level charge fields remain the effective
-   * customer-facing intent.
-   */
-  systemIntent?: ChargeUsageBasedSystemIntent
+  /** The rule that generated the event. */
+  rule: NotificationRuleReference
+  /** The delivery status of the event, one entry per channel of the rule. */
+  deliveryStatus: NotificationEventDeliveryStatus[]
+  /** The payload delivered to the channels. */
+  payload: NotificationEventPayload
 }
 
-/** A rate card for a subscription add-on. */
-export interface SubscriptionAddonRateCard {
-  /** The rate card. */
+/** A subscription item pins a rate card to a cadence within a subscription phase. */
+export interface SubscriptionItem {
+  /** The unique identifier of the subscription item instance. */
+  id: string
+  /** An ISO-8601 timestamp representation of when this item version becomes active. */
+  activeFrom: Date
+  /**
+   * An ISO-8601 timestamp representation of when this item version stops being
+   * active.
+   */
+  activeTo?: Date
+  /** The rate card describing what the customer gets and pays for this item. */
   rateCard: RateCard
-  /** The IDs of the subscription items that this rate card belongs to. */
-  affectedSubscriptionItemIds: string[]
 }
 
 /**
@@ -4792,6 +6632,27 @@ export interface PlanPhase {
   duration?: string
   /** The rate cards of the plan. */
   rateCards: RateCard[]
+}
+
+/**
+ * Add a new rate card to a phase. Adding an item to the current phase closes the
+ * active version of the same item key and appends a new version.
+ */
+export interface SubscriptionEditAddItem {
+  /** Discriminator for the add-item operation. */
+  type: 'add_item'
+  /** The key of the phase to add the item to. */
+  phaseKey: string
+  /** The rate card describing what the customer gets and pays for the new item. */
+  rateCard: RateCard
+}
+
+/** A rate card for a subscription add-on. */
+export interface SubscriptionAddonRateCard {
+  /** The rate card. */
+  rateCard: RateCard
+  /** The IDs of the subscription items that this rate card belongs to. */
+  affectedSubscriptionItemIds: string[]
 }
 
 /**
@@ -5119,16 +6980,79 @@ export interface UpsertBillingProfileRequest {
   default: boolean
 }
 
-/** Addon purchased with a subscription. */
-export interface SubscriptionAddon {
+/**
+ * A realization run of a charge.
+ *
+ * `totals` and `detailed_lines` are only populated with the `realization.totals`
+ * and `realization.detailed_lines` expands, respectively, since computing them
+ * requires re-deriving the run's rated breakdown. `invoice` is an ID reference
+ * unless the `realization.invoice` expand is used, which resolves it to the
+ * invoice header of the run's booked line: the invoice entity without its `lines`
+ * and without the `customer` snapshot (the charge itself already identifies the
+ * customer).
+ */
+export interface ChargeRealization {
+  /**
+   * The ID of the realization run. Not present on `outstanding` entries, which are
+   * projections rather than persisted runs.
+   */
+  id?: string
+  /**
+   * The ID of the invoice line this realization was booked to, when the realization
+   * has been invoiced.
+   */
+  lineId?: string
+  /** The reference of the invoice related to the realization. */
+  invoice?: ChargeRealizationInvoiceOrReference
+  /** The type of the realization run. */
+  type: 'final_realization' | 'partial_invoice' | 'outstanding' | 'voided'
+  /** The service period covered by this realization run. */
+  servicePeriod: ClosedPeriod
+  /**
+   * The metered usage quantity this realization run accounts for. Only present on
+   * usage-based charges; flat fees are not metered, so their realizations carry no
+   * usage.
+   *
+   * Booked entries report a signed delta: a negative value states a downward usage
+   * correction (or a voided run that snapshotted behind its live neighbors) instead
+   * of masking it as zero.
+   *
+   * On an `outstanding` entry this is `0` unless the `real_time_usage` expand is
+   * applied, in which case it is the not-yet-booked remainder of the live metering
+   * read (never negative).
+   */
+  usage?: string
+  /**
+   * The payment state of the realization, when the charge requires a fiat
+   * transaction to settle.
+   */
+  payment?: ChargeRealizationPayment
+  /**
+   * Financial totals for the realization run, including credit allocations.
+   *
+   * Requires the `realization.totals` expand.
+   */
+  totals?: Totals
+  /**
+   * The detailed (rated) lines produced by the realization run.
+   *
+   * Requires the `realization.detailed_lines` expand.
+   */
+  detailedLines?: ChargeRealizationDetailedLine[]
+}
+
+/** Page paginated response. */
+export interface NotificationEventPagePaginatedResponse {
+  data: NotificationEvent[]
+  meta: PaginatedMeta
+}
+
+/**
+ * A subscription phase groups the rate cards in effect for a segment of the
+ * subscription's lifetime. Analogous to plan phases.
+ */
+export interface SubscriptionPhase {
   id: string
-  labels?: Labels
-  /** An ISO-8601 timestamp representation of entity creation date. */
-  createdAt: Date
-  /** An ISO-8601 timestamp representation of entity last update date. */
-  updatedAt: Date
-  /** An ISO-8601 timestamp representation of entity deletion date. */
-  deletedAt?: Date
   /**
    * Display name of the resource.
    *
@@ -5141,23 +7065,63 @@ export interface SubscriptionAddon {
    * Maximum 1024 characters.
    */
   description?: string
-  /** The add-on associated with the subscription. */
-  addon: AddonReference
-  /** The quantity of the add-on. Always 1 for single instance add-ons. */
-  quantity: number
-  /**
-   * An ISO-8601 timestamp representation of which point in time the quantity was
-   * resolved to.
-   */
-  quantityAt: Date
-  /** An ISO-8601 timestamp representation of the cadence start of the resource. */
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  key: string
+  /** An ISO-8601 timestamp representation of when the phase becomes active. */
   activeFrom: Date
-  /** An ISO-8601 timestamp representation of the cadence end of the resource. */
+  /**
+   * An ISO-8601 timestamp representation of when the phase stops being active.
+   * Open-ended for the last phase.
+   */
   activeTo?: Date
-  /** The timeline of the add-on. The returned periods are sorted and continuous. */
-  timeline: SubscriptionAddonTimelineSegment[]
-  /** The rate cards of the add-on. */
-  rateCards: SubscriptionAddonRateCard[]
+  /**
+   * The rate cards in effect for this phase, resolved to the version active at the
+   * queried time (the currently active version for the current phase, the first
+   * version for future phases, and the last version for past phases).
+   */
+  items: SubscriptionItem[]
+}
+
+/**
+ * An inline (custom) plan definition used to create or change a subscription
+ * without referencing a published plan. Mirrors the plan create shape without a
+ * key or version, since a custom plan is not persisted or versioned on its own.
+ *
+ * `settlement_mode` is also omitted: it is a subscription-level concern set via
+ * the `settlement_mode` field on the create/change request, not on the inline
+ * plan.
+ */
+export interface SubscriptionCustomPlan {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** The currency code of the plan. */
+  currency: BillingCurrencyCode
+  /** The billing cadence for subscriptions using this plan. */
+  billingCadence: string
+  /** Whether pro-rating is enabled for this plan. */
+  proRatingEnabled: boolean
+  /**
+   * The plan phases define the pricing ramp for a subscription. A phase switch
+   * occurs only at the end of a billing period. At least one phase is required.
+   */
+  phases: PlanPhase[]
 }
 
 /** Plans provide a template for subscriptions. */
@@ -5241,7 +7205,10 @@ export interface Plan {
   validationErrors?: ProductCatalogValidationError[]
 }
 
-/** Plan create request. */
+/**
+ * Plan create request. `settlement_mode` is re-declared as optional with a
+ * `credit_then_invoice` default, applied only on create.
+ */
 export interface CreatePlanRequest {
   /**
    * Display name of the resource.
@@ -5273,9 +7240,15 @@ export interface CreatePlanRequest {
    * occurs only at the end of a billing period. At least one phase is required.
    */
   phases: PlanPhase[]
+  /** Settlement mode for the plan. Defaults to `credit_then_invoice` when omitted. */
+  settlementMode: 'credit_then_invoice' | 'credit_only'
 }
 
-/** Plan upsert request. */
+/**
+ * Plan upsert (update) request. `settlement_mode` is re-declared as optional with
+ * no default, so an omitted value leaves the plan's existing settlement mode
+ * unchanged.
+ */
 export interface UpsertPlanRequest {
   /**
    * Display name of the resource.
@@ -5297,6 +7270,52 @@ export interface UpsertPlanRequest {
    * occurs only at the end of a billing period. At least one phase is required.
    */
   phases: PlanPhase[]
+  /**
+   * Settlement mode for the plan. When omitted, the existing settlement mode is
+   * preserved.
+   */
+  settlementMode?: 'credit_then_invoice' | 'credit_only'
+}
+
+/** Addon purchased with a subscription. */
+export interface SubscriptionAddon {
+  id: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  /** The add-on associated with the subscription. */
+  addon: AddonReference
+  /** The quantity of the add-on. Always 1 for single instance add-ons. */
+  quantity: number
+  /**
+   * An ISO-8601 timestamp representation of which point in time the quantity was
+   * resolved to.
+   */
+  quantityAt: Date
+  /** An ISO-8601 timestamp representation of the cadence start of the resource. */
+  activeFrom: Date
+  /** An ISO-8601 timestamp representation of the cadence end of the resource. */
+  activeTo?: Date
+  /** The timeline of the add-on. The returned periods are sorted and continuous. */
+  timeline: SubscriptionAddonTimelineSegment[]
+  /** The rate cards of the add-on. */
+  rateCards: SubscriptionAddonRateCard[]
 }
 
 /** Page paginated response. */
@@ -5311,21 +7330,238 @@ export interface ProfilePagePaginatedResponse {
   meta: PaginatedMeta
 }
 
-/** Page paginated response. */
-export interface ChargePagePaginatedResponse {
-  data: Charge[]
-  meta: PaginatedMeta
+/** Subscription. */
+export interface Subscription {
+  id: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /**
+   * Display name of the subscription. Defaults to the plan name when the
+   * subscription is created from a plan.
+   */
+  name: string
+  /** Optional description of the subscription. */
+  description?: string
+  /**
+   * An ISO-8601 timestamp representation of when the subscription became (or will
+   * become) active.
+   */
+  activeFrom: Date
+  /**
+   * An ISO-8601 timestamp representation of when the subscription stops being
+   * active. Open-ended when not set.
+   */
+  activeTo?: Date
+  /** The customer ID of the subscription. */
+  customerId: string
+  /** The plan ID of the subscription. Set if subscription is created from a plan. */
+  planId?: string
+  /**
+   * The plan the subscription was created from, if any. Includes the plan key and
+   * version so clients can resolve the exact plan revision.
+   */
+  plan?: SubscriptionPlanReference
+  /** The fiat currency in which the subscription is invoiced. */
+  invoiceCurrency: string
+  /**
+   * Controls whether custom-currency cost bases are resolved dynamically or pinned
+   * when their currency pair is introduced to the subscription.
+   */
+  costBasisMode: 'dynamic' | 'pinned'
+  /** Cost bases pinned to custom-currency pairs for this subscription. */
+  costBasisPins: SubscriptionCostBasisPin[]
+  /**
+   * The billing cadence of the subscription in ISO-8601 duration format. Defines how
+   * often the customer is billed. Examples: `P1M` (monthly), `P3M` (quarterly),
+   * `P1Y` (annually).
+   */
+  billingCadence: string
+  /** The pro-rating configuration of the subscription. */
+  proRatingConfig?: SubscriptionProRatingConfig
+  /**
+   * A billing anchor is the fixed point in time that determines the subscription's
+   * recurring billing cycle. It affects when charges occur and how prorations are
+   * calculated. Common anchors:
+   *
+   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
+   * - Subscription anniversary (day customer signed up)
+   * - Custom date (customer-specified day)
+   */
+  billingAnchor: Date
+  /** The status of the subscription. */
+  status: 'active' | 'inactive' | 'canceled' | 'scheduled'
+  /**
+   * Settlement mode for billing.
+   *
+   * Values:
+   *
+   * - `credit_then_invoice`: Credits are applied first, then any remainder is
+   * invoiced.
+   * - `credit_only`: Usage is settled exclusively against credits.
+   */
+  settlementMode?: 'credit_then_invoice' | 'credit_only'
+  /**
+   * The current aligned billing period. Present only when the subscription is active
+   * and aligned.
+   */
+  currentPeriod?: ClosedPeriod
+  /**
+   * The phases of the subscription in chronological order. A phase groups the rate
+   * cards that are in effect for a segment of the subscription's lifetime.
+   */
+  phases: SubscriptionPhase[]
 }
 
-/** Page paginated response. */
-export interface SubscriptionAddonPagePaginatedResponse {
-  data: SubscriptionAddon[]
-  meta: PaginatedMeta
+export interface SubscriptionCreate {
+  labels?: Labels
+  /**
+   * Settlement mode for billing.
+   *
+   * Values:
+   *
+   * - `credit_then_invoice`: Credits are applied first, then any remainder is
+   * invoiced.
+   * - `credit_only`: Usage is settled exclusively against credits.
+   */
+  settlementMode?: 'credit_then_invoice' | 'credit_only'
+  /** The customer to create the subscription for. */
+  customer: { id?: string; key?: string }
+  /**
+   * A reference to a published plan the subscription is created from.
+   *
+   * Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the
+   * subscription on an existing published plan; use `custom_plan` to define the plan
+   * inline.
+   */
+  plan?: { id?: string; key?: string; version?: number }
+  /**
+   * An inline plan definition to create the subscription from, without referencing a
+   * published plan.
+   *
+   * Exactly one of `plan` or `custom_plan` must be provided. The subscription is not
+   * linked to a persisted plan, so the response omits the `plan` reference.
+   */
+  customPlan?: SubscriptionCustomPlan
+  /**
+   * The key of the phase to start the subscription in. If not provided, the
+   * subscription starts in the first phase of the plan.
+   *
+   * Only applies when creating from a published `plan`; custom plans define their
+   * own phases inline.
+   */
+  startingPhase?: string
+  /**
+   * When the subscription should start. If not provided, the subscription starts
+   * immediately. Provide a future timestamp to schedule the subscription to start
+   * later — this creates a not-yet-active, scheduled subscription. A timestamp in
+   * the past is rejected.
+   */
+  timing?: SubscriptionCreateTiming
+  /**
+   * A billing anchor is the fixed point in time that determines the subscription's
+   * recurring billing cycle. It affects when charges occur and how prorations are
+   * calculated. Common anchors:
+   *
+   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
+   * - Subscription anniversary (day customer signed up)
+   * - Custom date (customer-specified day)
+   *
+   * If not provided, the subscription will be created with the subscription's
+   * creation time as the billing anchor.
+   */
+  billingAnchor?: Date
+  /** Controls how custom-currency cost bases are selected for the subscription. */
+  costBasisMode: 'dynamic' | 'pinned'
+}
+
+/** Request for changing a subscription. */
+export interface SubscriptionChange {
+  labels?: Labels
+  /**
+   * Settlement mode for billing.
+   *
+   * Values:
+   *
+   * - `credit_then_invoice`: Credits are applied first, then any remainder is
+   * invoiced.
+   * - `credit_only`: Usage is settled exclusively against credits.
+   */
+  settlementMode?: 'credit_then_invoice' | 'credit_only'
+  /** The customer to create the subscription for. */
+  customer: { id?: string; key?: string }
+  /**
+   * A reference to a published plan the subscription is created from.
+   *
+   * Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the
+   * subscription on an existing published plan; use `custom_plan` to define the plan
+   * inline.
+   */
+  plan?: { id?: string; key?: string; version?: number }
+  /**
+   * An inline plan definition to create the subscription from, without referencing a
+   * published plan.
+   *
+   * Exactly one of `plan` or `custom_plan` must be provided. The subscription is not
+   * linked to a persisted plan, so the response omits the `plan` reference.
+   */
+  customPlan?: SubscriptionCustomPlan
+  /**
+   * The key of the phase to start the subscription in. If not provided, the
+   * subscription starts in the first phase of the plan.
+   *
+   * Only applies when creating from a published `plan`; custom plans define their
+   * own phases inline.
+   */
+  startingPhase?: string
+  /**
+   * A billing anchor is the fixed point in time that determines the subscription's
+   * recurring billing cycle. It affects when charges occur and how prorations are
+   * calculated. Common anchors:
+   *
+   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
+   * - Subscription anniversary (day customer signed up)
+   * - Custom date (customer-specified day)
+   *
+   * If not provided, the subscription will be created with the subscription's
+   * creation time as the billing anchor.
+   */
+  billingAnchor?: Date
+  /** Controls how custom-currency cost bases are selected for the subscription. */
+  costBasisMode: 'dynamic' | 'pinned'
+  /**
+   * Timing configuration for the change, when the change should take effect. For
+   * changing a subscription, the accepted values depend on the subscription
+   * configuration.
+   */
+  timing: SubscriptionEditTiming
 }
 
 /** Page paginated response. */
 export interface PlanPagePaginatedResponse {
   data: Plan[]
+  meta: PaginatedMeta
+}
+
+/**
+ * Request for editing a running subscription. Applies an ordered batch of
+ * customizations to the subscription's phases and items. A later customization
+ * observes the state produced by earlier ones.
+ */
+export interface SubscriptionEdit {
+  /** The ordered batch of customizations to apply to the running subscription. */
+  customizations: SubscriptionEditOperation[]
+  /** When the requested changes should take effect. Defaults to immediate. */
+  timing: SubscriptionEditTiming
+}
+
+/** Page paginated response. */
+export interface SubscriptionAddonPagePaginatedResponse {
+  data: SubscriptionAddon[]
   meta: PaginatedMeta
 }
 
@@ -5372,7 +7608,7 @@ export interface InvoiceStandard {
    * Present only when there are one or more validation findings. An empty list is
    * omitted.
    */
-  validationIssues?: InvoiceValidationIssue[]
+  validationIssues?: ValidationIssue[]
   /** External identifiers assigned to this invoice by third-party systems. */
   externalReferences?: InvoiceExternalReferences
   /** Discriminator field identifying this as a standard invoice. */
@@ -5452,8 +7688,265 @@ export interface UpdateInvoiceStandardRequest {
 }
 
 /** Page paginated response. */
+export interface SubscriptionPagePaginatedResponse {
+  data: Subscription[]
+  meta: PaginatedMeta
+}
+
+/** Response for changing a subscription. */
+export interface SubscriptionChangeResponse {
+  /** The current subscription before the change. */
+  current: Subscription
+  /** The new state of the subscription after the change. */
+  next: Subscription
+}
+
+/** Response for migrating a subscription. */
+export interface SubscriptionMigrateResponse {
+  /**
+   * The original subscription's own fields returned by the migration. For an
+   * in-place migration this is the before snapshot; for replacement it includes the
+   * cancellation. Does not include phases or the current billing period.
+   */
+  current: SubscriptionBase
+  /** The resulting subscription, including its phases and items. */
+  next: Subscription
+}
+
+/** A flat fee charge for a customer. */
+export interface ChargeFlatFee {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of the charge. */
+  type: 'flat_fee'
+  /**
+   * The customer owning the charge.
+   *
+   * By default, only the `id` of the customer is returned. For more details use the
+   * `customer` expand.
+   */
+  customer: CustomerOrReference
+  /**
+   * Indicates whether the charge lifecycle is controlled by the system or manually
+   * overridden by the API user.
+   */
+  lifecycleController: 'system' | 'manual'
+  /**
+   * The subscription that originated the charge, when the charge was created from a
+   * subscription item.
+   *
+   * By default, only the `id`, `phase.id`, `phase.item.id` of the subscription is
+   * returned. For more details use the `subscription` expand.
+   */
+  subscription?: SubscriptionOrReference
+  /** The currency of the charge. */
+  currency: BillingCurrencyCode
+  /**
+   * The resolved fiat conversion rate of a custom-currency charge. Resolution
+   * depends on costbasis type: dynamic is resolved when charge becomes active, all
+   * other types resolved on creation.
+   */
+  resolvedCostBasis?: ChargeResolvedCostBasis
+  /** The lifecycle status of the charge. */
+  status: 'created' | 'active' | 'final' | 'deleted'
+  /**
+   * Validation issues found while processing the charge.
+   *
+   * Present only when there are one or more validation findings. An empty list is
+   * omitted.
+   */
+  validationIssues?: ValidationIssue[]
+  /** The timestamp when the charge is intended to be invoiced. */
+  invoiceAt: Date
+  /** The effective service period covered by the charge. */
+  servicePeriod: ClosedPeriod
+  /** The full, unprorated service period of the charge. */
+  fullServicePeriod: ClosedPeriod
+  /** The billing period the charge belongs to. */
+  billingPeriod: ClosedPeriod
+  /**
+   * The earliest time when the charge should be advanced again by background
+   * processing.
+   */
+  advanceAfter?: Date
+  /** Unique reference ID of the charge. */
+  uniqueReferenceId?: string
+  /** Settlement mode of the charge. */
+  settlementMode: 'credit_then_invoice' | 'credit_only'
+  /** Tax configuration of the charge. */
+  taxConfig?: TaxConfig
+  /** The realization runs of the charge, sorted by `created_at`. */
+  realizations: ChargeRealization[]
+  /** Payment term of the flat fee charge. */
+  paymentTerm: PricePaymentTerm
+  /** The discounts applied to the charge. */
+  discounts?: ChargeFlatFeeDiscounts
+  /** The feature associated with the charge, when applicable. */
+  feature?: FeatureOrReference
+  /** The proration configuration of the charge. */
+  prorationConfiguration: RateCardProrationConfiguration
+  /** The amount after proration of the charge. */
+  amountAfterProration: CurrencyAmount
+  /** The price of the charge. */
+  price: PriceFlat
+  /**
+   * Current intent from the system lifecycle controller for a charge that has an
+   * active manual override. The top-level charge fields remain the effective
+   * customer-facing intent.
+   */
+  systemIntent?: ChargeFlatFeeSystemIntent
+}
+
+/** A usage-based charge for a customer. */
+export interface ChargeUsageBased {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of the charge. */
+  type: 'usage_based'
+  /**
+   * The customer owning the charge.
+   *
+   * By default, only the `id` of the customer is returned. For more details use the
+   * `customer` expand.
+   */
+  customer: CustomerOrReference
+  /**
+   * Indicates whether the charge lifecycle is controlled by the system or manually
+   * overridden by the API user.
+   */
+  lifecycleController: 'system' | 'manual'
+  /**
+   * The subscription that originated the charge, when the charge was created from a
+   * subscription item.
+   *
+   * By default, only the `id`, `phase.id`, `phase.item.id` of the subscription is
+   * returned. For more details use the `subscription` expand.
+   */
+  subscription?: SubscriptionOrReference
+  /** The currency of the charge. */
+  currency: BillingCurrencyCode
+  /**
+   * The resolved fiat conversion rate of a custom-currency charge. Resolution
+   * depends on costbasis type: dynamic is resolved when charge becomes active, all
+   * other types resolved on creation.
+   */
+  resolvedCostBasis?: ChargeResolvedCostBasis
+  /** The lifecycle status of the charge. */
+  status: 'created' | 'active' | 'final' | 'deleted'
+  /**
+   * Validation issues found while processing the charge.
+   *
+   * Present only when there are one or more validation findings. An empty list is
+   * omitted.
+   */
+  validationIssues?: ValidationIssue[]
+  /** The timestamp when the charge is intended to be invoiced. */
+  invoiceAt: Date
+  /** The effective service period covered by the charge. */
+  servicePeriod: ClosedPeriod
+  /** The full, unprorated service period of the charge. */
+  fullServicePeriod: ClosedPeriod
+  /** The billing period the charge belongs to. */
+  billingPeriod: ClosedPeriod
+  /**
+   * The earliest time when the charge should be advanced again by background
+   * processing.
+   */
+  advanceAfter?: Date
+  /** Unique reference ID of the charge. */
+  uniqueReferenceId?: string
+  /** Settlement mode of the charge. */
+  settlementMode: 'credit_then_invoice' | 'credit_only'
+  /** Tax configuration of the charge. */
+  taxConfig?: TaxConfig
+  /** The realization runs of the charge, sorted by `created_at`. */
+  realizations: ChargeRealization[]
+  /** Discounts applied to the usage-based charge. */
+  discounts?: RateCardDiscounts
+  /** The feature associated with the charge. */
+  feature: FeatureOrReference
+  /** Aggregated booked and realtime totals for the charge. */
+  totals: ChargeTotals
+  /**
+   * The metered usage quantity of the charge for its full service period.
+   *
+   * Requires the `real_time_usage` expand, since it is computed live from the
+   * metering store rather than stored on the charge.
+   */
+  usage?: string
+  /**
+   * The price of the charge.
+   *
+   * `free` prices are rejected on create: a usage-based charge always carries a
+   * concrete price.
+   */
+  price: PriceUsageBased
+  /** Spend commitments for the charge. */
+  commitments?: SpendCommitments
+  /**
+   * Unit conversion configuration for the charge.
+   *
+   * Synthesized on read for charges created from v1 dynamic or package prices:
+   * dynamic prices map to a unit price with a multiply unit config, and package
+   * prices map to a unit price with a divide unit config.
+   *
+   * Accepted on create only when the UnitConfig feature is enabled on the
+   * deployment; otherwise rejected.
+   */
+  unitConfig?: UnitConfig
+  /**
+   * Current intent from the system lifecycle controller for a charge that has an
+   * active manual override. The top-level charge fields remain the effective
+   * customer-facing intent.
+   */
+  systemIntent?: ChargeUsageBasedSystemIntent
+}
+
+/** Page paginated response. */
 export interface InvoicePagePaginatedResponse {
   data: Invoice[]
+  meta: PaginatedMeta
+}
+
+/** Page paginated response. */
+export interface ChargePagePaginatedResponse {
+  data: Charge[]
   meta: PaginatedMeta
 }
 
@@ -5487,6 +7980,12 @@ export type MeterAggregation =
 export type MeterQueryGranularity = 'PT1M' | 'PT1H' | 'P1D' | 'P1M'
 
 /**
+ * The meter query granularities the usage history can be grouped into. Sub-hour
+ * windows are too expensive to compute and monthly windows are not supported.
+ */
+export type EntitlementHistoryWindowSize = 'PT1H' | 'P1D'
+
+/**
  * Filters on the given string field value by exact match. All properties are
  * optional; provide exactly one to specify the comparison.
  */
@@ -5495,6 +7994,9 @@ export type StringFieldFilterExact =
 
 /** The payment term of a flat price. */
 export type PricePaymentTerm = 'in_advance' | 'in_arrears'
+
+/** Filter by a boolean value (true/false). */
+export type BooleanFieldFilter = boolean | { eq: boolean }
 
 /** Fiat or custom currency code. */
 export type BillingCurrencyCode = string | string
@@ -5516,6 +8018,20 @@ export type UlidFieldFilter =
 export type DateTimeFieldFilter =
   Date | { eq?: Date; lt?: Date; lte?: Date; gt?: Date; gte?: Date }
 
+/** The time from which usage is measured, as a preset or an explicit timestamp. */
+export type EntitlementMeasureUsageFrom = 'current_period_start' | 'now' | Date
+
+/** Payment settings for a billing workflow. */
+export type WorkflowPaymentSettings =
+  | WorkflowPaymentChargeAutomaticallySettings
+  | WorkflowPaymentSendInvoiceSettings
+
+/**
+ * When a subscription should start: immediate (the default) or a custom timestamp
+ * to schedule a future start.
+ */
+export type SubscriptionCreateTiming = 'immediate' | Date
+
 /**
  * Subscription edit timing defined when the changes should take effect. If the
  * provided configuration is not supported by the subscription, an error will be
@@ -5523,19 +8039,33 @@ export type DateTimeFieldFilter =
  */
 export type SubscriptionEditTiming = 'immediate' | 'next_billing_cycle' | Date
 
+/** Request to execute an operator action on an installed app. */
+export type AppActionRequest = AppReconcileWebhookEventsActionRequest
+
 /** Request to install an app from the catalog. */
 export type InstallAppRequest =
   InstallAppStripeWithApiKey | InstallAppSandbox | InstallAppExternalInvoicing
 
 /** Payment settings for a billing workflow. */
-export type WorkflowPaymentSettings =
-  | WorkflowPaymentChargeAutomaticallySettings
-  | WorkflowPaymentSendInvoiceSettings
-
-/** Payment settings for a billing workflow. */
 export type UpdateBillingWorkflowPaymentSettings =
   | UpdateBillingWorkflowPaymentChargeAutomaticallySettings
   | UpdateBillingWorkflowPaymentSendInvoiceSettings
+
+/**
+ * Cost basis selection for a custom-currency charge. The variant chosen fixes when
+ * and how the conversion rate is determined.
+ */
+export type CreateChargeCostBasis =
+  | CreateChargeCostBasisDynamic
+  | CreateChargeCostBasisPinned
+  | CreateChargeCostBasisManual
+
+/**
+ * Cost basis selection for a custom-currency charge. The variant chosen fixes when
+ * and how the conversion rate is determined.
+ */
+export type ChargeCostBasis =
+  ChargeCostBasisDynamic | ChargeCostBasisPinned | ChargeCostBasisManual
 
 /** A parameter that failed validation. */
 export type InvalidParameter =
@@ -5566,8 +8096,27 @@ export type UpdateAppRequest =
  */
 export type FeatureUnitCost = FeatureManualUnitCost | FeatureLlmUnitCost
 
+/**
+ * A detailed (child) line type of a charge realization run.
+ *
+ * This is distinct from an invoice's own detailed lines: it represents the
+ * rated/priced breakdown produced by the realization run itself, before that
+ * breakdown is (or is not yet) reflected on an invoice line. Credit-then-invoice
+ * runs include credit allocations in these lines, while credits-only runs keep the
+ * gross rated detail.
+ */
+export type ChargeRealizationDetailedLine =
+  ChargeRealizationDetailedLineFlatFee | ChargeRealizationDetailedLineUsageBased
+
 /** Fiat or custom currency. */
 export type Currency = CurrencyFiat | CurrencyCustom
+
+/** Customer or reference. */
+export type CustomerOrReference = Customer | CustomerReference
+
+/** An entitlement grants a customer access to a feature. */
+export type Entitlement =
+  EntitlementMetered | EntitlementStatic | EntitlementBoolean
 
 /**
  * The alignment for collecting the pending line items into an invoice.
@@ -5579,9 +8128,38 @@ export type Currency = CurrencyFiat | CurrencyCustom
 export type WorkflowCollectionAlignment =
   WorkflowCollectionAlignmentSubscription | WorkflowCollectionAlignmentAnchored
 
+/**
+ * A notification rule selects the type of event to generate, the conditions
+ * specific to that type, and the channels to deliver the events to.
+ */
+export type NotificationRule =
+  | NotificationRuleBalanceThreshold
+  | NotificationRuleEntitlementReset
+  | NotificationRuleInvoiceCreated
+  | NotificationRuleInvoiceUpdated
+
+/**
+ * Request body for creating or updating a notification rule. Updates replace the
+ * rule's mutable state: omitting `disabled`, `labels`, or `features` resets them
+ * to their defaults. The `type` must match the existing rule on update.
+ */
+export type NotificationRuleRequest =
+  | NotificationRuleBalanceThresholdRequest
+  | NotificationRuleEntitlementResetRequest
+  | NotificationRuleInvoiceCreatedRequest
+  | NotificationRuleInvoiceUpdatedRequest
+
 /** Price. */
 export type Price =
   PriceFree | PriceFlat | PriceUnit | PriceGraduated | PriceVolume
+
+/**
+ * Usage-based price types for a rate card or charge.
+ *
+ * When UnitConfig is present on the object, these price types operate on billing
+ * units (i.e. post-conversion quantities), not raw metered units.
+ */
+export type PriceUsageBased = PriceUnit | PriceGraduated | PriceVolume
 
 /** Price. */
 export type UpdatePrice =
@@ -5591,15 +8169,48 @@ export type UpdatePrice =
   | UpdatePriceGraduated
   | UpdatePriceVolume
 
+/** Entitlement create request. */
+export type CreateEntitlementRequest =
+  | CreateEntitlementMeteredRequest
+  | CreateEntitlementStaticRequest
+  | CreateEntitlementBooleanRequest
+
 /** Installed application. */
 export type App = AppStripe | AppSandbox | AppExternalInvoicing
+
+/** Response of the app install. */
+export type BillingInstallAppResponse =
+  InstalledAppStripe | InstalledAppSandbox | InstalledAppExternalInvoicing
+
+/** The payload delivered to the channels, discriminated by the event type. */
+export type NotificationEventPayload =
+  | NotificationEventBalanceThresholdPayload
+  | NotificationEventResetPayload
+  | NotificationEventInvoiceCreatedPayload
+  | NotificationEventInvoiceUpdatedPayload
+
+/** Feature or reference. */
+export type FeatureOrReference = Feature | FeatureReference
+
+/** ChargeRealizationInvoice or reference. */
+export type ChargeRealizationInvoiceOrReference =
+  ChargeRealizationInvoice | ChargeRealizationInvoiceReference
 
 /** Customer charge. */
 export type CreateChargeRequest =
   CreateChargeFlatFeeRequest | CreateChargeUsageBasedRequest
 
-/** Customer charge. */
-export type Charge = ChargeFlatFee | ChargeUsageBased
+/**
+ * A single customization to apply to a running subscription. The `type` field
+ * discriminates which operation is performed.
+ */
+export type SubscriptionEditOperation =
+  | SubscriptionEditAddItem
+  | SubscriptionEditRemoveItem
+  | SubscriptionEditAddPhase
+  | SubscriptionEditRemovePhase
+  | SubscriptionEditStretchPhase
+  | SubscriptionEditUnscheduleEdit
 
 /**
  * A top-level line item on an invoice.
@@ -5619,6 +8230,9 @@ export type InvoiceLine = InvoiceStandardLine
  */
 export type UpdateInvoiceLine = UpdateInvoiceStandardLine
 
+/** Subscription or reference. */
+export type SubscriptionOrReference = Subscription | SubscriptionReference
+
 /**
  * An invoice issued to a customer.
  *
@@ -5630,6 +8244,9 @@ export type Invoice = InvoiceStandard
 
 /** UpdateInvoiceRequest update request. */
 export type UpdateInvoiceRequest = UpdateInvoiceStandardRequest
+
+/** Customer charge. */
+export type Charge = ChargeFlatFee | ChargeUsageBased
 
 /**
  * Sort query.
@@ -5663,20 +8280,6 @@ export interface BaseErrorInput {
 }
 
 /**
- * Payment settings for a billing workflow when the collection method is send
- * invoice.
- */
-export interface WorkflowPaymentSendInvoiceSettingsInput {
-  /** The collection method for the invoice. */
-  collectionMethod: 'send_invoice'
-  /**
-   * The period after which the invoice is due. With some payment solutions it's only
-   * applicable for manual collection method.
-   */
-  dueAfter?: string
-}
-
-/**
  * Invoice-level invoicing settings.
  *
  * A subset of BillingWorkflowInvoicingSettings limited to fields that are
@@ -5689,6 +8292,20 @@ export interface InvoiceWorkflowInvoicingSettingsInput {
   /** The period for the invoice to be kept in draft status for manual reviews. */
   draftPeriod?: string
   /** The period after which the invoice is considered overdue if not paid. */
+  dueAfter?: string
+}
+
+/**
+ * Payment settings for a billing workflow when the collection method is send
+ * invoice.
+ */
+export interface WorkflowPaymentSendInvoiceSettingsInput {
+  /** The collection method for the invoice. */
+  collectionMethod: 'send_invoice'
+  /**
+   * The period after which the invoice is due. With some payment solutions it's only
+   * applicable for manual collection method.
+   */
   dueAfter?: string
 }
 
@@ -5720,6 +8337,20 @@ export interface UpdateBillingWorkflowPaymentSendInvoiceSettingsInput {
   dueAfter?: string
 }
 
+/**
+ * Usage granted automatically after each reset of a metered entitlement. The
+ * balance returns to `amount` after every reset.
+ */
+export interface EntitlementIssueAfterResetInput {
+  /** The amount granted after each reset, in the feature's unit. */
+  amount: string
+  /**
+   * The priority of the grant created after each reset. Lower values have higher
+   * priority.
+   */
+  priority?: number
+}
+
 /** Metering event following the CloudEvents specification. */
 export interface EventInput {
   /** Identifies the event. */
@@ -5749,6 +8380,25 @@ export interface EventInput {
   time?: Date | null
   /** The event payload. Optional, if present it must be a JSON object. */
   data?: Record<string, unknown> | null
+}
+
+/** Request body for resetting the usage of a metered entitlement. */
+export interface ResetCustomerEntitlementUsageRequestInput {
+  /**
+   * The time the reset takes effect. Defaults to the current time and cannot be in
+   * the future. Truncated to the minute.
+   */
+  effectiveAt?: Date
+  /**
+   * Whether the usage period anchor is kept. When false, the anchor moves to
+   * `effective_at`.
+   */
+  retainAnchor?: boolean
+  /**
+   * Whether overage carries over into the new usage period. Defaults to the
+   * entitlement's own setting.
+   */
+  preserveOverage?: boolean
 }
 
 /** Unauthorized. */
@@ -5825,29 +8475,6 @@ export interface AppStripeCreateCheckoutSessionTaxIdCollectionInput {
   required?: 'if_supported' | 'never'
 }
 
-/** Purchase and payment terms of the grant. */
-export interface CreateCreditGrantPurchaseInput {
-  /** Currency of the purchase amount. */
-  currency: string
-  /**
-   * Cost basis per credit unit used to calculate the purchase amount.
-   *
-   * If `per_unit_cost_basis` is 0.50 and credit amount is
-   * $100.00, the total
-   * charge is $50.00. The value must be greater than 0. If the
-   * cost basis is 0, use `funding_method=none` instead.
-   *
-   * Defaults to 1.0.
-   */
-  perUnitCostBasis?: string
-  /**
-   * Controls when credits become available for consumption.
-   *
-   * Defaults to `on_creation`.
-   */
-  availabilityPolicy?: 'on_creation'
-}
-
 /** The entitlement template of a metered entitlement. */
 export interface RateCardMeteredEntitlementInput {
   /** The type of the entitlement template. */
@@ -5871,33 +8498,6 @@ export interface RateCardMeteredEntitlementInput {
   usagePeriod?: string
 }
 
-/** Purchase and payment terms of the grant. */
-export interface CreditGrantPurchaseInput {
-  /** Currency of the purchase amount. */
-  currency: string
-  /**
-   * Cost basis per credit unit used to calculate the purchase amount.
-   *
-   * If `per_unit_cost_basis` is 0.50 and credit amount is
-   * $100.00, the total
-   * charge is $50.00. The value must be greater than 0. If the
-   * cost basis is 0, use `funding_method=none` instead.
-   *
-   * Defaults to 1.0.
-   */
-  perUnitCostBasis?: string
-  /** The purchase amount. Calculated from `per_unit_cost_basis` and credit `amount`. */
-  amount: string
-  /**
-   * Controls when credits become available for consumption.
-   *
-   * Defaults to `on_creation`.
-   */
-  availabilityPolicy?: 'on_creation'
-  /** Current payment settlement status. */
-  settlementStatus?: 'pending' | 'authorized' | 'settled'
-}
-
 /** Request body for voiding a credit grant. */
 export interface VoidCreditGrantRequestInput {
   /**
@@ -5910,46 +8510,12 @@ export interface VoidCreditGrantRequestInput {
   paymentAdjustment?: 'none'
 }
 
-/** Subscription create request. */
-export interface SubscriptionCreateInput {
-  labels?: Labels
-  /**
-   * Settlement mode for billing.
-   *
-   * Values:
-   *
-   * - `credit_then_invoice`: Credits are applied first, then any remainder is
-   * invoiced.
-   * - `credit_only`: Usage is settled exclusively against credits.
-   */
-  settlementMode?: 'credit_then_invoice' | 'credit_only'
-  /** The customer to create the subscription for. */
-  customer: { id?: string; key?: string }
-  /** The plan reference of the subscription. */
-  plan: { id?: string; key?: string; version?: number }
-  /**
-   * A billing anchor is the fixed point in time that determines the subscription's
-   * recurring billing cycle. It affects when charges occur and how prorations are
-   * calculated. Common anchors:
-   *
-   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
-   * - Subscription anniversary (day customer signed up)
-   * - Custom date (customer-specified day)
-   *
-   * If not provided, the subscription will be created with the subscription's
-   * creation time as the billing anchor.
-   */
-  billingAnchor?: Date
-  /** Controls how custom-currency cost bases are selected for the subscription. */
-  costBasisMode?: 'dynamic' | 'pinned'
-}
-
 /**
  * Unit conversion configuration.
  *
  * Transforms raw metered quantities into billing-ready units before pricing and
- * entitlement evaluation. Applied at the rate card level so the same feature can
- * be billed in different units across plans.
+ * entitlement evaluation. Stored with a resource's rating configuration so the
+ * same metered feature can be billed in different units across plans and charges.
  *
  * Examples:
  *
@@ -6028,8 +8594,349 @@ export interface EntitlementAccessQueryRequestInput {
   feature?: EntitlementAccessQueryRequestFeatures
 }
 
-/** Subscription. */
-export interface SubscriptionInput {
+/**
+ * A notification channel delivers notification events, such as entitlement balance
+ * threshold crossings, to an external system. Today the only supported channel
+ * type is a webhook delivered via Svix.
+ */
+export interface NotificationChannelInput {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of the channel. Immutable after creation. */
+  type: 'webhook'
+  /**
+   * Whether the channel is disabled. Disabled channels do not receive notification
+   * events.
+   */
+  disabled?: boolean
+  /** The URL that webhook notification events are delivered to. */
+  url: string
+  /**
+   * Custom HTTP headers to include on every webhook delivery request, keyed by
+   * header name.
+   */
+  customHeaders?: Record<string, string>
+  /**
+   * Secret used to sign outgoing webhook payloads so recipients can verify their
+   * authenticity. If omitted on create, a secret is generated automatically by the
+   * delivery provider. This is a sensitive credential returned in responses (unlike
+   * most secrets) specifically so clients can retrieve a server-generated value and
+   * verify webhook signatures; handle it with the same care as any other credential.
+   */
+  signingSecret?: string
+}
+
+/** NotificationChannel create request. */
+export interface CreateNotificationChannelRequestInput {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** The type of the channel. Immutable after creation. */
+  type: 'webhook'
+  /**
+   * Whether the channel is disabled. Disabled channels do not receive notification
+   * events.
+   */
+  disabled?: boolean
+  /** The URL that webhook notification events are delivered to. */
+  url: string
+  /**
+   * Custom HTTP headers to include on every webhook delivery request, keyed by
+   * header name.
+   */
+  customHeaders?: Record<string, string>
+  /**
+   * Secret used to sign outgoing webhook payloads so recipients can verify their
+   * authenticity. If omitted on create, a secret is generated automatically by the
+   * delivery provider. This is a sensitive credential returned in responses (unlike
+   * most secrets) specifically so clients can retrieve a server-generated value and
+   * verify webhook signatures; handle it with the same care as any other credential.
+   */
+  signingSecret?: string
+}
+
+/**
+ * Request body for updating a notification channel. Updates replace the channel's
+ * mutable state rather than merging it: `type`, `name`, and `url` must always be
+ * provided, and omitting `disabled`, `labels`, or `custom_headers` resets them to
+ * their defaults (enabled, no labels, no custom headers). `signing_secret` is the
+ * one exception: omitting it keeps the channel's current signing secret instead of
+ * clearing the credential.
+ */
+export interface UpdateBillingNotificationChannelRequestInput {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /** The type of the channel. Immutable after creation. */
+  type: 'webhook'
+  /** The URL that webhook notification events are delivered to. */
+  url: string
+  labels?: Labels
+  /**
+   * Whether the channel is disabled. Disabled channels do not receive notification
+   * events.
+   */
+  disabled?: boolean
+  /**
+   * Custom HTTP headers to include on every webhook delivery request, keyed by
+   * header name.
+   */
+  customHeaders?: Record<string, string>
+  /**
+   * Secret used to sign outgoing webhook payloads so recipients can verify their
+   * authenticity. If omitted on create, a secret is generated automatically by the
+   * delivery provider. This is a sensitive credential returned in responses (unlike
+   * most secrets) specifically so clients can retrieve a server-generated value and
+   * verify webhook signatures; handle it with the same care as any other credential.
+   */
+  signingSecret?: string
+}
+
+/** A rule that generates an event when an entitlement usage period is reset. */
+export interface NotificationRuleEntitlementResetInput {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'entitlements.reset'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled?: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+  /**
+   * The features the rule applies to. When omitted, the rule applies to every
+   * feature.
+   */
+  features?: FeatureReference[]
+}
+
+/** A rule that generates an event when an invoice is created. */
+export interface NotificationRuleInvoiceCreatedInput {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'invoice.created'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled?: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+}
+
+/** A rule that generates an event when an invoice is updated. */
+export interface NotificationRuleInvoiceUpdatedInput {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'invoice.updated'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled?: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+}
+
+/** Request body for an entitlement reset rule. */
+export interface NotificationRuleEntitlementResetRequestInput {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'entitlements.reset'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled?: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+  /**
+   * The features the rule applies to. When omitted, the rule applies to every
+   * feature.
+   */
+  features?: FeatureReference[]
+}
+
+/** Request body for an invoice created rule. */
+export interface NotificationRuleInvoiceCreatedRequestInput {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'invoice.created'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled?: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+}
+
+/** Request body for an invoice updated rule. */
+export interface NotificationRuleInvoiceUpdatedRequestInput {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  labels?: Labels
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'invoice.updated'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled?: boolean
+  /**
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
+   */
+  channels: NotificationChannelReference[]
+}
+
+/** An ingested metering event with ingestion metadata. */
+export interface IngestedEventInput {
+  /** The original event ingested. */
+  event: EventInput
+  /** The customer if the event is associated with a customer. */
+  customer?: CustomerReference
+  /** The date and time the event was ingested and its processing started. */
+  ingestedAt: Date
+  /** The date and time the event was stored in the database. */
+  storedAt: Date
+  /** The validation errors of the ingested event. */
+  validationErrors?: IngestedEventValidationError[]
+}
+
+/**
+ * A metered entitlement grants a usage allowance for a feature. Access is
+ * determined by the balance: the allowance provided by grants is burnt down by
+ * usage.
+ */
+export interface EntitlementMeteredInput {
+  id: string
+  /** The type of the entitlement. */
+  type: 'metered'
+  /** The feature the customer is entitled to use. */
+  feature: FeatureReference
+  /** The customer the entitlement belongs to. */
+  customer: CustomerReference
+  labels?: Labels
+  /** The time from which the entitlement is active. */
+  activeFrom: Date
+  /**
+   * The time until which the entitlement is active. If not set, the entitlement is
+   * active until deleted.
+   */
+  activeTo?: Date
+  /** The time the entitlement was created. */
+  createdAt: Date
+  /** The time the entitlement was last updated. */
+  updatedAt: Date
+  /** The time the entitlement was deleted. */
+  deletedAt?: Date
+  /**
+   * The usage period of the entitlement. The balance resets at the start of every
+   * period.
+   */
+  usagePeriod: RecurringPeriod
+  /** The current usage period of the entitlement. */
+  currentUsagePeriod: ClosedPeriod
+  /**
+   * If true, the customer keeps access to the feature after the balance is
+   * exhausted.
+   */
+  isSoftLimit?: boolean
+  /** Usage granted automatically after each reset. Cannot be combined with `grants`. */
+  issue?: EntitlementIssueAfterResetInput
+  /** The amount granted automatically after each reset. */
+  issueAfterReset?: string
+  /** The priority of the grant created after each reset. */
+  issueAfterResetPriority?: number
+  /** If true, the overage is preserved at reset. If false, the usage is reset to 0. */
+  preserveOverageAtReset?: boolean
+  /** The time from which usage is measured. */
+  measureUsageFrom: Date
+  /** The time of the last reset. */
+  lastReset: Date
+}
+
+/** Subscription fields without phases or the current billing period. */
+export interface SubscriptionBaseInput {
   id: string
   labels?: Labels
   /** An ISO-8601 timestamp representation of entity creation date. */
@@ -6038,10 +8945,32 @@ export interface SubscriptionInput {
   updatedAt: Date
   /** An ISO-8601 timestamp representation of entity deletion date. */
   deletedAt?: Date
+  /**
+   * Display name of the subscription. Defaults to the plan name when the
+   * subscription is created from a plan.
+   */
+  name: string
+  /** Optional description of the subscription. */
+  description?: string
+  /**
+   * An ISO-8601 timestamp representation of when the subscription became (or will
+   * become) active.
+   */
+  activeFrom: Date
+  /**
+   * An ISO-8601 timestamp representation of when the subscription stops being
+   * active. Open-ended when not set.
+   */
+  activeTo?: Date
   /** The customer ID of the subscription. */
   customerId: string
   /** The plan ID of the subscription. Set if subscription is created from a plan. */
   planId?: string
+  /**
+   * The plan the subscription was created from, if any. Includes the plan key and
+   * version so clients can resolve the exact plan revision.
+   */
+  plan?: SubscriptionPlanReference
   /** The fiat currency in which the subscription is invoiced. */
   invoiceCurrency: string
   /**
@@ -6051,6 +8980,14 @@ export interface SubscriptionInput {
   costBasisMode?: 'dynamic' | 'pinned'
   /** Cost bases pinned to custom-currency pairs for this subscription. */
   costBasisPins: SubscriptionCostBasisPin[]
+  /**
+   * The billing cadence of the subscription in ISO-8601 duration format. Defines how
+   * often the customer is billed. Examples: `P1M` (monthly), `P3M` (quarterly),
+   * `P1Y` (annually).
+   */
+  billingCadence: string
+  /** The pro-rating configuration of the subscription. */
+  proRatingConfig?: SubscriptionProRatingConfig
   /**
    * A billing anchor is the fixed point in time that determines the subscription's
    * recurring billing cycle. It affects when charges occur and how prorations are
@@ -6075,66 +9012,6 @@ export interface SubscriptionInput {
   settlementMode?: 'credit_then_invoice' | 'credit_only'
 }
 
-/** An ingested metering event with ingestion metadata. */
-export interface IngestedEventInput {
-  /** The original event ingested. */
-  event: EventInput
-  /** The customer if the event is associated with a customer. */
-  customer?: CustomerReference
-  /** The date and time the event was ingested and its processing started. */
-  ingestedAt: Date
-  /** The date and time the event was stored in the database. */
-  storedAt: Date
-  /** The validation errors of the ingested event. */
-  validationErrors?: IngestedEventValidationError[]
-}
-
-/** Request for canceling a subscription. */
-export interface SubscriptionCancelInput {
-  /** If not provided the subscription is canceled immediately. */
-  timing?: SubscriptionEditTiming
-}
-
-/** Request for changing a subscription. */
-export interface SubscriptionChangeInput {
-  labels?: Labels
-  /**
-   * Settlement mode for billing.
-   *
-   * Values:
-   *
-   * - `credit_then_invoice`: Credits are applied first, then any remainder is
-   * invoiced.
-   * - `credit_only`: Usage is settled exclusively against credits.
-   */
-  settlementMode?: 'credit_then_invoice' | 'credit_only'
-  /** The customer to create the subscription for. */
-  customer: { id?: string; key?: string }
-  /** The plan reference of the subscription. */
-  plan: { id?: string; key?: string; version?: number }
-  /**
-   * A billing anchor is the fixed point in time that determines the subscription's
-   * recurring billing cycle. It affects when charges occur and how prorations are
-   * calculated. Common anchors:
-   *
-   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
-   * - Subscription anniversary (day customer signed up)
-   * - Custom date (customer-specified day)
-   *
-   * If not provided, the subscription will be created with the subscription's
-   * creation time as the billing anchor.
-   */
-  billingAnchor?: Date
-  /** Controls how custom-currency cost bases are selected for the subscription. */
-  costBasisMode?: 'dynamic' | 'pinned'
-  /**
-   * Timing configuration for the change, when the change should take effect. For
-   * changing a subscription, the accepted values depend on the subscription
-   * configuration.
-   */
-  timing: SubscriptionEditTiming
-}
-
 /**
  * Invoice-level snapshot of the workflow configuration.
  *
@@ -6147,6 +9024,37 @@ export interface InvoiceWorkflowInput {
   invoicing?: InvoiceWorkflowInvoicingSettingsInput
   /** Payment settings for this invoice. */
   payment?: WorkflowPaymentSettingsInput
+}
+
+/** Request for canceling a subscription. */
+export interface SubscriptionCancelInput {
+  /** If not provided the subscription is canceled immediately. */
+  timing?: SubscriptionEditTiming
+}
+
+/** Request for migrating to a later version of the subscription's current plan. */
+export interface SubscriptionMigrateInput {
+  /**
+   * When the migration takes effect: immediately (default), at the next billing
+   * cycle, or at an explicit billing-aligned timestamp. In-place migrations may
+   * target a later phase when the phase timelines match. The target plan reference
+   * is saved now; changed items take effect at the requested time.
+   */
+  timing?: SubscriptionEditTiming
+  /** A strictly later version of the current plan. Omit to use its latest version. */
+  targetVersion?: number
+  /**
+   * Explicitly replace the subscription, starting in this target plan phase. Always
+   * selects replacement, even when the phase matches the current one. Replacement
+   * may produce billing adjustments and does not transfer addons.
+   */
+  startingPhase?: string
+  /**
+   * Providing a different billing anchor explicitly replaces the subscription. The
+   * supplied anchor is preserved and may be before or after the replacement's start
+   * time. Omit to retain the existing anchor.
+   */
+  billingAnchor?: Date
 }
 
 /**
@@ -6163,70 +9071,17 @@ export interface UpdateBillingInvoiceWorkflowInput {
   payment?: UpdateBillingWorkflowPaymentSettingsInput
 }
 
-/** CreditGrant create request. */
-export interface CreateCreditGrantRequestInput {
-  /**
-   * Display name of the resource.
-   *
-   * Between 1 and 256 characters.
-   */
-  name: string
-  /**
-   * Optional description of the resource.
-   *
-   * Maximum 1024 characters.
-   */
-  description?: string
-  labels?: CreateLabels
-  /** Funding method of the grant. */
-  fundingMethod: 'none' | 'invoice' | 'external'
-  /** The currency of the granted credits. */
-  currency: CreateCurrencyCode
-  /** Granted credit amount. */
-  amount: string
-  /** Present when a funding workflow applies (funding_method is not `none`). */
-  purchase?: CreateCreditGrantPurchaseInput
-  /**
-   * Tax configuration for the grant.
-   *
-   * For `invoice` and `external` funding methods, tax configuration should be
-   * provided to ensure correct revenue recognition. When not provided, the default
-   * credit grant tax code is applied, if that's not set the global default taxcode
-   * is used.
-   */
-  taxConfig?: CreateCreditGrantTaxConfig
-  filters?: CreateCreditGrantFilters
-  /** Draw-down priority of the grant. Lower values have higher priority. */
-  priority?: number
-  /**
-   * The timestamp when the credit grant becomes effective.
-   *
-   * Defaults to the current date and time.
-   */
-  effectiveAt?: Date
-  /**
-   * The duration after which the credit grant expires.
-   *
-   * Defaults to never expiring.
-   */
-  expiresAfter?: string
-  /**
-   * Idempotency key for the credit grant creation request.
-   *
-   * Unique per customer: reusing the same key for the same customer returns an HTTP
-   * 409 Conflict instead of creating a duplicate grant, which makes create requests
-   * safe to retry. The same key may be reused across different customers.
-   */
-  key?: string
+/** Page paginated response. */
+export interface NotificationChannelPagePaginatedResponseInput {
+  data: NotificationChannelInput[]
+  meta: PaginatedMeta
 }
 
 /**
- * A credit grant allocates credits to a customer.
- *
- * Credits are drawn down against charges according to the settlement mode
- * configured on the rate card.
+ * A rule that generates an event when an entitlement balance crosses one of its
+ * thresholds.
  */
-export interface CreditGrantInput {
+export interface NotificationRuleBalanceThresholdInput {
   id: string
   /**
    * Display name of the resource.
@@ -6234,12 +9089,6 @@ export interface CreditGrantInput {
    * Between 1 and 256 characters.
    */
   name: string
-  /**
-   * Optional description of the resource.
-   *
-   * Maximum 1024 characters.
-   */
-  description?: string
   labels?: Labels
   /** An ISO-8601 timestamp representation of entity creation date. */
   createdAt: Date
@@ -6247,52 +9096,133 @@ export interface CreditGrantInput {
   updatedAt: Date
   /** An ISO-8601 timestamp representation of entity deletion date. */
   deletedAt?: Date
-  /** Funding method of the grant. */
-  fundingMethod: 'none' | 'invoice' | 'external'
-  /** The currency of the granted credits. */
-  currency: BillingCurrencyCode
-  /** Granted credit amount. */
-  amount: string
-  /** Present when a funding workflow applies (funding_method is not `none`). */
-  purchase?: CreditGrantPurchaseInput
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'entitlements.balance.threshold'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled?: boolean
   /**
-   * Tax configuration for the grant.
-   *
-   * For `invoice` and `external` funding methods, tax configuration should be
-   * provided to ensure correct revenue recognition. When not provided, the default
-   * credit grant tax code is applied, if that's not set the global default taxcode
-   * is used.
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
    */
-  taxConfig?: CreditGrantTaxConfig
-  /** Available when `funding_method` is `invoice`. */
-  invoice?: CreditGrantInvoiceReference
-  filters?: CreditGrantFilters
-  /** Draw-down priority of the grant. Lower values have higher priority. */
-  priority?: number
+  channels: NotificationChannelReference[]
+  /** The thresholds that generate an event when crossed. */
+  thresholds: NotificationBalanceThreshold[]
   /**
-   * The timestamp when the credit grant becomes effective.
-   *
-   * Defaults to the current date and time.
+   * The features the rule applies to. When omitted, the rule applies to every
+   * feature.
    */
-  effectiveAt?: Date
+  features?: FeatureReference[]
+}
+
+/** Request body for a balance threshold rule. */
+export interface NotificationRuleBalanceThresholdRequestInput {
   /**
-   * Idempotency key for the credit grant creation request.
+   * Display name of the resource.
    *
-   * Unique per customer: reusing the same key for the same customer returns an HTTP
-   * 409 Conflict instead of creating a duplicate grant, which makes create requests
-   * safe to retry. The same key may be reused across different customers.
+   * Between 1 and 256 characters.
    */
-  key?: string
+  name: string
+  labels?: Labels
+  /** The type of event the rule generates. Immutable after creation. */
+  type: 'entitlements.balance.threshold'
+  /** Whether the rule is disabled. Disabled rules do not generate events. */
+  disabled?: boolean
   /**
-   * The timestamp when the credit grant expires.
-   *
-   * Calculated from the grant effective time and `expires_after` if provided.
+   * The channels the rule delivers its events to. At least one and at most five
+   * channels are required. Responses omit channels that have since been disabled or
+   * deleted.
    */
-  expiresAt?: Date
-  /** Timestamp when the grant was voided. */
-  voidedAt?: Date
-  /** Current lifecycle status of the grant. */
-  status: 'pending' | 'active' | 'expired' | 'voided'
+  channels: NotificationChannelReference[]
+  /** The thresholds that generate an event when crossed. */
+  thresholds: NotificationBalanceThreshold[]
+  /**
+   * The features the rule applies to. When omitted, the rule applies to every
+   * feature.
+   */
+  features?: FeatureReference[]
+}
+
+/** Purchase and payment terms of the grant. */
+export interface CreateCreditGrantPurchaseInput {
+  /**
+   * Fiat currency the purchase is settled in.
+   *
+   * Must equal the grant `currency` for fiat grants and `cost_basis.fiat_currency`
+   * for custom-currency grants.
+   */
+  currency: string
+  /**
+   * Fiat cost basis per credit unit of a fiat-currency grant.
+   *
+   * If `per_unit_cost_basis` is 0.50 and credit amount is
+   * $100.00, the total
+   * charge is $50.00. The value must be greater than 0. If the
+   * cost basis is 0, use `funding_method=none` instead.
+   *
+   * Only applies to fiat grants and cannot be combined with `cost_basis`. Defaults
+   * to 1.0 when neither is provided.
+   */
+  perUnitCostBasis?: string
+  /**
+   * Defines how custom-currency credits are priced in the purchase `currency`; the
+   * resolved rate is exposed through `resolved_cost_basis`.
+   *
+   * Fiat grants accept only a `manual` cost basis without `fiat_currency`, where
+   * `rate` is the fiat cost per credit unit. Custom-currency grants require a cost
+   * basis of any type with `fiat_currency` set and equal to the purchase `currency`.
+   * A `dynamic` cost basis is resolved at the grant's effective time, so the
+   * currency cost basis must be effective by then. Cannot be combined with
+   * `per_unit_cost_basis`.
+   */
+  costBasis?: CreateChargeCostBasis
+  /**
+   * Controls when credits become available for consumption.
+   *
+   * Defaults to `on_creation`.
+   */
+  availabilityPolicy?: 'on_creation'
+}
+
+/** Purchase and payment terms of the grant. */
+export interface CreditGrantPurchaseInput {
+  /**
+   * Fiat currency the purchase is settled in.
+   *
+   * Must equal the grant `currency` for fiat grants and `cost_basis.fiat_currency`
+   * for custom-currency grants.
+   */
+  currency: string
+  /**
+   * Fiat cost basis per credit unit of a fiat-currency grant.
+   *
+   * If `per_unit_cost_basis` is 0.50 and credit amount is
+   * $100.00, the total
+   * charge is $50.00. The value must be greater than 0. If the
+   * cost basis is 0, use `funding_method=none` instead.
+   *
+   * Only applies to fiat grants and cannot be combined with `cost_basis`. Defaults
+   * to 1.0 when neither is provided.
+   */
+  perUnitCostBasis?: string
+  /**
+   * The rate the purchase is settled at in the purchase `currency`. Present once the
+   * cost basis is resolved.
+   */
+  resolvedCostBasis?: ChargeResolvedCostBasis
+  /**
+   * The purchase amount, calculated from the resolved cost basis and credit
+   * `amount`. Present once the cost basis is resolved.
+   */
+  amount?: string
+  /**
+   * Controls when credits become available for consumption.
+   *
+   * Defaults to `on_creation`.
+   */
+  availabilityPolicy?: 'on_creation'
+  /** Current payment settlement status. */
+  settlementStatus?: 'pending' | 'authorized' | 'settled'
 }
 
 /** Tax settings for a billing workflow. */
@@ -6318,20 +9248,6 @@ export interface WorkflowTaxSettingsInput {
    * and `behavior` remains fully supported.
    */
   defaultTaxConfig?: TaxConfig
-}
-
-/** Page paginated response. */
-export interface SubscriptionPagePaginatedResponseInput {
-  data: SubscriptionInput[]
-  meta: PaginatedMeta
-}
-
-/** Response for changing a subscription. */
-export interface SubscriptionChangeResponseInput {
-  /** The current subscription before the change. */
-  current: SubscriptionInput
-  /** The new state of the subscription after the change. */
-  next: SubscriptionInput
 }
 
 /** Cursor paginated response. */
@@ -6457,6 +9373,40 @@ export interface AppStripeCreateCheckoutSessionRequestOptionsInput {
   taxIdCollection?: AppStripeCreateCheckoutSessionTaxIdCollectionInput
 }
 
+/** Metered entitlement create request. */
+export interface CreateEntitlementMeteredRequestInput {
+  /** The type of the entitlement. */
+  type: 'metered'
+  /** The feature the customer is entitled to use. */
+  feature: FeatureReference
+  labels?: Labels
+  /**
+   * If true, the customer keeps access to the feature after the balance is
+   * exhausted.
+   */
+  isSoftLimit?: boolean
+  /** Usage granted automatically after each reset. Cannot be combined with `grants`. */
+  issue?: EntitlementIssueAfterResetInput
+  /** The amount granted automatically after each reset. */
+  issueAfterReset?: string
+  /** The priority of the grant created after each reset. */
+  issueAfterResetPriority?: number
+  /** If true, the overage is preserved at reset. If false, the usage is reset to 0. */
+  preserveOverageAtReset?: boolean
+  /**
+   * The usage period of the entitlement. The balance resets at the start of every
+   * period. The anchor defaults to the entitlement creation time.
+   */
+  usagePeriod: RecurringPeriodInput
+  /**
+   * The time from which usage is measured. Defaults to the entitlement creation
+   * time.
+   */
+  measureUsageFrom?: EntitlementMeasureUsageFrom
+  /** Grants created together with the entitlement. Cannot be combined with `issue`. */
+  grants?: EntitlementGrantCreateRequest[]
+}
+
 /** Snapshot of the billing workflow configuration captured at invoice creation. */
 export interface InvoiceWorkflowSettingsInput {
   /** The apps that will be used to orchestrate the invoice's workflow. */
@@ -6532,10 +9482,153 @@ export interface UpdateInvoiceWorkflowSettingsInput {
   workflow: UpdateBillingInvoiceWorkflowInput
 }
 
-/** Page paginated response. */
-export interface CreditGrantPagePaginatedResponseInput {
-  data: CreditGrantInput[]
-  meta: PaginatedMeta
+/** CreditGrant create request. */
+export interface CreateCreditGrantRequestInput {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: CreateLabels
+  /** Funding method of the grant. */
+  fundingMethod: 'none' | 'invoice' | 'external'
+  /**
+   * The fiat or custom currency of the granted credits.
+   *
+   * Funded custom-currency grants must define `purchase.cost_basis` to settle in a
+   * fiat currency.
+   */
+  currency: CreateCurrencyCode
+  /** Granted credit amount. */
+  amount: string
+  /** Present when a funding workflow applies (funding_method is not `none`). */
+  purchase?: CreateCreditGrantPurchaseInput
+  /**
+   * Tax configuration for the grant.
+   *
+   * For `invoice` and `external` funding methods, tax configuration should be
+   * provided to ensure correct revenue recognition. When not provided, the default
+   * credit grant tax code is applied, if that's not set the global default taxcode
+   * is used.
+   */
+  taxConfig?: CreateTaxCodeConfig
+  filters?: CreateCreditGrantFilters
+  /** Draw-down priority of the grant. Lower values have higher priority. */
+  priority?: number
+  /**
+   * The timestamp when the credit grant becomes effective.
+   *
+   * Defaults to the current date and time.
+   */
+  effectiveAt?: Date
+  /**
+   * The duration after which the credit grant expires.
+   *
+   * Defaults to never expiring.
+   */
+  expiresAfter?: string
+  /**
+   * Idempotency key for the credit grant creation request.
+   *
+   * Unique per customer: reusing the same key for the same customer returns an HTTP
+   * 409 Conflict instead of creating a duplicate grant, which makes create requests
+   * safe to retry. The same key may be reused across different customers.
+   */
+  key?: string
+}
+
+/**
+ * A credit grant allocates credits to a customer.
+ *
+ * Credits are drawn down against charges according to the settlement mode
+ * configured on the rate card.
+ */
+export interface CreditGrantInput {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** Funding method of the grant. */
+  fundingMethod: 'none' | 'invoice' | 'external'
+  /**
+   * The fiat or custom currency of the granted credits.
+   *
+   * Funded custom-currency grants must define `purchase.cost_basis` to settle in a
+   * fiat currency.
+   */
+  currency: BillingCurrencyCode
+  /** Granted credit amount. */
+  amount: string
+  /** Present when a funding workflow applies (funding_method is not `none`). */
+  purchase?: CreditGrantPurchaseInput
+  /**
+   * Tax configuration for the grant.
+   *
+   * For `invoice` and `external` funding methods, tax configuration should be
+   * provided to ensure correct revenue recognition. When not provided, the default
+   * credit grant tax code is applied, if that's not set the global default taxcode
+   * is used.
+   */
+  taxConfig?: TaxCodeConfig
+  /** Available when `funding_method` is `invoice`. */
+  invoice?: CreditGrantInvoiceReference
+  filters?: CreditGrantFilters
+  /** Draw-down priority of the grant. Lower values have higher priority. */
+  priority?: number
+  /**
+   * The timestamp when the credit grant becomes effective.
+   *
+   * Defaults to the current date and time.
+   */
+  effectiveAt?: Date
+  /**
+   * Idempotency key for the credit grant creation request.
+   *
+   * Unique per customer: reusing the same key for the same customer returns an HTTP
+   * 409 Conflict instead of creating a duplicate grant, which makes create requests
+   * safe to retry. The same key may be reused across different customers.
+   */
+  key?: string
+  /**
+   * The timestamp when the credit grant expires.
+   *
+   * Calculated from the grant effective time and `expires_after` if provided.
+   */
+  expiresAt?: Date
+  /** Timestamp when the grant was voided. */
+  voidedAt?: Date
+  /** Current lifecycle status of the grant. */
+  status: 'pending' | 'active' | 'expired' | 'voided'
+  /**
+   * Validation issues found while processing the credit grant.
+   *
+   * Present only when there are one or more validation findings. An empty list is
+   * omitted.
+   */
+  validationIssues?: ValidationIssue[]
 }
 
 /** Bad Request. */
@@ -6561,6 +9654,12 @@ export interface CustomerStripeCreateCheckoutSessionRequestInput {
   stripeOptions: AppStripeCreateCheckoutSessionRequestOptionsInput
 }
 
+/** Page paginated response. */
+export interface EntitlementPagePaginatedResponseInput {
+  data: EntitlementInput[]
+  meta: PaginatedMeta
+}
+
 /**
  * Workflow collection specifies how to collect the pending line items for an
  * invoice.
@@ -6576,6 +9675,98 @@ export interface WorkflowCollectionSettingsInput {
    * billing periods.
    */
   interval?: string
+}
+
+/**
+ * The invoice a charge realization was booked to, embedded as a header.
+ *
+ * Matches the standard invoice entity, except that it carries no `customer`
+ * snapshot (the charge context already identifies the customer) and `lines` are
+ * never populated (the realization itself is the line-level breakdown). The shared
+ * invoice contract stays untouched: this model exists so the charges API can slim
+ * the embedding without loosening the invoices API.
+ */
+export interface ChargeRealizationInvoiceInput {
+  id: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** Human-readable invoice number generated by the invoicing app. */
+  number: string
+  /** Three-letter ISO 4217 currency code for the invoice. */
+  currency: string
+  /**
+   * Snapshot of the supplier's contact information at the time the invoice was
+   * issued.
+   */
+  supplier: Supplier
+  /** Aggregated financial totals for the invoice. */
+  totals: Totals
+  /**
+   * The service period covered by this invoice.
+   *
+   * For flat fee the service period can be empty which means `from` will be equals
+   * to `to`. In other cases those fields will be filled with the actual service
+   * period.
+   */
+  servicePeriod: ClosedPeriod
+  /**
+   * Validation issues found during invoice processing.
+   *
+   * Present only when there are one or more validation findings. An empty list is
+   * omitted.
+   */
+  validationIssues?: ValidationIssue[]
+  /** External identifiers assigned to this invoice by third-party systems. */
+  externalReferences?: InvoiceExternalReferences
+  /** Discriminator field identifying this as a standard invoice. */
+  type: 'standard'
+  /** Current lifecycle status of the invoice. */
+  status:
+    | 'draft'
+    | 'issuing'
+    | 'issued'
+    | 'payment_processing'
+    | 'overdue'
+    | 'paid'
+    | 'uncollectible'
+    | 'voided'
+  /** Detailed status information including available actions and workflow state. */
+  statusDetails: InvoiceStatusDetails
+  /** Timestamp when the invoice was issued to the customer. */
+  issuedAt?: Date
+  /**
+   * Timestamp until which the invoice remains in draft state.
+   *
+   * The invoice advances automatically once this time is reached.
+   */
+  draftUntil?: Date
+  /** Timestamp when usage quantities were last snapshotted for this invoice. */
+  quantitySnapshottedAt?: Date
+  /** Timestamp when collection was initiated for this invoice. */
+  collectionAt?: Date
+  /** Timestamp when payment is due. */
+  dueAt?: Date
+  /** Timestamp when the invoice was sent to the customer. */
+  sentToCustomerAt?: Date
+  /** Workflow configuration snapshot captured at invoice creation time. */
+  workflow: InvoiceWorkflowSettingsInput
+}
+
+/** Page paginated response. */
+export interface NotificationRulePagePaginatedResponseInput {
+  data: NotificationRuleInput[]
+  meta: PaginatedMeta
 }
 
 /** A rate card defines the pricing and entitlement of a feature or service. */
@@ -6632,7 +9823,7 @@ export interface RateCardInput {
   /** The discounts of the rate card. */
   discounts?: RateCardDiscounts
   /** The tax config of the rate card. */
-  taxConfig?: RateCardTaxConfig
+  taxConfig?: TaxCodeConfig
   /**
    * The entitlement template granted to subscribers of a plan or addon containing
    * this rate card. Requires `feature` to be set.
@@ -6645,7 +9836,7 @@ export interface InvoiceLineRateCardInput {
   /** The price definition used to calculate charges for this line. */
   price: Price
   /** Tax configuration snapshot for this line. */
-  taxConfig?: RateCardTaxConfig
+  taxConfig?: TaxCodeConfig
   /** The feature key associated with this line's rate card. */
   featureKey?: string
   /** Discount configuration from the rate card. */
@@ -6655,6 +9846,133 @@ export interface InvoiceLineRateCardInput {
    * metered quantity into the billed quantity. Frozen at billing time; read-only.
    */
   unitConfig?: UnitConfigInput
+}
+
+/**
+ * Usage-based intent fields from the system lifecycle controller shadowed by a
+ * manual override.
+ */
+export interface ChargeUsageBasedSystemIntentInput {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** The timestamp when the charge is intended to be invoiced. */
+  invoiceAt: Date
+  /** The effective service period covered by the charge. */
+  servicePeriod: ClosedPeriod
+  /** The full, unprorated service period of the charge. */
+  fullServicePeriod: ClosedPeriod
+  /** The billing period the charge belongs to. */
+  billingPeriod: ClosedPeriod
+  /** Discounts applied to the usage-based charge. */
+  discounts?: RateCardDiscounts
+  /**
+   * The price of the charge.
+   *
+   * `free` prices are rejected on create: a usage-based charge always carries a
+   * concrete price.
+   */
+  price: PriceUsageBased
+  /** Spend commitments for the charge. */
+  commitments?: SpendCommitments
+  /**
+   * Unit conversion configuration for the charge.
+   *
+   * Synthesized on read for charges created from v1 dynamic or package prices:
+   * dynamic prices map to a unit price with a multiply unit config, and package
+   * prices map to a unit price with a divide unit config.
+   *
+   * Accepted on create only when the UnitConfig feature is enabled on the
+   * deployment; otherwise rejected.
+   */
+  unitConfig?: UnitConfigInput
+  /**
+   * The timestamp when the system lifecycle controller intent was deleted. The
+   * effective charge can remain visible while a manual override is active.
+   */
+  deletedAt?: Date
+}
+
+/** Usage-based charge create request. */
+export interface CreateChargeUsageBasedRequestInput {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** The type of the charge. */
+  type: 'usage_based'
+  /** The currency of the charge. */
+  currency: BillingCurrencyCode
+  /**
+   * Defines how a custom-currency charge is converted into its fiat invoice
+   * currency; the resolved rate is exposed through `resolved_cost_basis`. Required
+   * when `currency` is custom and the charge settles as `credit_then_invoice`; must
+   * be omitted otherwise.
+   */
+  costBasis?: ChargeCostBasis
+  /** The timestamp when the charge is intended to be invoiced. */
+  invoiceAt: Date
+  /** The effective service period covered by the charge. */
+  servicePeriod: ClosedPeriod
+  /** Unique reference ID of the charge. */
+  uniqueReferenceId?: string
+  /** Settlement mode of the charge. */
+  settlementMode: 'credit_then_invoice' | 'credit_only'
+  /** Tax configuration of the charge. */
+  taxConfig?: TaxConfig
+  /** Discounts applied to the usage-based charge. */
+  discounts?: RateCardDiscounts
+  /**
+   * The price of the charge.
+   *
+   * `free` prices are rejected on create: a usage-based charge always carries a
+   * concrete price.
+   */
+  price: PriceUsageBased
+  /** Spend commitments for the charge. */
+  commitments?: SpendCommitments
+  /**
+   * Unit conversion configuration for the charge.
+   *
+   * Synthesized on read for charges created from v1 dynamic or package prices:
+   * dynamic prices map to a unit price with a multiply unit config, and package
+   * prices map to a unit price with a divide unit config.
+   *
+   * Accepted on create only when the UnitConfig feature is enabled on the
+   * deployment; otherwise rejected.
+   */
+  unitConfig?: UnitConfigInput
+  /** A reference to the feature associated with the charge. */
+  feature: FeatureReference
+  /** The full, unprorated service period of the charge. */
+  fullServicePeriod?: ClosedPeriod
+  /** The billing period the charge belongs to. */
+  billingPeriod?: ClosedPeriod
+}
+
+/** Page paginated response. */
+export interface CreditGrantPagePaginatedResponseInput {
+  data: CreditGrantInput[]
+  meta: PaginatedMeta
 }
 
 /** Billing workflow settings. */
@@ -6669,12 +9987,19 @@ export interface WorkflowInput {
   tax?: WorkflowTaxSettingsInput
 }
 
-/** A rate card for a subscription add-on. */
-export interface SubscriptionAddonRateCardInput {
-  /** The rate card. */
+/** A subscription item pins a rate card to a cadence within a subscription phase. */
+export interface SubscriptionItemInput {
+  /** The unique identifier of the subscription item instance. */
+  id: string
+  /** An ISO-8601 timestamp representation of when this item version becomes active. */
+  activeFrom: Date
+  /**
+   * An ISO-8601 timestamp representation of when this item version stops being
+   * active.
+   */
+  activeTo?: Date
+  /** The rate card describing what the customer gets and pays for this item. */
   rateCard: RateCardInput
-  /** The IDs of the subscription items that this rate card belongs to. */
-  affectedSubscriptionItemIds: string[]
 }
 
 /**
@@ -6703,6 +10028,27 @@ export interface PlanPhaseInput {
   duration?: string
   /** The rate cards of the plan. */
   rateCards: RateCardInput[]
+}
+
+/**
+ * Add a new rate card to a phase. Adding an item to the current phase closes the
+ * active version of the same item key and appends a new version.
+ */
+export interface SubscriptionEditAddItemInput {
+  /** Discriminator for the add-item operation. */
+  type: 'add_item'
+  /** The key of the phase to add the item to. */
+  phaseKey: string
+  /** The rate card describing what the customer gets and pays for the new item. */
+  rateCard: RateCardInput
+}
+
+/** A rate card for a subscription add-on. */
+export interface SubscriptionAddonRateCardInput {
+  /** The rate card. */
+  rateCard: RateCardInput
+  /** The IDs of the subscription items that this rate card belongs to. */
+  affectedSubscriptionItemIds: string[]
 }
 
 /**
@@ -6987,16 +10333,73 @@ export interface UpsertBillingProfileRequestInput {
   default: boolean
 }
 
-/** Addon purchased with a subscription. */
-export interface SubscriptionAddonInput {
+/**
+ * A realization run of a charge.
+ *
+ * `totals` and `detailed_lines` are only populated with the `realization.totals`
+ * and `realization.detailed_lines` expands, respectively, since computing them
+ * requires re-deriving the run's rated breakdown. `invoice` is an ID reference
+ * unless the `realization.invoice` expand is used, which resolves it to the
+ * invoice header of the run's booked line: the invoice entity without its `lines`
+ * and without the `customer` snapshot (the charge itself already identifies the
+ * customer).
+ */
+export interface ChargeRealizationInput {
+  /**
+   * The ID of the realization run. Not present on `outstanding` entries, which are
+   * projections rather than persisted runs.
+   */
+  id?: string
+  /**
+   * The ID of the invoice line this realization was booked to, when the realization
+   * has been invoiced.
+   */
+  lineId?: string
+  /** The reference of the invoice related to the realization. */
+  invoice?: ChargeRealizationInvoiceOrReferenceInput
+  /** The type of the realization run. */
+  type: 'final_realization' | 'partial_invoice' | 'outstanding' | 'voided'
+  /** The service period covered by this realization run. */
+  servicePeriod: ClosedPeriod
+  /**
+   * The metered usage quantity this realization run accounts for. Only present on
+   * usage-based charges; flat fees are not metered, so their realizations carry no
+   * usage.
+   *
+   * Booked entries report a signed delta: a negative value states a downward usage
+   * correction (or a voided run that snapshotted behind its live neighbors) instead
+   * of masking it as zero.
+   *
+   * On an `outstanding` entry this is `0` unless the `real_time_usage` expand is
+   * applied, in which case it is the not-yet-booked remainder of the live metering
+   * read (never negative).
+   */
+  usage?: string
+  /**
+   * The payment state of the realization, when the charge requires a fiat
+   * transaction to settle.
+   */
+  payment?: ChargeRealizationPayment
+  /**
+   * Financial totals for the realization run, including credit allocations.
+   *
+   * Requires the `realization.totals` expand.
+   */
+  totals?: Totals
+  /**
+   * The detailed (rated) lines produced by the realization run.
+   *
+   * Requires the `realization.detailed_lines` expand.
+   */
+  detailedLines?: ChargeRealizationDetailedLine[]
+}
+
+/**
+ * A subscription phase groups the rate cards in effect for a segment of the
+ * subscription's lifetime. Analogous to plan phases.
+ */
+export interface SubscriptionPhaseInput {
   id: string
-  labels?: Labels
-  /** An ISO-8601 timestamp representation of entity creation date. */
-  createdAt: Date
-  /** An ISO-8601 timestamp representation of entity last update date. */
-  updatedAt: Date
-  /** An ISO-8601 timestamp representation of entity deletion date. */
-  deletedAt?: Date
   /**
    * Display name of the resource.
    *
@@ -7009,23 +10412,63 @@ export interface SubscriptionAddonInput {
    * Maximum 1024 characters.
    */
   description?: string
-  /** The add-on associated with the subscription. */
-  addon: AddonReference
-  /** The quantity of the add-on. Always 1 for single instance add-ons. */
-  quantity: number
-  /**
-   * An ISO-8601 timestamp representation of which point in time the quantity was
-   * resolved to.
-   */
-  quantityAt: Date
-  /** An ISO-8601 timestamp representation of the cadence start of the resource. */
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  key: string
+  /** An ISO-8601 timestamp representation of when the phase becomes active. */
   activeFrom: Date
-  /** An ISO-8601 timestamp representation of the cadence end of the resource. */
+  /**
+   * An ISO-8601 timestamp representation of when the phase stops being active.
+   * Open-ended for the last phase.
+   */
   activeTo?: Date
-  /** The timeline of the add-on. The returned periods are sorted and continuous. */
-  timeline: SubscriptionAddonTimelineSegment[]
-  /** The rate cards of the add-on. */
-  rateCards: SubscriptionAddonRateCardInput[]
+  /**
+   * The rate cards in effect for this phase, resolved to the version active at the
+   * queried time (the currently active version for the current phase, the first
+   * version for future phases, and the last version for past phases).
+   */
+  items: SubscriptionItemInput[]
+}
+
+/**
+ * An inline (custom) plan definition used to create or change a subscription
+ * without referencing a published plan. Mirrors the plan create shape without a
+ * key or version, since a custom plan is not persisted or versioned on its own.
+ *
+ * `settlement_mode` is also omitted: it is a subscription-level concern set via
+ * the `settlement_mode` field on the create/change request, not on the inline
+ * plan.
+ */
+export interface SubscriptionCustomPlanInput {
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** The currency code of the plan. */
+  currency: BillingCurrencyCode
+  /** The billing cadence for subscriptions using this plan. */
+  billingCadence: string
+  /** Whether pro-rating is enabled for this plan. */
+  proRatingEnabled?: boolean
+  /**
+   * The plan phases define the pricing ramp for a subscription. A phase switch
+   * occurs only at the end of a billing period. At least one phase is required.
+   */
+  phases: PlanPhaseInput[]
 }
 
 /** Plans provide a template for subscriptions. */
@@ -7101,7 +10544,7 @@ export interface PlanInput {
    * invoiced.
    * - `credit_only`: Usage is settled exclusively against credits.
    */
-  settlementMode?: 'credit_then_invoice' | 'credit_only'
+  settlementMode: 'credit_then_invoice' | 'credit_only'
   /**
    * List of validation errors in `draft` state that prevent the plan from being
    * published.
@@ -7109,7 +10552,10 @@ export interface PlanInput {
   validationErrors?: ProductCatalogValidationError[]
 }
 
-/** Plan create request. */
+/**
+ * Plan create request. `settlement_mode` is re-declared as optional with a
+ * `credit_then_invoice` default, applied only on create.
+ */
 export interface CreatePlanRequestInput {
   /**
    * Display name of the resource.
@@ -7141,9 +10587,15 @@ export interface CreatePlanRequestInput {
    * occurs only at the end of a billing period. At least one phase is required.
    */
   phases: PlanPhaseInput[]
+  /** Settlement mode for the plan. Defaults to `credit_then_invoice` when omitted. */
+  settlementMode?: 'credit_then_invoice' | 'credit_only'
 }
 
-/** Plan upsert request. */
+/**
+ * Plan upsert (update) request. `settlement_mode` is re-declared as optional with
+ * no default, so an omitted value leaves the plan's existing settlement mode
+ * unchanged.
+ */
 export interface UpsertPlanRequestInput {
   /**
    * Display name of the resource.
@@ -7165,6 +10617,52 @@ export interface UpsertPlanRequestInput {
    * occurs only at the end of a billing period. At least one phase is required.
    */
   phases: PlanPhaseInput[]
+  /**
+   * Settlement mode for the plan. When omitted, the existing settlement mode is
+   * preserved.
+   */
+  settlementMode?: 'credit_then_invoice' | 'credit_only'
+}
+
+/** Addon purchased with a subscription. */
+export interface SubscriptionAddonInput {
+  id: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  /** The add-on associated with the subscription. */
+  addon: AddonReference
+  /** The quantity of the add-on. Always 1 for single instance add-ons. */
+  quantity: number
+  /**
+   * An ISO-8601 timestamp representation of which point in time the quantity was
+   * resolved to.
+   */
+  quantityAt: Date
+  /** An ISO-8601 timestamp representation of the cadence start of the resource. */
+  activeFrom: Date
+  /** An ISO-8601 timestamp representation of the cadence end of the resource. */
+  activeTo?: Date
+  /** The timeline of the add-on. The returned periods are sorted and continuous. */
+  timeline: SubscriptionAddonTimelineSegment[]
+  /** The rate cards of the add-on. */
+  rateCards: SubscriptionAddonRateCardInput[]
 }
 
 /** Page paginated response. */
@@ -7179,15 +10677,238 @@ export interface ProfilePagePaginatedResponseInput {
   meta: PaginatedMeta
 }
 
-/** Page paginated response. */
-export interface SubscriptionAddonPagePaginatedResponseInput {
-  data: SubscriptionAddonInput[]
-  meta: PaginatedMeta
+/** Subscription. */
+export interface SubscriptionInput {
+  id: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /**
+   * Display name of the subscription. Defaults to the plan name when the
+   * subscription is created from a plan.
+   */
+  name: string
+  /** Optional description of the subscription. */
+  description?: string
+  /**
+   * An ISO-8601 timestamp representation of when the subscription became (or will
+   * become) active.
+   */
+  activeFrom: Date
+  /**
+   * An ISO-8601 timestamp representation of when the subscription stops being
+   * active. Open-ended when not set.
+   */
+  activeTo?: Date
+  /** The customer ID of the subscription. */
+  customerId: string
+  /** The plan ID of the subscription. Set if subscription is created from a plan. */
+  planId?: string
+  /**
+   * The plan the subscription was created from, if any. Includes the plan key and
+   * version so clients can resolve the exact plan revision.
+   */
+  plan?: SubscriptionPlanReference
+  /** The fiat currency in which the subscription is invoiced. */
+  invoiceCurrency: string
+  /**
+   * Controls whether custom-currency cost bases are resolved dynamically or pinned
+   * when their currency pair is introduced to the subscription.
+   */
+  costBasisMode?: 'dynamic' | 'pinned'
+  /** Cost bases pinned to custom-currency pairs for this subscription. */
+  costBasisPins: SubscriptionCostBasisPin[]
+  /**
+   * The billing cadence of the subscription in ISO-8601 duration format. Defines how
+   * often the customer is billed. Examples: `P1M` (monthly), `P3M` (quarterly),
+   * `P1Y` (annually).
+   */
+  billingCadence: string
+  /** The pro-rating configuration of the subscription. */
+  proRatingConfig?: SubscriptionProRatingConfig
+  /**
+   * A billing anchor is the fixed point in time that determines the subscription's
+   * recurring billing cycle. It affects when charges occur and how prorations are
+   * calculated. Common anchors:
+   *
+   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
+   * - Subscription anniversary (day customer signed up)
+   * - Custom date (customer-specified day)
+   */
+  billingAnchor: Date
+  /** The status of the subscription. */
+  status: 'active' | 'inactive' | 'canceled' | 'scheduled'
+  /**
+   * Settlement mode for billing.
+   *
+   * Values:
+   *
+   * - `credit_then_invoice`: Credits are applied first, then any remainder is
+   * invoiced.
+   * - `credit_only`: Usage is settled exclusively against credits.
+   */
+  settlementMode?: 'credit_then_invoice' | 'credit_only'
+  /**
+   * The current aligned billing period. Present only when the subscription is active
+   * and aligned.
+   */
+  currentPeriod?: ClosedPeriod
+  /**
+   * The phases of the subscription in chronological order. A phase groups the rate
+   * cards that are in effect for a segment of the subscription's lifetime.
+   */
+  phases: SubscriptionPhaseInput[]
+}
+
+export interface SubscriptionCreateInput {
+  labels?: Labels
+  /**
+   * Settlement mode for billing.
+   *
+   * Values:
+   *
+   * - `credit_then_invoice`: Credits are applied first, then any remainder is
+   * invoiced.
+   * - `credit_only`: Usage is settled exclusively against credits.
+   */
+  settlementMode?: 'credit_then_invoice' | 'credit_only'
+  /** The customer to create the subscription for. */
+  customer: { id?: string; key?: string }
+  /**
+   * A reference to a published plan the subscription is created from.
+   *
+   * Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the
+   * subscription on an existing published plan; use `custom_plan` to define the plan
+   * inline.
+   */
+  plan?: { id?: string; key?: string; version?: number }
+  /**
+   * An inline plan definition to create the subscription from, without referencing a
+   * published plan.
+   *
+   * Exactly one of `plan` or `custom_plan` must be provided. The subscription is not
+   * linked to a persisted plan, so the response omits the `plan` reference.
+   */
+  customPlan?: SubscriptionCustomPlanInput
+  /**
+   * The key of the phase to start the subscription in. If not provided, the
+   * subscription starts in the first phase of the plan.
+   *
+   * Only applies when creating from a published `plan`; custom plans define their
+   * own phases inline.
+   */
+  startingPhase?: string
+  /**
+   * When the subscription should start. If not provided, the subscription starts
+   * immediately. Provide a future timestamp to schedule the subscription to start
+   * later — this creates a not-yet-active, scheduled subscription. A timestamp in
+   * the past is rejected.
+   */
+  timing?: SubscriptionCreateTiming
+  /**
+   * A billing anchor is the fixed point in time that determines the subscription's
+   * recurring billing cycle. It affects when charges occur and how prorations are
+   * calculated. Common anchors:
+   *
+   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
+   * - Subscription anniversary (day customer signed up)
+   * - Custom date (customer-specified day)
+   *
+   * If not provided, the subscription will be created with the subscription's
+   * creation time as the billing anchor.
+   */
+  billingAnchor?: Date
+  /** Controls how custom-currency cost bases are selected for the subscription. */
+  costBasisMode?: 'dynamic' | 'pinned'
+}
+
+/** Request for changing a subscription. */
+export interface SubscriptionChangeInput {
+  labels?: Labels
+  /**
+   * Settlement mode for billing.
+   *
+   * Values:
+   *
+   * - `credit_then_invoice`: Credits are applied first, then any remainder is
+   * invoiced.
+   * - `credit_only`: Usage is settled exclusively against credits.
+   */
+  settlementMode?: 'credit_then_invoice' | 'credit_only'
+  /** The customer to create the subscription for. */
+  customer: { id?: string; key?: string }
+  /**
+   * A reference to a published plan the subscription is created from.
+   *
+   * Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the
+   * subscription on an existing published plan; use `custom_plan` to define the plan
+   * inline.
+   */
+  plan?: { id?: string; key?: string; version?: number }
+  /**
+   * An inline plan definition to create the subscription from, without referencing a
+   * published plan.
+   *
+   * Exactly one of `plan` or `custom_plan` must be provided. The subscription is not
+   * linked to a persisted plan, so the response omits the `plan` reference.
+   */
+  customPlan?: SubscriptionCustomPlanInput
+  /**
+   * The key of the phase to start the subscription in. If not provided, the
+   * subscription starts in the first phase of the plan.
+   *
+   * Only applies when creating from a published `plan`; custom plans define their
+   * own phases inline.
+   */
+  startingPhase?: string
+  /**
+   * A billing anchor is the fixed point in time that determines the subscription's
+   * recurring billing cycle. It affects when charges occur and how prorations are
+   * calculated. Common anchors:
+   *
+   * - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
+   * - Subscription anniversary (day customer signed up)
+   * - Custom date (customer-specified day)
+   *
+   * If not provided, the subscription will be created with the subscription's
+   * creation time as the billing anchor.
+   */
+  billingAnchor?: Date
+  /** Controls how custom-currency cost bases are selected for the subscription. */
+  costBasisMode?: 'dynamic' | 'pinned'
+  /**
+   * Timing configuration for the change, when the change should take effect. For
+   * changing a subscription, the accepted values depend on the subscription
+   * configuration.
+   */
+  timing: SubscriptionEditTiming
 }
 
 /** Page paginated response. */
 export interface PlanPagePaginatedResponseInput {
   data: PlanInput[]
+  meta: PaginatedMeta
+}
+
+/**
+ * Request for editing a running subscription. Applies an ordered batch of
+ * customizations to the subscription's phases and items. A later customization
+ * observes the state produced by earlier ones.
+ */
+export interface SubscriptionEditInput {
+  /** The ordered batch of customizations to apply to the running subscription. */
+  customizations: SubscriptionEditOperationInput[]
+  /** When the requested changes should take effect. Defaults to immediate. */
+  timing?: SubscriptionEditTiming
+}
+
+/** Page paginated response. */
+export interface SubscriptionAddonPagePaginatedResponseInput {
+  data: SubscriptionAddonInput[]
   meta: PaginatedMeta
 }
 
@@ -7234,7 +10955,7 @@ export interface InvoiceStandardInput {
    * Present only when there are one or more validation findings. An empty list is
    * omitted.
    */
-  validationIssues?: InvoiceValidationIssue[]
+  validationIssues?: ValidationIssue[]
   /** External identifiers assigned to this invoice by third-party systems. */
   externalReferences?: InvoiceExternalReferences
   /** Discriminator field identifying this as a standard invoice. */
@@ -7314,8 +11035,265 @@ export interface UpdateInvoiceStandardRequestInput {
 }
 
 /** Page paginated response. */
+export interface SubscriptionPagePaginatedResponseInput {
+  data: SubscriptionInput[]
+  meta: PaginatedMeta
+}
+
+/** Response for changing a subscription. */
+export interface SubscriptionChangeResponseInput {
+  /** The current subscription before the change. */
+  current: SubscriptionInput
+  /** The new state of the subscription after the change. */
+  next: SubscriptionInput
+}
+
+/** Response for migrating a subscription. */
+export interface SubscriptionMigrateResponseInput {
+  /**
+   * The original subscription's own fields returned by the migration. For an
+   * in-place migration this is the before snapshot; for replacement it includes the
+   * cancellation. Does not include phases or the current billing period.
+   */
+  current: SubscriptionBaseInput
+  /** The resulting subscription, including its phases and items. */
+  next: SubscriptionInput
+}
+
+/** A flat fee charge for a customer. */
+export interface ChargeFlatFeeInput {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of the charge. */
+  type: 'flat_fee'
+  /**
+   * The customer owning the charge.
+   *
+   * By default, only the `id` of the customer is returned. For more details use the
+   * `customer` expand.
+   */
+  customer: CustomerOrReference
+  /**
+   * Indicates whether the charge lifecycle is controlled by the system or manually
+   * overridden by the API user.
+   */
+  lifecycleController: 'system' | 'manual'
+  /**
+   * The subscription that originated the charge, when the charge was created from a
+   * subscription item.
+   *
+   * By default, only the `id`, `phase.id`, `phase.item.id` of the subscription is
+   * returned. For more details use the `subscription` expand.
+   */
+  subscription?: SubscriptionOrReferenceInput
+  /** The currency of the charge. */
+  currency: BillingCurrencyCode
+  /**
+   * The resolved fiat conversion rate of a custom-currency charge. Resolution
+   * depends on costbasis type: dynamic is resolved when charge becomes active, all
+   * other types resolved on creation.
+   */
+  resolvedCostBasis?: ChargeResolvedCostBasis
+  /** The lifecycle status of the charge. */
+  status: 'created' | 'active' | 'final' | 'deleted'
+  /**
+   * Validation issues found while processing the charge.
+   *
+   * Present only when there are one or more validation findings. An empty list is
+   * omitted.
+   */
+  validationIssues?: ValidationIssue[]
+  /** The timestamp when the charge is intended to be invoiced. */
+  invoiceAt: Date
+  /** The effective service period covered by the charge. */
+  servicePeriod: ClosedPeriod
+  /** The full, unprorated service period of the charge. */
+  fullServicePeriod: ClosedPeriod
+  /** The billing period the charge belongs to. */
+  billingPeriod: ClosedPeriod
+  /**
+   * The earliest time when the charge should be advanced again by background
+   * processing.
+   */
+  advanceAfter?: Date
+  /** Unique reference ID of the charge. */
+  uniqueReferenceId?: string
+  /** Settlement mode of the charge. */
+  settlementMode: 'credit_then_invoice' | 'credit_only'
+  /** Tax configuration of the charge. */
+  taxConfig?: TaxConfig
+  /** The realization runs of the charge, sorted by `created_at`. */
+  realizations: ChargeRealizationInput[]
+  /** Payment term of the flat fee charge. */
+  paymentTerm: PricePaymentTerm
+  /** The discounts applied to the charge. */
+  discounts?: ChargeFlatFeeDiscounts
+  /** The feature associated with the charge, when applicable. */
+  feature?: FeatureOrReference
+  /** The proration configuration of the charge. */
+  prorationConfiguration: RateCardProrationConfiguration
+  /** The amount after proration of the charge. */
+  amountAfterProration: CurrencyAmount
+  /** The price of the charge. */
+  price: PriceFlat
+  /**
+   * Current intent from the system lifecycle controller for a charge that has an
+   * active manual override. The top-level charge fields remain the effective
+   * customer-facing intent.
+   */
+  systemIntent?: ChargeFlatFeeSystemIntent
+}
+
+/** A usage-based charge for a customer. */
+export interface ChargeUsageBasedInput {
+  id: string
+  /**
+   * Display name of the resource.
+   *
+   * Between 1 and 256 characters.
+   */
+  name: string
+  /**
+   * Optional description of the resource.
+   *
+   * Maximum 1024 characters.
+   */
+  description?: string
+  labels?: Labels
+  /** An ISO-8601 timestamp representation of entity creation date. */
+  createdAt: Date
+  /** An ISO-8601 timestamp representation of entity last update date. */
+  updatedAt: Date
+  /** An ISO-8601 timestamp representation of entity deletion date. */
+  deletedAt?: Date
+  /** The type of the charge. */
+  type: 'usage_based'
+  /**
+   * The customer owning the charge.
+   *
+   * By default, only the `id` of the customer is returned. For more details use the
+   * `customer` expand.
+   */
+  customer: CustomerOrReference
+  /**
+   * Indicates whether the charge lifecycle is controlled by the system or manually
+   * overridden by the API user.
+   */
+  lifecycleController: 'system' | 'manual'
+  /**
+   * The subscription that originated the charge, when the charge was created from a
+   * subscription item.
+   *
+   * By default, only the `id`, `phase.id`, `phase.item.id` of the subscription is
+   * returned. For more details use the `subscription` expand.
+   */
+  subscription?: SubscriptionOrReferenceInput
+  /** The currency of the charge. */
+  currency: BillingCurrencyCode
+  /**
+   * The resolved fiat conversion rate of a custom-currency charge. Resolution
+   * depends on costbasis type: dynamic is resolved when charge becomes active, all
+   * other types resolved on creation.
+   */
+  resolvedCostBasis?: ChargeResolvedCostBasis
+  /** The lifecycle status of the charge. */
+  status: 'created' | 'active' | 'final' | 'deleted'
+  /**
+   * Validation issues found while processing the charge.
+   *
+   * Present only when there are one or more validation findings. An empty list is
+   * omitted.
+   */
+  validationIssues?: ValidationIssue[]
+  /** The timestamp when the charge is intended to be invoiced. */
+  invoiceAt: Date
+  /** The effective service period covered by the charge. */
+  servicePeriod: ClosedPeriod
+  /** The full, unprorated service period of the charge. */
+  fullServicePeriod: ClosedPeriod
+  /** The billing period the charge belongs to. */
+  billingPeriod: ClosedPeriod
+  /**
+   * The earliest time when the charge should be advanced again by background
+   * processing.
+   */
+  advanceAfter?: Date
+  /** Unique reference ID of the charge. */
+  uniqueReferenceId?: string
+  /** Settlement mode of the charge. */
+  settlementMode: 'credit_then_invoice' | 'credit_only'
+  /** Tax configuration of the charge. */
+  taxConfig?: TaxConfig
+  /** The realization runs of the charge, sorted by `created_at`. */
+  realizations: ChargeRealizationInput[]
+  /** Discounts applied to the usage-based charge. */
+  discounts?: RateCardDiscounts
+  /** The feature associated with the charge. */
+  feature: FeatureOrReference
+  /** Aggregated booked and realtime totals for the charge. */
+  totals: ChargeTotals
+  /**
+   * The metered usage quantity of the charge for its full service period.
+   *
+   * Requires the `real_time_usage` expand, since it is computed live from the
+   * metering store rather than stored on the charge.
+   */
+  usage?: string
+  /**
+   * The price of the charge.
+   *
+   * `free` prices are rejected on create: a usage-based charge always carries a
+   * concrete price.
+   */
+  price: PriceUsageBased
+  /** Spend commitments for the charge. */
+  commitments?: SpendCommitments
+  /**
+   * Unit conversion configuration for the charge.
+   *
+   * Synthesized on read for charges created from v1 dynamic or package prices:
+   * dynamic prices map to a unit price with a multiply unit config, and package
+   * prices map to a unit price with a divide unit config.
+   *
+   * Accepted on create only when the UnitConfig feature is enabled on the
+   * deployment; otherwise rejected.
+   */
+  unitConfig?: UnitConfigInput
+  /**
+   * Current intent from the system lifecycle controller for a charge that has an
+   * active manual override. The top-level charge fields remain the effective
+   * customer-facing intent.
+   */
+  systemIntent?: ChargeUsageBasedSystemIntentInput
+}
+
+/** Page paginated response. */
 export interface InvoicePagePaginatedResponseInput {
   data: InvoiceInput[]
+  meta: PaginatedMeta
+}
+
+/** Page paginated response. */
+export interface ChargePagePaginatedResponseInput {
+  data: ChargeInput[]
   meta: PaginatedMeta
 }
 
@@ -7338,6 +11316,57 @@ export type RateCardEntitlementInput =
   | RateCardStaticEntitlement
   | RateCardBooleanEntitlement
 
+/** An entitlement grants a customer access to a feature. */
+export type EntitlementInput =
+  EntitlementMeteredInput | EntitlementStatic | EntitlementBoolean
+
+/**
+ * A notification rule selects the type of event to generate, the conditions
+ * specific to that type, and the channels to deliver the events to.
+ */
+export type NotificationRuleInput =
+  | NotificationRuleBalanceThresholdInput
+  | NotificationRuleEntitlementResetInput
+  | NotificationRuleInvoiceCreatedInput
+  | NotificationRuleInvoiceUpdatedInput
+
+/**
+ * Request body for creating or updating a notification rule. Updates replace the
+ * rule's mutable state: omitting `disabled`, `labels`, or `features` resets them
+ * to their defaults. The `type` must match the existing rule on update.
+ */
+export type NotificationRuleRequestInput =
+  | NotificationRuleBalanceThresholdRequestInput
+  | NotificationRuleEntitlementResetRequestInput
+  | NotificationRuleInvoiceCreatedRequestInput
+  | NotificationRuleInvoiceUpdatedRequestInput
+
+/** Entitlement create request. */
+export type CreateEntitlementRequestInput =
+  | CreateEntitlementMeteredRequestInput
+  | CreateEntitlementStaticRequest
+  | CreateEntitlementBooleanRequest
+
+/** ChargeRealizationInvoice or reference. */
+export type ChargeRealizationInvoiceOrReferenceInput =
+  ChargeRealizationInvoiceInput | ChargeRealizationInvoiceReference
+
+/** Customer charge. */
+export type CreateChargeRequestInput =
+  CreateChargeFlatFeeRequest | CreateChargeUsageBasedRequestInput
+
+/**
+ * A single customization to apply to a running subscription. The `type` field
+ * discriminates which operation is performed.
+ */
+export type SubscriptionEditOperationInput =
+  | SubscriptionEditAddItemInput
+  | SubscriptionEditRemoveItem
+  | SubscriptionEditAddPhase
+  | SubscriptionEditRemovePhase
+  | SubscriptionEditStretchPhase
+  | SubscriptionEditUnscheduleEdit
+
 /**
  * A top-level line item on an invoice.
  *
@@ -7346,6 +11375,10 @@ export type RateCardEntitlementInput =
  * present.
  */
 export type InvoiceLineInput = InvoiceStandardLineInput
+
+/** Subscription or reference. */
+export type SubscriptionOrReferenceInput =
+  SubscriptionInput | SubscriptionReference
 
 /**
  * An invoice issued to a customer.
@@ -7358,3 +11391,6 @@ export type InvoiceInput = InvoiceStandardInput
 
 /** UpdateInvoiceRequest update request. */
 export type UpdateInvoiceRequestInput = UpdateInvoiceStandardRequestInput
+
+/** Customer charge. */
+export type ChargeInput = ChargeFlatFeeInput | ChargeUsageBasedInput

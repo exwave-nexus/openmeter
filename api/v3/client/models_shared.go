@@ -59,6 +59,970 @@ func (value AppType) Valid() bool {
 // Fiat or custom currency code.
 type BillingCurrencyCode string
 
+// Subscription.
+type BillingSubscription struct {
+	ID     string            `json:"id"`
+	Labels map[string]string `json:"labels,omitempty"`
+	// An ISO-8601 timestamp representation of entity creation date.
+	CreatedAt time.Time `json:"created_at"`
+	// An ISO-8601 timestamp representation of entity last update date.
+	UpdatedAt time.Time `json:"updated_at"`
+	// An ISO-8601 timestamp representation of entity deletion date.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// Display name of the subscription. Defaults to the plan name when the
+	// subscription is created from a plan.
+	Name string `json:"name"`
+	// Optional description of the subscription.
+	Description *string `json:"description,omitempty"`
+	// An ISO-8601 timestamp representation of when the subscription became (or will
+	// become) active.
+	ActiveFrom time.Time `json:"active_from"`
+	// An ISO-8601 timestamp representation of when the subscription stops being
+	// active. Open-ended when not set.
+	ActiveTo *time.Time `json:"active_to,omitempty"`
+	// The customer ID of the subscription.
+	CustomerID string `json:"customer_id"`
+	// The plan ID of the subscription. Set if subscription is created from a plan.
+	PlanID *string `json:"plan_id,omitempty"`
+	// The plan the subscription was created from, if any. Includes the plan key and
+	// version so clients can resolve the exact plan revision.
+	Plan *SubscriptionPlanReference `json:"plan,omitempty"`
+	// The fiat currency in which the subscription is invoiced.
+	InvoiceCurrency string `json:"invoice_currency"`
+	// Controls whether custom-currency cost bases are resolved dynamically or pinned
+	// when their currency pair is introduced to the subscription.
+	CostBasisMode SubscriptionCostBasisMode `json:"cost_basis_mode"`
+	// Cost bases pinned to custom-currency pairs for this subscription.
+	CostBasisPins []SubscriptionCostBasisPin `json:"cost_basis_pins"`
+	// The billing cadence of the subscription in ISO-8601 duration format. Defines how
+	// often the customer is billed. Examples: `P1M` (monthly), `P3M` (quarterly),
+	// `P1Y` (annually).
+	BillingCadence string `json:"billing_cadence"`
+	// The pro-rating configuration of the subscription.
+	ProRatingConfig *SubscriptionProRatingConfig `json:"pro_rating_config,omitempty"`
+	// A billing anchor is the fixed point in time that determines the subscription's
+	// recurring billing cycle. It affects when charges occur and how prorations are
+	// calculated. Common anchors:
+	//
+	// - Calendar month (1st of each month): `2025-01-01T00:00:00Z`
+	// - Subscription anniversary (day customer signed up)
+	// - Custom date (customer-specified day)
+	BillingAnchor time.Time `json:"billing_anchor"`
+	// The status of the subscription.
+	Status SubscriptionStatus `json:"status"`
+	// Settlement mode for billing.
+	//
+	// Values:
+	//
+	// - `credit_then_invoice`: Credits are applied first, then any remainder is
+	// invoiced.
+	// - `credit_only`: Usage is settled exclusively against credits.
+	SettlementMode *SettlementMode `json:"settlement_mode,omitempty"`
+	// The current aligned billing period. Present only when the subscription is active
+	// and aligned.
+	CurrentPeriod *ClosedPeriod `json:"current_period,omitempty"`
+	// The phases of the subscription in chronological order. A phase groups the rate
+	// cards that are in effect for a segment of the subscription's lifetime.
+	Phases []SubscriptionPhase `json:"phases"`
+}
+
+// Customer charge.
+//
+// Charge is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the ChargeFrom* constructors.
+// The exported Type field is decode-side metadata; MarshalJSON round-trips the original payload and ignores writes to it.
+type Charge struct {
+	Type string `json:"type"`
+	raw  json.RawMessage
+}
+
+func (u *Charge) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	if string(data) == "null" {
+		u.Type = ""
+		return nil
+	}
+
+	var envelope struct {
+		Value string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	u.Type = envelope.Value
+	return nil
+}
+
+func (u Charge) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u Charge) AsChargeFlatFee() (*ChargeFlatFee, error) {
+	if u.Type != "flat_fee" {
+		return nil, fmt.Errorf("Charge: expected type %q, got %q", "flat_fee", u.Type)
+	}
+	var value ChargeFlatFee
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func ChargeFromChargeFlatFee(value ChargeFlatFee) (Charge, error) {
+	value.Type = "flat_fee"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return Charge{}, err
+	}
+	var result Charge
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return Charge{}, err
+	}
+	return result, nil
+}
+
+func (u Charge) AsChargeUsageBased() (*ChargeUsageBased, error) {
+	if u.Type != "usage_based" {
+		return nil, fmt.Errorf("Charge: expected type %q, got %q", "usage_based", u.Type)
+	}
+	var value ChargeUsageBased
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func ChargeFromChargeUsageBased(value ChargeUsageBased) (Charge, error) {
+	value.Type = "usage_based"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return Charge{}, err
+	}
+	var result Charge
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return Charge{}, err
+	}
+	return result, nil
+}
+
+// A flat fee charge for a customer.
+type ChargeFlatFee struct {
+	ID string `json:"id"`
+	// Display name of the resource.
+	//
+	// Between 1 and 256 characters.
+	Name string `json:"name"`
+	// Optional description of the resource.
+	//
+	// Maximum 1024 characters.
+	Description *string           `json:"description,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	// An ISO-8601 timestamp representation of entity creation date.
+	CreatedAt time.Time `json:"created_at"`
+	// An ISO-8601 timestamp representation of entity last update date.
+	UpdatedAt time.Time `json:"updated_at"`
+	// An ISO-8601 timestamp representation of entity deletion date.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// The type of the charge.
+	Type ChargeType `json:"type"`
+	// The customer owning the charge.
+	//
+	// By default, only the `id` of the customer is returned. For more details use the
+	// `customer` expand.
+	Customer CustomerOrReference `json:"customer"`
+	// Indicates whether the charge lifecycle is controlled by the system or manually
+	// overridden by the API user.
+	LifecycleController LifecycleController `json:"lifecycle_controller"`
+	// The subscription that originated the charge, when the charge was created from a
+	// subscription item.
+	//
+	// By default, only the `id`, `phase.id`, `phase.item.id` of the subscription is
+	// returned. For more details use the `subscription` expand.
+	Subscription *SubscriptionOrReference `json:"subscription,omitempty"`
+	// The currency of the charge.
+	Currency BillingCurrencyCode `json:"currency"`
+	// The resolved fiat conversion rate of a custom-currency charge. Resolution
+	// depends on costbasis type: dynamic is resolved when charge becomes active, all
+	// other types resolved on creation.
+	ResolvedCostBasis *ChargeResolvedCostBasis `json:"resolved_cost_basis,omitempty"`
+	// The lifecycle status of the charge.
+	Status ChargeStatus `json:"status"`
+	// Validation issues found while processing the charge.
+	//
+	// Present only when there are one or more validation findings. An empty list is
+	// omitted.
+	ValidationIssues []ValidationIssue `json:"validation_issues,omitempty"`
+	// The timestamp when the charge is intended to be invoiced.
+	InvoiceAt time.Time `json:"invoice_at"`
+	// The effective service period covered by the charge.
+	ServicePeriod ClosedPeriod `json:"service_period"`
+	// The full, unprorated service period of the charge.
+	FullServicePeriod ClosedPeriod `json:"full_service_period"`
+	// The billing period the charge belongs to.
+	BillingPeriod ClosedPeriod `json:"billing_period"`
+	// The earliest time when the charge should be advanced again by background
+	// processing.
+	AdvanceAfter *time.Time `json:"advance_after,omitempty"`
+	// Unique reference ID of the charge.
+	UniqueReferenceID *string `json:"unique_reference_id,omitempty"`
+	// Settlement mode of the charge.
+	SettlementMode SettlementMode `json:"settlement_mode"`
+	// Tax configuration of the charge.
+	TaxConfig *TaxConfig `json:"tax_config,omitempty"`
+	// The realization runs of the charge, sorted by `created_at`.
+	Realizations []ChargeRealization `json:"realizations"`
+	// Payment term of the flat fee charge.
+	PaymentTerm PricePaymentTerm `json:"payment_term"`
+	// The discounts applied to the charge.
+	Discounts *ChargeFlatFeeDiscounts `json:"discounts,omitempty"`
+	// The feature associated with the charge, when applicable.
+	Feature *FeatureOrReference `json:"feature,omitempty"`
+	// The proration configuration of the charge.
+	ProrationConfiguration RateCardProrationConfiguration `json:"proration_configuration"`
+	// The amount after proration of the charge.
+	AmountAfterProration CurrencyAmount `json:"amount_after_proration"`
+	// The price of the charge.
+	Price PriceFlat `json:"price"`
+	// Current intent from the system lifecycle controller for a charge that has an
+	// active manual override. The top-level charge fields remain the effective
+	// customer-facing intent.
+	SystemIntent *ChargeFlatFeeSystemIntent `json:"system_intent,omitempty"`
+}
+
+// Discounts applicable to flat fee charges.
+//
+// This is the same as `ProductCatalog.Discounts` but without the `usage` field,
+// which is not applicable to flat fee charges.
+type ChargeFlatFeeDiscounts struct {
+	// Percentage discount applied to the price (0–100).
+	Percentage *float64 `json:"percentage,omitempty"`
+}
+
+// Flat fee intent fields from the system lifecycle controller shadowed by a manual
+// override.
+type ChargeFlatFeeSystemIntent struct {
+	// Display name of the resource.
+	//
+	// Between 1 and 256 characters.
+	Name string `json:"name"`
+	// Optional description of the resource.
+	//
+	// Maximum 1024 characters.
+	Description *string           `json:"description,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	// The timestamp when the charge is intended to be invoiced.
+	InvoiceAt time.Time `json:"invoice_at"`
+	// The effective service period covered by the charge.
+	ServicePeriod ClosedPeriod `json:"service_period"`
+	// The full, unprorated service period of the charge.
+	FullServicePeriod ClosedPeriod `json:"full_service_period"`
+	// The billing period the charge belongs to.
+	BillingPeriod ClosedPeriod `json:"billing_period"`
+	// Payment term of the flat fee charge.
+	PaymentTerm PricePaymentTerm `json:"payment_term"`
+	// The discounts applied to the charge.
+	Discounts *ChargeFlatFeeDiscounts `json:"discounts,omitempty"`
+	// The proration configuration of the charge.
+	ProrationConfiguration RateCardProrationConfiguration `json:"proration_configuration"`
+	// The amount before proration of the system lifecycle controller flat fee intent.
+	AmountBeforeProration CurrencyAmount `json:"amount_before_proration"`
+	// The timestamp when the system lifecycle controller intent was deleted. The
+	// effective charge can remain visible while a manual override is active.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+}
+
+// Page paginated response.
+type ChargePagePaginatedResponse struct {
+	Data []Charge      `json:"data"`
+	Meta PaginatedMeta `json:"meta"`
+}
+
+// A realization run of a charge.
+//
+// `totals` and `detailed_lines` are only populated with the `realization.totals`
+// and `realization.detailed_lines` expands, respectively, since computing them
+// requires re-deriving the run's rated breakdown. `invoice` is an ID reference
+// unless the `realization.invoice` expand is used, which resolves it to the
+// invoice header of the run's booked line: the invoice entity without its `lines`
+// and without the `customer` snapshot (the charge itself already identifies the
+// customer).
+type ChargeRealization struct {
+	// The ID of the realization run. Not present on `outstanding` entries, which are
+	// projections rather than persisted runs.
+	ID *string `json:"id,omitempty"`
+	// The ID of the invoice line this realization was booked to, when the realization
+	// has been invoiced.
+	LineID *string `json:"line_id,omitempty"`
+	// The reference of the invoice related to the realization.
+	Invoice *ChargeRealizationInvoiceOrReference `json:"invoice,omitempty"`
+	// The type of the realization run.
+	Type ChargeRealizationType `json:"type"`
+	// The service period covered by this realization run.
+	ServicePeriod ClosedPeriod `json:"service_period"`
+	// The metered usage quantity this realization run accounts for. Only present on
+	// usage-based charges; flat fees are not metered, so their realizations carry no
+	// usage.
+	//
+	// Booked entries report a signed delta: a negative value states a downward usage
+	// correction (or a voided run that snapshotted behind its live neighbors) instead
+	// of masking it as zero.
+	//
+	// On an `outstanding` entry this is `0` unless the `real_time_usage` expand is
+	// applied, in which case it is the not-yet-booked remainder of the live metering
+	// read (never negative).
+	Usage *Numeric `json:"usage,omitempty"`
+	// The payment state of the realization, when the charge requires a fiat
+	// transaction to settle.
+	Payment *ChargeRealizationPayment `json:"payment,omitempty"`
+	// Financial totals for the realization run, including credit allocations.
+	//
+	// Requires the `realization.totals` expand.
+	Totals *Totals `json:"totals,omitempty"`
+	// The detailed (rated) lines produced by the realization run.
+	//
+	// Requires the `realization.detailed_lines` expand.
+	DetailedLines []ChargeRealizationDetailedLine `json:"detailed_lines,omitempty"`
+}
+
+// A discount applied to a charge realization detailed line.
+type ChargeRealizationAmountDiscount struct {
+	// The amount of the discount applied to the charge.
+	Amount Numeric `json:"amount"`
+	// The reason for the discount applied to the charge.
+	Reason string `json:"reason"`
+	// Optional human-readable description of the discount.
+	Description *string `json:"description,omitempty"`
+	// The discount amount applied to the charge, rounded to the nearest cent (or
+	// currency equivalent) and adjusted to compensate for rounding errors across
+	// multiple discounted detail lines.
+	RoundingAmount *Numeric `json:"rounding_amount,omitempty"`
+	// Unique reference ID of the discount applied to the charge.
+	ChildUniqueReferenceID string `json:"child_unique_reference_id"`
+}
+
+// A detailed (child) line type of a charge realization run.
+//
+// This is distinct from an invoice's own detailed lines: it represents the
+// rated/priced breakdown produced by the realization run itself, before that
+// breakdown is (or is not yet) reflected on an invoice line. Credit-then-invoice
+// runs include credit allocations in these lines, while credits-only runs keep the
+// gross rated detail.
+//
+// ChargeRealizationDetailedLine is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the ChargeRealizationDetailedLineFrom* constructors.
+// The exported Type field is decode-side metadata; MarshalJSON round-trips the original payload and ignores writes to it.
+type ChargeRealizationDetailedLine struct {
+	Type string `json:"type"`
+	raw  json.RawMessage
+}
+
+func (u *ChargeRealizationDetailedLine) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	if string(data) == "null" {
+		u.Type = ""
+		return nil
+	}
+
+	var envelope struct {
+		Value string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	u.Type = envelope.Value
+	return nil
+}
+
+func (u ChargeRealizationDetailedLine) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u ChargeRealizationDetailedLine) AsChargeRealizationDetailedLineFlatFee() (*ChargeRealizationDetailedLineFlatFee, error) {
+	if u.Type != "flat_fee" {
+		return nil, fmt.Errorf("ChargeRealizationDetailedLine: expected type %q, got %q", "flat_fee", u.Type)
+	}
+	var value ChargeRealizationDetailedLineFlatFee
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func ChargeRealizationDetailedLineFromChargeRealizationDetailedLineFlatFee(value ChargeRealizationDetailedLineFlatFee) (ChargeRealizationDetailedLine, error) {
+	value.Type = "flat_fee"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ChargeRealizationDetailedLine{}, err
+	}
+	var result ChargeRealizationDetailedLine
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return ChargeRealizationDetailedLine{}, err
+	}
+	return result, nil
+}
+
+func (u ChargeRealizationDetailedLine) AsChargeRealizationDetailedLineUsageBased() (*ChargeRealizationDetailedLineUsageBased, error) {
+	if u.Type != "usage_based" {
+		return nil, fmt.Errorf("ChargeRealizationDetailedLine: expected type %q, got %q", "usage_based", u.Type)
+	}
+	var value ChargeRealizationDetailedLineUsageBased
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func ChargeRealizationDetailedLineFromChargeRealizationDetailedLineUsageBased(value ChargeRealizationDetailedLineUsageBased) (ChargeRealizationDetailedLine, error) {
+	value.Type = "usage_based"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ChargeRealizationDetailedLine{}, err
+	}
+	var result ChargeRealizationDetailedLine
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return ChargeRealizationDetailedLine{}, err
+	}
+	return result, nil
+}
+
+// Cost category of a charge realization detailed line.
+//
+// Values:
+//
+// - `regular`: A regular charge line, based on usage or subscription pricing.
+// - `commitment`: A commitment-derived line, such as minimum spend.
+type ChargeRealizationDetailedLineCategory string
+
+const (
+	ChargeRealizationDetailedLineCategoryRegular    ChargeRealizationDetailedLineCategory = "regular"
+	ChargeRealizationDetailedLineCategoryCommitment ChargeRealizationDetailedLineCategory = "commitment"
+)
+
+func (value ChargeRealizationDetailedLineCategory) Valid() bool {
+	switch value {
+	case ChargeRealizationDetailedLineCategoryRegular, ChargeRealizationDetailedLineCategoryCommitment:
+		return true
+	default:
+		return false
+	}
+}
+
+// A credit allocation applied to a charge realization detailed line.
+type ChargeRealizationDetailedLineCreditApplied struct {
+	// The monetary amount credited.
+	Amount Numeric `json:"amount"`
+	// Human-readable description of the credit allocation.
+	Description *string `json:"description,omitempty"`
+	// The ID of the credit realization (allocation) this credit was applied from.
+	CreditRealizationID string `json:"credit_realization_id"`
+}
+
+// A detailed line produced by a flat fee charge's realization run.
+type ChargeRealizationDetailedLineFlatFee struct {
+	ID string `json:"id"`
+	// An ISO-8601 timestamp representation of entity creation date.
+	CreatedAt time.Time `json:"created_at"`
+	// An ISO-8601 timestamp representation of entity last update date.
+	UpdatedAt time.Time `json:"updated_at"`
+	// An ISO-8601 timestamp representation of entity deletion date.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// The type of the charge the realization belongs to.
+	Type ChargeType `json:"type"`
+	// The service period covered by this detailed line.
+	ServicePeriod ClosedPeriod `json:"service_period"`
+	// Aggregated financial totals for the detailed line.
+	Totals Totals `json:"totals"`
+	// The cost category of this detailed line.
+	Category ChargeRealizationDetailedLineCategory `json:"category"`
+	// Credits applied to this detailed line.
+	CreditsApplied []ChargeRealizationDetailedLineCreditApplied `json:"credits_applied,omitempty"`
+	// The unit price of the detailed line.
+	UnitPrice Numeric `json:"unit_price"`
+	// The amount discounts applied to the detailed line.
+	AmountDiscounts []ChargeRealizationAmountDiscount `json:"amount_discounts"`
+}
+
+// A detailed line produced by a usage-based charge's realization run.
+type ChargeRealizationDetailedLineUsageBased struct {
+	ID string `json:"id"`
+	// An ISO-8601 timestamp representation of entity creation date.
+	CreatedAt time.Time `json:"created_at"`
+	// An ISO-8601 timestamp representation of entity last update date.
+	UpdatedAt time.Time `json:"updated_at"`
+	// An ISO-8601 timestamp representation of entity deletion date.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// The type of the charge the realization belongs to.
+	Type ChargeType `json:"type"`
+	// The service period covered by this detailed line.
+	ServicePeriod ClosedPeriod `json:"service_period"`
+	// Aggregated financial totals for the detailed line.
+	Totals Totals `json:"totals"`
+	// The cost category of this detailed line.
+	Category ChargeRealizationDetailedLineCategory `json:"category"`
+	// Credits applied to this detailed line.
+	CreditsApplied []ChargeRealizationDetailedLineCreditApplied `json:"credits_applied,omitempty"`
+	// The unit price of the detailed line.
+	UnitPrice Numeric `json:"unit_price"`
+	// The amount discounts applied to the detailed line.
+	AmountDiscounts []ChargeRealizationAmountDiscount `json:"amount_discounts"`
+	// The quantity of the detailed line.
+	Quantity Numeric `json:"quantity"`
+	// The ID of a prior realization run this detailed line corrects. Only set if the
+	// detailed line's totals are negative.
+	CorrectsRunID *string `json:"corrects_run_id,omitempty"`
+}
+
+// The invoice a charge realization was booked to, embedded as a header.
+//
+// Matches the standard invoice entity, except that it carries no `customer`
+// snapshot (the charge context already identifies the customer) and `lines` are
+// never populated (the realization itself is the line-level breakdown). The shared
+// invoice contract stays untouched: this model exists so the charges API can slim
+// the embedding without loosening the invoices API.
+type ChargeRealizationInvoice struct {
+	ID string `json:"id"`
+	// Optional description of the resource.
+	//
+	// Maximum 1024 characters.
+	Description *string           `json:"description,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	// An ISO-8601 timestamp representation of entity creation date.
+	CreatedAt time.Time `json:"created_at"`
+	// An ISO-8601 timestamp representation of entity last update date.
+	UpdatedAt time.Time `json:"updated_at"`
+	// An ISO-8601 timestamp representation of entity deletion date.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// Human-readable invoice number generated by the invoicing app.
+	Number string `json:"number"`
+	// Three-letter ISO 4217 currency code for the invoice.
+	Currency string `json:"currency"`
+	// Snapshot of the supplier's contact information at the time the invoice was
+	// issued.
+	Supplier Supplier `json:"supplier"`
+	// Aggregated financial totals for the invoice.
+	Totals Totals `json:"totals"`
+	// The service period covered by this invoice.
+	//
+	// For flat fee the service period can be empty which means `from` will be equals
+	// to `to`. In other cases those fields will be filled with the actual service
+	// period.
+	ServicePeriod ClosedPeriod `json:"service_period"`
+	// Validation issues found during invoice processing.
+	//
+	// Present only when there are one or more validation findings. An empty list is
+	// omitted.
+	ValidationIssues []ValidationIssue `json:"validation_issues,omitempty"`
+	// External identifiers assigned to this invoice by third-party systems.
+	ExternalReferences *InvoiceExternalReferences `json:"external_references,omitempty"`
+	// Discriminator field identifying this as a standard invoice.
+	Type InvoiceType `json:"type"`
+	// Current lifecycle status of the invoice.
+	Status InvoiceStandardStatus `json:"status"`
+	// Detailed status information including available actions and workflow state.
+	StatusDetails InvoiceStatusDetails `json:"status_details"`
+	// Timestamp when the invoice was issued to the customer.
+	IssuedAt *time.Time `json:"issued_at,omitempty"`
+	// Timestamp until which the invoice remains in draft state.
+	//
+	// The invoice advances automatically once this time is reached.
+	DraftUntil *time.Time `json:"draft_until,omitempty"`
+	// Timestamp when usage quantities were last snapshotted for this invoice.
+	QuantitySnapshottedAt *time.Time `json:"quantity_snapshotted_at,omitempty"`
+	// Timestamp when collection was initiated for this invoice.
+	CollectionAt *time.Time `json:"collection_at,omitempty"`
+	// Timestamp when payment is due.
+	DueAt *time.Time `json:"due_at,omitempty"`
+	// Timestamp when the invoice was sent to the customer.
+	SentToCustomerAt *time.Time `json:"sent_to_customer_at,omitempty"`
+	// Workflow configuration snapshot captured at invoice creation time.
+	Workflow InvoiceWorkflowSettings `json:"workflow"`
+}
+
+// ChargeRealizationInvoice or reference.
+//
+// ChargeRealizationInvoiceOrReference is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the ChargeRealizationInvoiceOrReferenceFrom* constructors.
+type ChargeRealizationInvoiceOrReference struct {
+	raw json.RawMessage
+}
+
+func (u *ChargeRealizationInvoiceOrReference) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	return nil
+}
+
+func (u ChargeRealizationInvoiceOrReference) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u ChargeRealizationInvoiceOrReference) AsChargeRealizationInvoice() (*ChargeRealizationInvoice, error) {
+	var value ChargeRealizationInvoice
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func ChargeRealizationInvoiceOrReferenceFromChargeRealizationInvoice(value ChargeRealizationInvoice) (ChargeRealizationInvoiceOrReference, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ChargeRealizationInvoiceOrReference{}, err
+	}
+	var result ChargeRealizationInvoiceOrReference
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return ChargeRealizationInvoiceOrReference{}, err
+	}
+	return result, nil
+}
+
+func (u ChargeRealizationInvoiceOrReference) AsChargeRealizationInvoiceReference() (*ChargeRealizationInvoiceReference, error) {
+	var value ChargeRealizationInvoiceReference
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func ChargeRealizationInvoiceOrReferenceFromChargeRealizationInvoiceReference(value ChargeRealizationInvoiceReference) (ChargeRealizationInvoiceOrReference, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ChargeRealizationInvoiceOrReference{}, err
+	}
+	var result ChargeRealizationInvoiceOrReference
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return ChargeRealizationInvoiceOrReference{}, err
+	}
+	return result, nil
+}
+
+// ChargeRealizationInvoice reference.
+type ChargeRealizationInvoiceReference struct {
+	ID string `json:"id"`
+}
+
+// Payment state of a charge realization.
+type ChargeRealizationPayment struct {
+	// The settlement status of the payment.
+	Status ChargeRealizationPaymentStatus `json:"status"`
+}
+
+// Settlement status of a charge realization's payment.
+//
+// Values:
+//
+// - `authorized`: The payment has been authorized against the customer's ledger
+// but has not settled yet.
+// - `settled`: The payment has settled.
+type ChargeRealizationPaymentStatus string
+
+const (
+	ChargeRealizationPaymentStatusAuthorized ChargeRealizationPaymentStatus = "authorized"
+	ChargeRealizationPaymentStatusSettled    ChargeRealizationPaymentStatus = "settled"
+)
+
+func (value ChargeRealizationPaymentStatus) Valid() bool {
+	switch value {
+	case ChargeRealizationPaymentStatusAuthorized, ChargeRealizationPaymentStatusSettled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Type of a charge realization run.
+//
+// Values:
+//
+// - `final_realization`: The run is the final realization of the charge for its
+// service period; no further runs are expected to correct it.
+// - `partial_invoice`: The run only realizes part of the charge, because the
+// remainder is not yet due to be invoiced.
+// - `outstanding`: The type an outstanding (not-yet-realized) projection would
+// carry if it were realized now. Never returned on a booked realization run.
+// - `voided`: The run's billing effect was undone (for example the charge's
+// service period was extended while its invoice was still mutable); it is
+// retained as audit history and excluded from aggregate and live calculations.
+type ChargeRealizationType string
+
+const (
+	ChargeRealizationTypeFinalRealization ChargeRealizationType = "final_realization"
+	ChargeRealizationTypePartialInvoice   ChargeRealizationType = "partial_invoice"
+	ChargeRealizationTypeOutstanding      ChargeRealizationType = "outstanding"
+	ChargeRealizationTypeVoided           ChargeRealizationType = "voided"
+)
+
+func (value ChargeRealizationType) Valid() bool {
+	switch value {
+	case ChargeRealizationTypeFinalRealization, ChargeRealizationTypePartialInvoice, ChargeRealizationTypeOutstanding, ChargeRealizationTypeVoided:
+		return true
+	default:
+		return false
+	}
+}
+
+// Fiat conversion rate a custom-currency charge is invoiced at. Present once the
+// cost basis is resolved; dynamic cost bases are exposed only after the service
+// period has started.
+type ChargeResolvedCostBasis struct {
+	// The fiat currency the charge amount is converted into for invoicing.
+	FiatCurrency string `json:"fiat_currency"`
+	// Fiat amount per one unit of the custom currency.
+	Rate Numeric `json:"rate"`
+	// ID of the custom currency's cost basis resource the rate was taken from. Absent
+	// for manual cost bases.
+	CostBasisID *string `json:"cost_basis_id,omitempty"`
+	// When the rate was resolved.
+	ResolvedAt time.Time `json:"resolved_at"`
+}
+
+// Lifecycle status of a charge.
+//
+// Values:
+//
+// - `created`: The charge has been created but is not active yet.
+// - `active`: The charge is active.
+// - `final`: The charge is fully finalized and no further changes are expected.
+// - `deleted`: The charge has been deleted.
+type ChargeStatus string
+
+const (
+	ChargeStatusCreated ChargeStatus = "created"
+	ChargeStatusActive  ChargeStatus = "active"
+	ChargeStatusFinal   ChargeStatus = "final"
+	ChargeStatusDeleted ChargeStatus = "deleted"
+)
+
+func (value ChargeStatus) Valid() bool {
+	switch value {
+	case ChargeStatusCreated, ChargeStatusActive, ChargeStatusFinal, ChargeStatusDeleted:
+		return true
+	default:
+		return false
+	}
+}
+
+// The totals of a charge.
+//
+// `realtime` is only populated when the `real_time_usage` expand is used.
+type ChargeTotals struct {
+	// The amount of the charge already booked to the internal accounting system.
+	Booked Totals `json:"booked"`
+	// The realtime amount of the charge, i.e. the whole usage rated at the charge's
+	// price for its full service period, ignoring what has already been booked to a
+	// realization. This differs from the `usage` of a realization with type
+	// `outstanding`, which only covers the quantity not yet booked.
+	//
+	// Requires the `real_time_usage` expand.
+	Realtime *Totals `json:"realtime,omitempty"`
+}
+
+// Type of a charge.
+//
+// Values:
+//
+// - `flat_fee`: A fixed-amount charge.
+// - `usage_based`: A usage-priced charge.
+type ChargeType string
+
+const (
+	ChargeTypeFlatFee    ChargeType = "flat_fee"
+	ChargeTypeUsageBased ChargeType = "usage_based"
+)
+
+func (value ChargeType) Valid() bool {
+	switch value {
+	case ChargeTypeFlatFee, ChargeTypeUsageBased:
+		return true
+	default:
+		return false
+	}
+}
+
+// A usage-based charge for a customer.
+type ChargeUsageBased struct {
+	ID string `json:"id"`
+	// Display name of the resource.
+	//
+	// Between 1 and 256 characters.
+	Name string `json:"name"`
+	// Optional description of the resource.
+	//
+	// Maximum 1024 characters.
+	Description *string           `json:"description,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	// An ISO-8601 timestamp representation of entity creation date.
+	CreatedAt time.Time `json:"created_at"`
+	// An ISO-8601 timestamp representation of entity last update date.
+	UpdatedAt time.Time `json:"updated_at"`
+	// An ISO-8601 timestamp representation of entity deletion date.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// The type of the charge.
+	Type ChargeType `json:"type"`
+	// The customer owning the charge.
+	//
+	// By default, only the `id` of the customer is returned. For more details use the
+	// `customer` expand.
+	Customer CustomerOrReference `json:"customer"`
+	// Indicates whether the charge lifecycle is controlled by the system or manually
+	// overridden by the API user.
+	LifecycleController LifecycleController `json:"lifecycle_controller"`
+	// The subscription that originated the charge, when the charge was created from a
+	// subscription item.
+	//
+	// By default, only the `id`, `phase.id`, `phase.item.id` of the subscription is
+	// returned. For more details use the `subscription` expand.
+	Subscription *SubscriptionOrReference `json:"subscription,omitempty"`
+	// The currency of the charge.
+	Currency BillingCurrencyCode `json:"currency"`
+	// The resolved fiat conversion rate of a custom-currency charge. Resolution
+	// depends on costbasis type: dynamic is resolved when charge becomes active, all
+	// other types resolved on creation.
+	ResolvedCostBasis *ChargeResolvedCostBasis `json:"resolved_cost_basis,omitempty"`
+	// The lifecycle status of the charge.
+	Status ChargeStatus `json:"status"`
+	// Validation issues found while processing the charge.
+	//
+	// Present only when there are one or more validation findings. An empty list is
+	// omitted.
+	ValidationIssues []ValidationIssue `json:"validation_issues,omitempty"`
+	// The timestamp when the charge is intended to be invoiced.
+	InvoiceAt time.Time `json:"invoice_at"`
+	// The effective service period covered by the charge.
+	ServicePeriod ClosedPeriod `json:"service_period"`
+	// The full, unprorated service period of the charge.
+	FullServicePeriod ClosedPeriod `json:"full_service_period"`
+	// The billing period the charge belongs to.
+	BillingPeriod ClosedPeriod `json:"billing_period"`
+	// The earliest time when the charge should be advanced again by background
+	// processing.
+	AdvanceAfter *time.Time `json:"advance_after,omitempty"`
+	// Unique reference ID of the charge.
+	UniqueReferenceID *string `json:"unique_reference_id,omitempty"`
+	// Settlement mode of the charge.
+	SettlementMode SettlementMode `json:"settlement_mode"`
+	// Tax configuration of the charge.
+	TaxConfig *TaxConfig `json:"tax_config,omitempty"`
+	// The realization runs of the charge, sorted by `created_at`.
+	Realizations []ChargeRealization `json:"realizations"`
+	// Discounts applied to the usage-based charge.
+	Discounts *RateCardDiscounts `json:"discounts,omitempty"`
+	// The feature associated with the charge.
+	Feature FeatureOrReference `json:"feature"`
+	// Aggregated booked and realtime totals for the charge.
+	Totals ChargeTotals `json:"totals"`
+	// The metered usage quantity of the charge for its full service period.
+	//
+	// Requires the `real_time_usage` expand, since it is computed live from the
+	// metering store rather than stored on the charge.
+	Usage *Numeric `json:"usage,omitempty"`
+	// The price of the charge.
+	//
+	// `free` prices are rejected on create: a usage-based charge always carries a
+	// concrete price.
+	Price PriceUsageBased `json:"price"`
+	// Spend commitments for the charge.
+	Commitments *SpendCommitments `json:"commitments,omitempty"`
+	// Unit conversion configuration for the charge.
+	//
+	// Synthesized on read for charges created from v1 dynamic or package prices:
+	// dynamic prices map to a unit price with a multiply unit config, and package
+	// prices map to a unit price with a divide unit config.
+	//
+	// Accepted on create only when the UnitConfig feature is enabled on the
+	// deployment; otherwise rejected.
+	UnitConfig *UnitConfig `json:"unit_config,omitempty"`
+	// Current intent from the system lifecycle controller for a charge that has an
+	// active manual override. The top-level charge fields remain the effective
+	// customer-facing intent.
+	SystemIntent *ChargeUsageBasedSystemIntent `json:"system_intent,omitempty"`
+}
+
+// Usage-based intent fields from the system lifecycle controller shadowed by a
+// manual override.
+type ChargeUsageBasedSystemIntent struct {
+	// Display name of the resource.
+	//
+	// Between 1 and 256 characters.
+	Name string `json:"name"`
+	// Optional description of the resource.
+	//
+	// Maximum 1024 characters.
+	Description *string           `json:"description,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	// The timestamp when the charge is intended to be invoiced.
+	InvoiceAt time.Time `json:"invoice_at"`
+	// The effective service period covered by the charge.
+	ServicePeriod ClosedPeriod `json:"service_period"`
+	// The full, unprorated service period of the charge.
+	FullServicePeriod ClosedPeriod `json:"full_service_period"`
+	// The billing period the charge belongs to.
+	BillingPeriod ClosedPeriod `json:"billing_period"`
+	// Discounts applied to the usage-based charge.
+	Discounts *RateCardDiscounts `json:"discounts,omitempty"`
+	// The price of the charge.
+	//
+	// `free` prices are rejected on create: a usage-based charge always carries a
+	// concrete price.
+	Price PriceUsageBased `json:"price"`
+	// Spend commitments for the charge.
+	Commitments *SpendCommitments `json:"commitments,omitempty"`
+	// Unit conversion configuration for the charge.
+	//
+	// Synthesized on read for charges created from v1 dynamic or package prices:
+	// dynamic prices map to a unit price with a multiply unit config, and package
+	// prices map to a unit price with a divide unit config.
+	//
+	// Accepted on create only when the UnitConfig feature is enabled on the
+	// deployment; otherwise rejected.
+	UnitConfig *UnitConfig `json:"unit_config,omitempty"`
+	// The timestamp when the system lifecycle controller intent was deleted. The
+	// effective charge can remain visible while a manual override is active.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+}
+
+// Expands for customer charges.
+//
+// Values:
+//
+// - `real_time_usage`: The charge's real-time usage; it sets the `usage` and the
+// `totals.realtime` fields, and fills the `outstanding` realization's `usage`
+// with the not-yet-booked remainder of the live read.
+// - `customer`: The complete customer entity of the charge.
+// - `feature`: The complete feature entity of the charge.
+// - `subscription`: The complete subscription of the charge, when present.
+// - `realization.invoice`: The invoice header of each realization (the invoice
+// entity without its `lines` and `customer` snapshot), in place of the ID
+// reference.
+// - `realization.totals`: The `totals` of each realization run, including credit
+// allocations.
+// - `realization.detailed_lines`: The `detailed_lines` of each realization run.
+type ChargesExpand string
+
+const (
+	ChargesExpandRealTimeUsage            ChargesExpand = "real_time_usage"
+	ChargesExpandCustomer                 ChargesExpand = "customer"
+	ChargesExpandFeature                  ChargesExpand = "feature"
+	ChargesExpandSubscription             ChargesExpand = "subscription"
+	ChargesExpandRealizationInvoice       ChargesExpand = "realization.invoice"
+	ChargesExpandRealizationTotals        ChargesExpand = "realization.totals"
+	ChargesExpandRealizationDetailedLines ChargesExpand = "realization.detailed_lines"
+)
+
+func (value ChargesExpand) Valid() bool {
+	switch value {
+	case ChargesExpandRealTimeUsage, ChargesExpandCustomer, ChargesExpandFeature, ChargesExpandSubscription, ChargesExpandRealizationInvoice, ChargesExpandRealizationTotals, ChargesExpandRealizationDetailedLines:
+		return true
+	default:
+		return false
+	}
+}
+
 // A period with defined start and end dates.
 //
 // The period is always inclusive at the start and exclusive at the end.
@@ -89,6 +1053,14 @@ func (value CollectionMethod) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// Monetary amount in a fiat or custom currency.
+type CurrencyAmount struct {
+	// The amount as an arbitrary-precision decimal string.
+	Amount Numeric `json:"amount"`
+	// The fiat or custom currency code of the amount.
+	Currency BillingCurrencyCode `json:"currency"`
 }
 
 // Cursor pagination metadata.
@@ -151,12 +1123,375 @@ type Customer struct {
 	BillingAddress *Address `json:"billing_address,omitempty"`
 }
 
+// Customer or reference.
+//
+// CustomerOrReference is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the CustomerOrReferenceFrom* constructors.
+type CustomerOrReference struct {
+	raw json.RawMessage
+}
+
+func (u *CustomerOrReference) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	return nil
+}
+
+func (u CustomerOrReference) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u CustomerOrReference) AsCustomer() (*Customer, error) {
+	var value Customer
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func CustomerOrReferenceFromCustomer(value Customer) (CustomerOrReference, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return CustomerOrReference{}, err
+	}
+	var result CustomerOrReference
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return CustomerOrReference{}, err
+	}
+	return result, nil
+}
+
+func (u CustomerOrReference) AsCustomerReference() (*CustomerReference, error) {
+	var value CustomerReference
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func CustomerOrReferenceFromCustomerReference(value CustomerReference) (CustomerOrReference, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return CustomerOrReference{}, err
+	}
+	var result CustomerOrReference
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return CustomerOrReference{}, err
+	}
+	return result, nil
+}
+
+// Customer reference.
+type CustomerReference struct {
+	ID string `json:"id"`
+}
+
 // Mapping to attribute metered usage to the customer. One customer can have zero
 // or more subjects, but one subject can only belong to one customer.
 type CustomerUsageAttribution struct {
 	// The subjects that are attributed to the customer. Can be empty when no usage
 	// event subjects are associated with the customer.
 	SubjectKeys []string `json:"subject_keys"`
+}
+
+// An entitlement grants a customer access to a feature.
+//
+// Entitlement is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the EntitlementFrom* constructors.
+// The exported Type field is decode-side metadata; MarshalJSON round-trips the original payload and ignores writes to it.
+type Entitlement struct {
+	Type string `json:"type"`
+	raw  json.RawMessage
+}
+
+func (u *Entitlement) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	if string(data) == "null" {
+		u.Type = ""
+		return nil
+	}
+
+	var envelope struct {
+		Value string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	u.Type = envelope.Value
+	return nil
+}
+
+func (u Entitlement) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u Entitlement) AsEntitlementMetered() (*EntitlementMetered, error) {
+	if u.Type != "metered" {
+		return nil, fmt.Errorf("Entitlement: expected type %q, got %q", "metered", u.Type)
+	}
+	var value EntitlementMetered
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func EntitlementFromEntitlementMetered(value EntitlementMetered) (Entitlement, error) {
+	value.Type = "metered"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return Entitlement{}, err
+	}
+	var result Entitlement
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return Entitlement{}, err
+	}
+	return result, nil
+}
+
+func (u Entitlement) AsEntitlementStatic() (*EntitlementStatic, error) {
+	if u.Type != "static" {
+		return nil, fmt.Errorf("Entitlement: expected type %q, got %q", "static", u.Type)
+	}
+	var value EntitlementStatic
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func EntitlementFromEntitlementStatic(value EntitlementStatic) (Entitlement, error) {
+	value.Type = "static"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return Entitlement{}, err
+	}
+	var result Entitlement
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return Entitlement{}, err
+	}
+	return result, nil
+}
+
+func (u Entitlement) AsEntitlementBoolean() (*EntitlementBoolean, error) {
+	if u.Type != "boolean" {
+		return nil, fmt.Errorf("Entitlement: expected type %q, got %q", "boolean", u.Type)
+	}
+	var value EntitlementBoolean
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func EntitlementFromEntitlementBoolean(value EntitlementBoolean) (Entitlement, error) {
+	value.Type = "boolean"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return Entitlement{}, err
+	}
+	var result Entitlement
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return Entitlement{}, err
+	}
+	return result, nil
+}
+
+// Balance details of a metered entitlement at the evaluation time, which is the
+// `at` query parameter when given and the current time otherwise.
+type EntitlementAccessValue struct {
+	// The remaining balance of the entitlement in the usage period at the evaluation
+	// time.
+	Balance Numeric `json:"balance"`
+	// The usage recorded in the usage period at the evaluation time.
+	Usage Numeric `json:"usage"`
+	// The usage exceeding the available balance in the usage period at the evaluation
+	// time.
+	Overage Numeric `json:"overage"`
+	// The total amount granted and available to the entitlement at the evaluation
+	// time.
+	TotalAvailableGrantAmount Numeric `json:"total_available_grant_amount"`
+	// The remaining balance of each grant, keyed by grant ID.
+	GrantBalances map[string]Numeric `json:"grant_balances"`
+}
+
+// A boolean entitlement grants access to a feature.
+type EntitlementBoolean struct {
+	ID string `json:"id"`
+	// The type of the entitlement.
+	Type EntitlementType `json:"type"`
+	// The feature the customer is entitled to use.
+	Feature FeatureReference `json:"feature"`
+	// The customer the entitlement belongs to.
+	Customer CustomerReference `json:"customer"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	// The usage period of the entitlement.
+	UsagePeriod *RecurringPeriod `json:"usage_period,omitempty"`
+	// The current usage period of the entitlement.
+	CurrentUsagePeriod *ClosedPeriod `json:"current_usage_period,omitempty"`
+	// The time from which the entitlement is active.
+	ActiveFrom time.Time `json:"active_from"`
+	// The time until which the entitlement is active. If not set, the entitlement is
+	// active until deleted.
+	ActiveTo *time.Time `json:"active_to,omitempty"`
+	// The time the entitlement was created.
+	CreatedAt time.Time `json:"created_at"`
+	// The time the entitlement was last updated.
+	UpdatedAt time.Time `json:"updated_at"`
+	// The time the entitlement was deleted.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+}
+
+// A grant issued for a metered entitlement. Each grant adds its amount to the
+// entitlement's balance from its effective time until it expires, and usage is
+// deducted from the grants in priority order.
+//
+// Grants are immutable, so the balance is deterministic regardless of when it is
+// queried. Deleting a grant ends it at the time of the deletion.
+type EntitlementGrant struct {
+	ID string `json:"id"`
+	// The ID of the entitlement the grant belongs to.
+	EntitlementID string `json:"entitlement_id"`
+	// The ID of the customer the grant belongs to.
+	CustomerID *string `json:"customer_id,omitempty"`
+	// The granted amount, in the feature's unit.
+	Amount Numeric `json:"amount"`
+	// The priority of the grant. Lower values are consumed first: a grant with
+	// priority 1 is consumed before one with priority 2. Among equal priorities, the
+	// grant closest to expiration is consumed first, then the earliest created.
+	Priority uint8 `json:"priority"`
+	// The time the grant takes effect.
+	EffectiveAt time.Time `json:"effective_at"`
+	// The duration after which the grant expires, counted from `effective_at`. Always
+	// a single-unit duration (for example `PT12H`, `P7D`, `P2W`, `P3M`, `P1Y`). Absent
+	// when the grant never expires.
+	ExpiresAfter *string `json:"expires_after,omitempty"`
+	// The time the grant expires, calculated from `effective_at` and `expires_after`.
+	// The grant is no longer in effect from this time. Absent when the grant never
+	// expires.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// The maximum balance the grant carries over at reset. The balance after a reset
+	// is `MIN(max_rollover_amount, MAX(balance_before_reset, min_rollover_amount))`.
+	MaxRolloverAmount Numeric `json:"max_rollover_amount"`
+	// The minimum balance the grant carries over at reset. The balance after a reset
+	// is `MIN(max_rollover_amount, MAX(balance_before_reset, min_rollover_amount))`.
+	MinRolloverAmount Numeric `json:"min_rollover_amount"`
+	// The recurrence of the grant. When set, the grant amount is re-issued every
+	// interval from the anchor, which defaults to `effective_at`. Absent for
+	// non-recurring grants.
+	Recurrence *RecurringPeriod `json:"recurrence,omitempty"`
+	// The next time the grant recurs. Absent for non-recurring grants.
+	NextRecurrence *time.Time `json:"next_recurrence,omitempty"`
+	// The time the grant was voided. A voided grant is no longer in effect from this
+	// time.
+	VoidedAt *time.Time        `json:"voided_at,omitempty"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	// An ISO-8601 timestamp representation of entity creation date.
+	CreatedAt time.Time `json:"created_at"`
+	// An ISO-8601 timestamp representation of entity last update date.
+	UpdatedAt time.Time `json:"updated_at"`
+	// An ISO-8601 timestamp representation of entity deletion date.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+}
+
+// Page paginated response.
+type EntitlementGrantPagePaginatedResponse struct {
+	Data []EntitlementGrant `json:"data"`
+	Meta PaginatedMeta      `json:"meta"`
+}
+
+// Usage granted automatically after each reset of a metered entitlement. The
+// balance returns to `amount` after every reset.
+type EntitlementIssueAfterReset struct {
+	// The amount granted after each reset, in the feature's unit.
+	Amount Numeric `json:"amount"`
+	// The priority of the grant created after each reset. Lower values have higher
+	// priority.
+	Priority *uint8 `json:"priority,omitempty"`
+}
+
+// A metered entitlement grants a usage allowance for a feature. Access is
+// determined by the balance: the allowance provided by grants is burnt down by
+// usage.
+type EntitlementMetered struct {
+	ID string `json:"id"`
+	// The type of the entitlement.
+	Type EntitlementType `json:"type"`
+	// The feature the customer is entitled to use.
+	Feature FeatureReference `json:"feature"`
+	// The customer the entitlement belongs to.
+	Customer CustomerReference `json:"customer"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	// The time from which the entitlement is active.
+	ActiveFrom time.Time `json:"active_from"`
+	// The time until which the entitlement is active. If not set, the entitlement is
+	// active until deleted.
+	ActiveTo *time.Time `json:"active_to,omitempty"`
+	// The time the entitlement was created.
+	CreatedAt time.Time `json:"created_at"`
+	// The time the entitlement was last updated.
+	UpdatedAt time.Time `json:"updated_at"`
+	// The time the entitlement was deleted.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// The usage period of the entitlement. The balance resets at the start of every
+	// period.
+	UsagePeriod RecurringPeriod `json:"usage_period"`
+	// The current usage period of the entitlement.
+	CurrentUsagePeriod ClosedPeriod `json:"current_usage_period"`
+	// If true, the customer keeps access to the feature after the balance is
+	// exhausted.
+	IsSoftLimit *bool `json:"is_soft_limit,omitempty"`
+	// Usage granted automatically after each reset. Cannot be combined with `grants`.
+	Issue *EntitlementIssueAfterReset `json:"issue,omitempty"`
+	// The amount granted automatically after each reset.
+	IssueAfterReset *Numeric `json:"issue_after_reset,omitempty"`
+	// The priority of the grant created after each reset.
+	IssueAfterResetPriority *uint8 `json:"issue_after_reset_priority,omitempty"`
+	// If true, the overage is preserved at reset. If false, the usage is reset to 0.
+	PreserveOverageAtReset *bool `json:"preserve_overage_at_reset,omitempty"`
+	// The time from which usage is measured.
+	MeasureUsageFrom time.Time `json:"measure_usage_from"`
+	// The time of the last reset.
+	LastReset time.Time `json:"last_reset"`
+}
+
+// Page paginated response.
+type EntitlementPagePaginatedResponse struct {
+	Data []Entitlement `json:"data"`
+	Meta PaginatedMeta `json:"meta"`
+}
+
+// A static entitlement grants access to a feature together with a configuration.
+type EntitlementStatic struct {
+	ID string `json:"id"`
+	// The type of the entitlement.
+	Type EntitlementType `json:"type"`
+	// The feature the customer is entitled to use.
+	Feature FeatureReference `json:"feature"`
+	// The customer the entitlement belongs to.
+	Customer CustomerReference `json:"customer"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	// The usage period of the entitlement.
+	UsagePeriod *RecurringPeriod `json:"usage_period,omitempty"`
+	// The current usage period of the entitlement.
+	CurrentUsagePeriod *ClosedPeriod `json:"current_usage_period,omitempty"`
+	// The time from which the entitlement is active.
+	ActiveFrom time.Time `json:"active_from"`
+	// The time until which the entitlement is active. If not set, the entitlement is
+	// active until deleted.
+	ActiveTo *time.Time `json:"active_to,omitempty"`
+	// The time the entitlement was created.
+	CreatedAt time.Time `json:"created_at"`
+	// The time the entitlement was last updated.
+	UpdatedAt time.Time `json:"updated_at"`
+	// The time the entitlement was deleted.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// The entitlement configuration as a JSON value. Returned when checking
+	// entitlement access.
+	Config any `json:"config"`
 }
 
 // The type of the entitlement.
@@ -177,9 +1512,438 @@ func (value EntitlementType) Valid() bool {
 	}
 }
 
+// Entitlement value result.
+type EntitlementValueResult struct {
+	// The type of the entitlement.
+	Type EntitlementType `json:"type"`
+	// The feature key being evaluated.
+	FeatureKey string `json:"feature_key"`
+	// Whether the customer has access to the feature. Always true for `boolean` and
+	// `static` entitlements. Depends on balance for `metered` entitlements.
+	HasAccess bool `json:"has_access"`
+	// Only available for static entitlements. Config is the JSON parsable
+	// configuration of the entitlement. Useful to describe per customer configuration.
+	Config *string `json:"config,omitempty"`
+	// Only available for metered entitlements. The balance details of the entitlement
+	// at the evaluation time. Requires the `value` expand.
+	Value *EntitlementAccessValue `json:"value,omitempty"`
+}
+
+// A capability or billable dimension offered by a provider.
+type Feature struct {
+	ID string `json:"id"`
+	// Display name of the resource.
+	//
+	// Between 1 and 256 characters.
+	Name string `json:"name"`
+	// Optional description of the resource.
+	//
+	// Maximum 1024 characters.
+	Description *string           `json:"description,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	// An ISO-8601 timestamp representation of entity creation date.
+	CreatedAt time.Time `json:"created_at"`
+	// An ISO-8601 timestamp representation of entity last update date.
+	UpdatedAt time.Time `json:"updated_at"`
+	// An ISO-8601 timestamp representation of entity deletion date.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	Key       string     `json:"key"`
+	// The meter that the feature is associated with and based on which usage is
+	// calculated. If not specified, the feature is static.
+	Meter *FeatureMeterReference `json:"meter,omitempty"`
+	// Optional per-unit cost configuration. Use "manual" for a fixed per-unit cost, or
+	// "llm" to look up cost from the LLM cost database based on meter group-by
+	// properties.
+	UnitCost *FeatureUnitCost `json:"unit_cost,omitempty"`
+}
+
+// Token type for LLM cost lookup.
+type FeatureLLMTokenType string
+
+const (
+	FeatureLLMTokenTypeInput      FeatureLLMTokenType = "input"
+	FeatureLLMTokenTypeOutput     FeatureLLMTokenType = "output"
+	FeatureLLMTokenTypeCacheRead  FeatureLLMTokenType = "cache_read"
+	FeatureLLMTokenTypeCacheWrite FeatureLLMTokenType = "cache_write"
+	FeatureLLMTokenTypeReasoning  FeatureLLMTokenType = "reasoning"
+	FeatureLLMTokenTypeRequest    FeatureLLMTokenType = "request"
+	FeatureLLMTokenTypeResponse   FeatureLLMTokenType = "response"
+)
+
+func (value FeatureLLMTokenType) Valid() bool {
+	switch value {
+	case FeatureLLMTokenTypeInput, FeatureLLMTokenTypeOutput, FeatureLLMTokenTypeCacheRead, FeatureLLMTokenTypeCacheWrite, FeatureLLMTokenTypeReasoning, FeatureLLMTokenTypeRequest, FeatureLLMTokenTypeResponse:
+		return true
+	default:
+		return false
+	}
+}
+
+// LLM cost lookup configuration. Each dimension (provider, model, token type) can
+// be specified as either a static value or a meter group-by property name
+// (mutually exclusive).
+type FeatureLLMUnitCost struct {
+	// The type discriminator for LLM unit cost.
+	Type FeatureUnitCostType `json:"type"`
+	// Meter group-by property that holds the LLM provider. Use this when the meter has
+	// a group-by dimension for provider. Mutually exclusive with `provider`.
+	ProviderProperty *string `json:"provider_property,omitempty"`
+	// Static LLM provider value (e.g., "openai", "anthropic"). Use this when the
+	// feature tracks a single provider. Mutually exclusive with `provider_property`.
+	Provider *string `json:"provider,omitempty"`
+	// Meter group-by property that holds the model ID. Use this when the meter has a
+	// group-by dimension for model. Mutually exclusive with `model`.
+	ModelProperty *string `json:"model_property,omitempty"`
+	// Static model ID value (e.g., "gpt-4", "claude-3-5-sonnet"). Use this when the
+	// feature tracks a single model. Mutually exclusive with `model_property`.
+	Model *string `json:"model,omitempty"`
+	// Meter group-by property that holds the token type. Use this when the meter has a
+	// group-by dimension for token type. Mutually exclusive with `token_type`.
+	TokenTypeProperty *string `json:"token_type_property,omitempty"`
+	// Static token type value. Use this when the feature tracks a single token type
+	// (e.g., only input tokens). `request` is an alias for `input`, `response` is an
+	// alias for `output`. Mutually exclusive with `token_type_property`.
+	TokenType *FeatureLLMTokenType `json:"token_type,omitempty"`
+	// Resolved per-token pricing from the LLM cost database. Populated in responses
+	// when the provider and model can be determined, either from static values or from
+	// meter group-by filters with exact matches.
+	Pricing *FeatureLLMUnitCostPricing `json:"pricing,omitempty"`
+}
+
+// Resolved per-token pricing from the LLM cost database.
+type FeatureLLMUnitCostPricing struct {
+	// Cost per input token in USD.
+	InputPerToken Numeric `json:"input_per_token"`
+	// Cost per output token in USD.
+	OutputPerToken Numeric `json:"output_per_token"`
+	// Cost per cache read token in USD.
+	CacheReadPerToken *Numeric `json:"cache_read_per_token,omitempty"`
+	// Cost per reasoning token in USD.
+	ReasoningPerToken *Numeric `json:"reasoning_per_token,omitempty"`
+	// Cost per cache write token in USD.
+	CacheWritePerToken *Numeric `json:"cache_write_per_token,omitempty"`
+}
+
+// A fixed per-unit cost amount.
+type FeatureManualUnitCost struct {
+	// The type discriminator for manual unit cost.
+	Type FeatureUnitCostType `json:"type"`
+	// Fixed per-unit cost amount in USD.
+	Amount Numeric `json:"amount"`
+}
+
+// Reference to a meter associated with a feature.
+type FeatureMeterReference struct {
+	// The ID of the meter to associate with this feature.
+	ID string `json:"id"`
+	// Filters to apply to the dimensions of the meter.
+	Filters map[string]QueryFilterStringMapItem `json:"filters,omitempty"`
+}
+
+// Reference to a meter associated with a feature.
+type FeatureMeterReferenceInput struct {
+	// The ID of the meter to associate with this feature.
+	ID string `json:"id"`
+	// Filters to apply to the dimensions of the meter.
+	Filters *map[string]QueryFilterStringMapItemInput `json:"filters,omitempty"`
+}
+
+// Feature or reference.
+//
+// FeatureOrReference is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the FeatureOrReferenceFrom* constructors.
+type FeatureOrReference struct {
+	raw json.RawMessage
+}
+
+func (u *FeatureOrReference) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	return nil
+}
+
+func (u FeatureOrReference) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u FeatureOrReference) AsFeature() (*Feature, error) {
+	var value Feature
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func FeatureOrReferenceFromFeature(value Feature) (FeatureOrReference, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return FeatureOrReference{}, err
+	}
+	var result FeatureOrReference
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return FeatureOrReference{}, err
+	}
+	return result, nil
+}
+
+func (u FeatureOrReference) AsFeatureReference() (*FeatureReference, error) {
+	var value FeatureReference
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func FeatureOrReferenceFromFeatureReference(value FeatureReference) (FeatureOrReference, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return FeatureOrReference{}, err
+	}
+	var result FeatureOrReference
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return FeatureOrReference{}, err
+	}
+	return result, nil
+}
+
 // Feature reference.
 type FeatureReference struct {
 	ID string `json:"id"`
+}
+
+// Per-unit cost configuration for a feature. Either a fixed manual amount or a
+// dynamic LLM cost lookup.
+//
+// FeatureUnitCost is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the FeatureUnitCostFrom* constructors.
+// The exported Type field is decode-side metadata; MarshalJSON round-trips the original payload and ignores writes to it.
+type FeatureUnitCost struct {
+	Type string `json:"type"`
+	raw  json.RawMessage
+}
+
+func (u *FeatureUnitCost) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	if string(data) == "null" {
+		u.Type = ""
+		return nil
+	}
+
+	var envelope struct {
+		Value string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	u.Type = envelope.Value
+	return nil
+}
+
+func (u FeatureUnitCost) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u FeatureUnitCost) AsFeatureManualUnitCost() (*FeatureManualUnitCost, error) {
+	if u.Type != "manual" {
+		return nil, fmt.Errorf("FeatureUnitCost: expected type %q, got %q", "manual", u.Type)
+	}
+	var value FeatureManualUnitCost
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func FeatureUnitCostFromFeatureManualUnitCost(value FeatureManualUnitCost) (FeatureUnitCost, error) {
+	value.Type = "manual"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return FeatureUnitCost{}, err
+	}
+	var result FeatureUnitCost
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return FeatureUnitCost{}, err
+	}
+	return result, nil
+}
+
+func (u FeatureUnitCost) AsFeatureLLMUnitCost() (*FeatureLLMUnitCost, error) {
+	if u.Type != "llm" {
+		return nil, fmt.Errorf("FeatureUnitCost: expected type %q, got %q", "llm", u.Type)
+	}
+	var value FeatureLLMUnitCost
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func FeatureUnitCostFromFeatureLLMUnitCost(value FeatureLLMUnitCost) (FeatureUnitCost, error) {
+	value.Type = "llm"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return FeatureUnitCost{}, err
+	}
+	var result FeatureUnitCost
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return FeatureUnitCost{}, err
+	}
+	return result, nil
+}
+
+// The type of unit cost.
+type FeatureUnitCostType string
+
+const (
+	FeatureUnitCostTypeLLM    FeatureUnitCostType = "llm"
+	FeatureUnitCostTypeManual FeatureUnitCostType = "manual"
+)
+
+func (value FeatureUnitCostType) Valid() bool {
+	switch value {
+	case FeatureUnitCostTypeLLM, FeatureUnitCostTypeManual:
+		return true
+	default:
+		return false
+	}
+}
+
+// Details about an available invoice action including the resulting state.
+type InvoiceAvailableActionDetails struct {
+	// The extended status the invoice will transition to after performing this action.
+	ResultingState string `json:"resulting_state"`
+}
+
+// The set of state-transition actions available for an invoice in its current
+// status.
+//
+// A field is present only when that action is permitted from the current state.
+type InvoiceAvailableActions struct {
+	// Advance the invoice to the next workflow step.
+	Advance *InvoiceAvailableActionDetails `json:"advance,omitempty"`
+	// Approve the invoice for issuance.
+	Approve *InvoiceAvailableActionDetails `json:"approve,omitempty"`
+	// Delete the invoice.
+	Delete *InvoiceAvailableActionDetails `json:"delete,omitempty"`
+	// Retry a failed workflow step.
+	Retry *InvoiceAvailableActionDetails `json:"retry,omitempty"`
+	// Snapshot the current usage quantities.
+	SnapshotQuantities *InvoiceAvailableActionDetails `json:"snapshot_quantities,omitempty"`
+}
+
+// External identifiers assigned to an invoice by third-party systems.
+type InvoiceExternalReferences struct {
+	// The ID assigned by the external invoicing app (e.g. Stripe invoice ID).
+	InvoicingID *string `json:"invoicing_id,omitempty"`
+	// The ID assigned by the external payment app (e.g. Stripe payment intent ID).
+	PaymentID *string `json:"payment_id,omitempty"`
+}
+
+// Lifecycle status of a standard invoice.
+type InvoiceStandardStatus string
+
+const (
+	InvoiceStandardStatusDraft             InvoiceStandardStatus = "draft"
+	InvoiceStandardStatusIssuing           InvoiceStandardStatus = "issuing"
+	InvoiceStandardStatusIssued            InvoiceStandardStatus = "issued"
+	InvoiceStandardStatusPaymentProcessing InvoiceStandardStatus = "payment_processing"
+	InvoiceStandardStatusOverdue           InvoiceStandardStatus = "overdue"
+	InvoiceStandardStatusPaid              InvoiceStandardStatus = "paid"
+	InvoiceStandardStatusUncollectible     InvoiceStandardStatus = "uncollectible"
+	InvoiceStandardStatusVoided            InvoiceStandardStatus = "voided"
+)
+
+func (value InvoiceStandardStatus) Valid() bool {
+	switch value {
+	case InvoiceStandardStatusDraft, InvoiceStandardStatusIssuing, InvoiceStandardStatusIssued, InvoiceStandardStatusPaymentProcessing, InvoiceStandardStatusOverdue, InvoiceStandardStatusPaid, InvoiceStandardStatusUncollectible, InvoiceStandardStatusVoided:
+		return true
+	default:
+		return false
+	}
+}
+
+// Detailed status information for a standard invoice.
+type InvoiceStatusDetails struct {
+	// Whether the invoice is immutable (i.e. cannot be modified or deleted).
+	Immutable bool `json:"immutable"`
+	// Whether the invoice is in a failed state.
+	Failed bool `json:"failed"`
+	// Fine-grained internal status string providing additional workflow detail beyond
+	// the top-level status enum.
+	ExtendedStatus string `json:"extended_status"`
+	// The set of state-transition actions currently available for this invoice.
+	AvailableActions InvoiceAvailableActions `json:"available_actions"`
+}
+
+// The type of a billing invoice.
+type InvoiceType string
+
+const (
+	InvoiceTypeStandard InvoiceType = "standard"
+)
+
+func (value InvoiceType) Valid() bool {
+	switch value {
+	case InvoiceTypeStandard:
+		return true
+	default:
+		return false
+	}
+}
+
+// Invoice-level snapshot of the workflow configuration.
+//
+// Contains only the settings that are meaningful for an already-created invoice:
+// invoicing behaviour and payment settings. Collection alignment and tax policy
+// are gather-time / profile-wide concerns and are not included.
+type InvoiceWorkflow struct {
+	// Invoicing settings for this invoice.
+	Invoicing *InvoiceWorkflowInvoicingSettings `json:"invoicing,omitempty"`
+	// Payment settings for this invoice.
+	Payment *WorkflowPaymentSettings `json:"payment,omitempty"`
+}
+
+// BillingInvoiceWorkflowAppsReferences represents the references (id) to the apps
+// used by a billing profile
+type InvoiceWorkflowAppsReferences struct {
+	// The tax app used for this workflow
+	Tax AppReference `json:"tax"`
+	// The invoicing app used for this workflow
+	Invoicing AppReference `json:"invoicing"`
+	// The payment app used for this workflow
+	Payment AppReference `json:"payment"`
+}
+
+// Invoice-level invoicing settings.
+//
+// A subset of BillingWorkflowInvoicingSettings limited to fields that are
+// meaningful per-invoice. progressive_billing is omitted as it is a gather-time /
+// profile-level decision.
+type InvoiceWorkflowInvoicingSettings struct {
+	// Whether to automatically issue the invoice after the draft_period has passed.
+	AutoAdvance *bool `json:"auto_advance,omitempty"`
+	// The period for the invoice to be kept in draft status for manual reviews.
+	DraftPeriod *string `json:"draft_period,omitempty"`
+	// The period after which the invoice is considered overdue if not paid.
+	DueAfter *string `json:"due_after,omitempty"`
+}
+
+// Snapshot of the billing workflow configuration captured at invoice creation.
+type InvoiceWorkflowSettings struct {
+	// The apps that will be used to orchestrate the invoice's workflow.
+	Apps *InvoiceWorkflowAppsReferences `json:"apps,omitempty"`
+	// The billing profile that was the source of this workflow snapshot.
+	SourceBillingProfile ProfileReference `json:"source_billing_profile"`
+	// The workflow configuration that was active when the invoice was created.
+	//
+	// Only the fields that are meaningful at the per-invoice level are included:
+	// invoicing behaviour (auto-advance, draft period) and payment settings
+	// (collection method, due date). Profile-wide settings such as collection
+	// alignment, progressive billing, and tax policy are omitted.
+	Workflow InvoiceWorkflow `json:"workflow"`
 }
 
 // Identifies whether a resource lifecycle is controlled by OpenMeter or manually
@@ -262,6 +2026,46 @@ type PartyAddresses struct {
 type PartyTaxIdentity struct {
 	// Normalized tax identification code shown on the original identity document.
 	Code *string `json:"code,omitempty"`
+}
+
+// The plan phase or pricing ramp allows changing a plan's rate cards over time as
+// a subscription progresses.
+type PlanPhase struct {
+	// Display name of the resource.
+	//
+	// Between 1 and 256 characters.
+	Name string `json:"name"`
+	// Optional description of the resource.
+	//
+	// Maximum 1024 characters.
+	Description *string           `json:"description,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Key         string            `json:"key"`
+	// The duration of the phase. When not specified, the phase runs indefinitely. Only
+	// the last phase may omit the duration.
+	Duration *string `json:"duration,omitempty"`
+	// The rate cards of the plan.
+	RateCards []RateCard `json:"rate_cards"`
+}
+
+// The plan phase or pricing ramp allows changing a plan's rate cards over time as
+// a subscription progresses.
+type PlanPhaseInput struct {
+	// Display name of the resource.
+	//
+	// Between 1 and 256 characters.
+	Name string `json:"name"`
+	// Optional description of the resource.
+	//
+	// Maximum 1024 characters.
+	Description *string            `json:"description,omitempty"`
+	Labels      *map[string]string `json:"labels,omitempty"`
+	Key         string             `json:"key"`
+	// The duration of the phase. When not specified, the phase runs indefinitely. Only
+	// the last phase may omit the duration.
+	Duration *string `json:"duration,omitempty"`
+	// The rate cards of the plan.
+	RateCards []RateCardInput `json:"rate_cards"`
 }
 
 // Price.
@@ -436,8 +2240,8 @@ type PriceFree struct {
 // Each tier's rate applies only to the usage within that tier. Pricing can change
 // as cumulative usage crosses tier boundaries.
 //
-// When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are
-// expressed in converted billing units.
+// When UnitConfig is present on the containing resource, tier boundaries
+// (up_to_amount) are expressed in converted billing units.
 type PriceGraduated struct {
 	// The type of the price.
 	Type PriceType `json:"type"`
@@ -465,8 +2269,8 @@ func (value PricePaymentTerm) Valid() bool {
 // A price tier used in graduated and volume pricing.
 //
 // At least one price component (flat_price or unit_price) must be set. When
-// UnitConfig is present on the rate card, up_to_amount is expressed in converted
-// billing units.
+// UnitConfig is present on the containing resource, up_to_amount is expressed in
+// converted billing units.
 type PriceTier struct {
 	// Up to and including this quantity will be contained in the tier. If undefined,
 	// the tier is open-ended (the last tier).
@@ -507,8 +2311,8 @@ func (value PriceType) Valid() bool {
 
 // Unit price.
 //
-// Charges a fixed rate per billing unit. When UnitConfig is present on the rate
-// card, billing units are the converted quantities (e.g. GB instead of bytes).
+// Charges a fixed rate per billing unit. When UnitConfig is present on the object,
+// billing units are the converted quantities (e.g. GB instead of bytes).
 type PriceUnit struct {
 	// The type of the price.
 	Type PriceType `json:"type"`
@@ -516,13 +2320,121 @@ type PriceUnit struct {
 	Amount Numeric `json:"amount"`
 }
 
+// Usage-based price types for a rate card or charge.
+//
+// When UnitConfig is present on the object, these price types operate on billing
+// units (i.e. post-conversion quantities), not raw metered units.
+//
+// PriceUsageBased is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the PriceUsageBasedFrom* constructors.
+// The exported Type field is decode-side metadata; MarshalJSON round-trips the original payload and ignores writes to it.
+type PriceUsageBased struct {
+	Type string `json:"type"`
+	raw  json.RawMessage
+}
+
+func (u *PriceUsageBased) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	if string(data) == "null" {
+		u.Type = ""
+		return nil
+	}
+
+	var envelope struct {
+		Value string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	u.Type = envelope.Value
+	return nil
+}
+
+func (u PriceUsageBased) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u PriceUsageBased) AsPriceUnit() (*PriceUnit, error) {
+	if u.Type != "unit" {
+		return nil, fmt.Errorf("PriceUsageBased: expected type %q, got %q", "unit", u.Type)
+	}
+	var value PriceUnit
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func PriceUsageBasedFromPriceUnit(value PriceUnit) (PriceUsageBased, error) {
+	value.Type = "unit"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return PriceUsageBased{}, err
+	}
+	var result PriceUsageBased
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return PriceUsageBased{}, err
+	}
+	return result, nil
+}
+
+func (u PriceUsageBased) AsPriceGraduated() (*PriceGraduated, error) {
+	if u.Type != "graduated" {
+		return nil, fmt.Errorf("PriceUsageBased: expected type %q, got %q", "graduated", u.Type)
+	}
+	var value PriceGraduated
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func PriceUsageBasedFromPriceGraduated(value PriceGraduated) (PriceUsageBased, error) {
+	value.Type = "graduated"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return PriceUsageBased{}, err
+	}
+	var result PriceUsageBased
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return PriceUsageBased{}, err
+	}
+	return result, nil
+}
+
+func (u PriceUsageBased) AsPriceVolume() (*PriceVolume, error) {
+	if u.Type != "volume" {
+		return nil, fmt.Errorf("PriceUsageBased: expected type %q, got %q", "volume", u.Type)
+	}
+	var value PriceVolume
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func PriceUsageBasedFromPriceVolume(value PriceVolume) (PriceUsageBased, error) {
+	value.Type = "volume"
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return PriceUsageBased{}, err
+	}
+	var result PriceUsageBased
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return PriceUsageBased{}, err
+	}
+	return result, nil
+}
+
 // Volume tiered price.
 //
 // The maximum quantity within a period determines the per-unit price for all units
 // in that period.
 //
-// When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are
-// expressed in converted billing units.
+// When UnitConfig is present on the containing resource, tier boundaries
+// (up_to_amount) are expressed in converted billing units.
 type PriceVolume struct {
 	// The type of the price.
 	Type PriceType `json:"type"`
@@ -676,7 +2588,7 @@ type RateCard struct {
 	// The discounts of the rate card.
 	Discounts *RateCardDiscounts `json:"discounts,omitempty"`
 	// The tax config of the rate card.
-	TaxConfig *RateCardTaxConfig `json:"tax_config,omitempty"`
+	TaxConfig *TaxCodeConfig `json:"tax_config,omitempty"`
 	// The entitlement template granted to subscribers of a plan or addon containing
 	// this rate card. Requires `feature` to be set.
 	Entitlement *RateCardEntitlement `json:"entitlement,omitempty"`
@@ -722,7 +2634,7 @@ type RateCardInput struct {
 	// The discounts of the rate card.
 	Discounts *RateCardDiscounts `json:"discounts,omitempty"`
 	// The tax config of the rate card.
-	TaxConfig *RateCardTaxConfig `json:"tax_config,omitempty"`
+	TaxConfig *TaxCodeConfig `json:"tax_config,omitempty"`
 	// The entitlement template granted to subscribers of a plan or addon containing
 	// this rate card. Requires `feature` to be set.
 	Entitlement *RateCardEntitlement `json:"entitlement,omitempty"`
@@ -867,6 +2779,35 @@ type RateCardMeteredEntitlement struct {
 	UsagePeriod *string `json:"usage_period,omitempty"`
 }
 
+// The proration configuration of the rate card.
+type RateCardProrationConfiguration struct {
+	// The proration mode of the rate card.
+	Mode RateCardProrationMode `json:"mode"`
+}
+
+// The proration mode of the rate card.
+//
+// Values:
+//
+// - `no_proration`: No proration.
+// - `prorate_prices`: Prorate the price based on the time remaining in the billing
+// period.
+type RateCardProrationMode string
+
+const (
+	RateCardProrationModeNoProration   RateCardProrationMode = "no_proration"
+	RateCardProrationModeProratePrices RateCardProrationMode = "prorate_prices"
+)
+
+func (value RateCardProrationMode) Valid() bool {
+	switch value {
+	case RateCardProrationModeNoProration, RateCardProrationModeProratePrices:
+		return true
+	default:
+		return false
+	}
+}
+
 // The entitlement template of a static entitlement.
 type RateCardStaticEntitlement struct {
 	// The type of the entitlement template.
@@ -877,10 +2818,12 @@ type RateCardStaticEntitlement struct {
 	Config any `json:"config"`
 }
 
-// The tax config of the rate card.
-type RateCardTaxConfig struct {
-	Behavior *TaxBehavior     `json:"behavior,omitempty"`
-	Code     TaxCodeReference `json:"code"`
+// Recurring period with an anchor and an interval.
+type RecurringPeriod struct {
+	// A date-time anchor to base the recurring period on.
+	Anchor time.Time `json:"anchor"`
+	// The interval duration in ISO 8601 format.
+	Interval string `json:"interval"`
 }
 
 // Settlement mode for billing.
@@ -906,8 +2849,8 @@ func (value SettlementMode) Valid() bool {
 	}
 }
 
-// Spend commitments for a rate card. The customer is committed to spend at least
-// the minimum amount and at most the maximum amount.
+// Spend commitments for a usage-based price. The customer is committed to spend at
+// least the minimum amount and at most the maximum amount.
 type SpendCommitments struct {
 	// The customer is committed to spend at least the amount.
 	MinimumAmount *Numeric `json:"minimum_amount,omitempty"`
@@ -915,11 +2858,165 @@ type SpendCommitments struct {
 	MaximumAmount *Numeric `json:"maximum_amount,omitempty"`
 }
 
+// Controls how custom-currency cost bases are selected for the subscription.
+type SubscriptionCostBasisMode string
+
+const (
+	SubscriptionCostBasisModeDynamic SubscriptionCostBasisMode = "dynamic"
+	SubscriptionCostBasisModePinned  SubscriptionCostBasisMode = "pinned"
+)
+
+func (value SubscriptionCostBasisMode) Valid() bool {
+	switch value {
+	case SubscriptionCostBasisModeDynamic, SubscriptionCostBasisModePinned:
+		return true
+	default:
+		return false
+	}
+}
+
+// A cost basis pinned to a custom-currency pair for the subscription.
+type SubscriptionCostBasisPin struct {
+	// The managed custom currency ID.
+	CustomCurrencyID string `json:"custom_currency_id"`
+	// The fiat currency in which the subscription is invoiced.
+	InvoiceCurrency string `json:"invoice_currency"`
+	// The pinned cost basis resource ID.
+	CostBasisID string `json:"cost_basis_id"`
+}
+
+// A subscription item pins a rate card to a cadence within a subscription phase.
+type SubscriptionItem struct {
+	// The unique identifier of the subscription item instance.
+	ID string `json:"id"`
+	// An ISO-8601 timestamp representation of when this item version becomes active.
+	ActiveFrom time.Time `json:"active_from"`
+	// An ISO-8601 timestamp representation of when this item version stops being
+	// active.
+	ActiveTo *time.Time `json:"active_to,omitempty"`
+	// The rate card describing what the customer gets and pays for this item.
+	RateCard RateCard `json:"rate_card"`
+}
+
+// Subscription or reference.
+//
+// SubscriptionOrReference is a JSON-preserving tagged union: its zero value marshals as JSON null, and values must be built with the SubscriptionOrReferenceFrom* constructors.
+type SubscriptionOrReference struct {
+	raw json.RawMessage
+}
+
+func (u *SubscriptionOrReference) UnmarshalJSON(data []byte) error {
+	u.raw = append([]byte(nil), data...)
+	return nil
+}
+
+func (u SubscriptionOrReference) MarshalJSON() ([]byte, error) {
+	if len(u.raw) == 0 {
+		return []byte("null"), nil
+	}
+	return append([]byte(nil), u.raw...), nil
+}
+
+func (u SubscriptionOrReference) AsBillingSubscription() (*BillingSubscription, error) {
+	var value BillingSubscription
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func SubscriptionOrReferenceFromBillingSubscription(value BillingSubscription) (SubscriptionOrReference, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return SubscriptionOrReference{}, err
+	}
+	var result SubscriptionOrReference
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return SubscriptionOrReference{}, err
+	}
+	return result, nil
+}
+
+func (u SubscriptionOrReference) AsSubscriptionReference() (*SubscriptionReference, error) {
+	var value SubscriptionReference
+	if err := json.Unmarshal(u.raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func SubscriptionOrReferenceFromSubscriptionReference(value SubscriptionReference) (SubscriptionOrReference, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return SubscriptionOrReference{}, err
+	}
+	var result SubscriptionOrReference
+	if err := result.UnmarshalJSON(raw); err != nil {
+		return SubscriptionOrReference{}, err
+	}
+	return result, nil
+}
+
+// A subscription phase groups the rate cards in effect for a segment of the
+// subscription's lifetime. Analogous to plan phases.
+type SubscriptionPhase struct {
+	ID string `json:"id"`
+	// Display name of the resource.
+	//
+	// Between 1 and 256 characters.
+	Name string `json:"name"`
+	// Optional description of the resource.
+	//
+	// Maximum 1024 characters.
+	Description *string           `json:"description,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	// An ISO-8601 timestamp representation of entity creation date.
+	CreatedAt time.Time `json:"created_at"`
+	// An ISO-8601 timestamp representation of entity last update date.
+	UpdatedAt time.Time `json:"updated_at"`
+	// An ISO-8601 timestamp representation of entity deletion date.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	Key       string     `json:"key"`
+	// An ISO-8601 timestamp representation of when the phase becomes active.
+	ActiveFrom time.Time `json:"active_from"`
+	// An ISO-8601 timestamp representation of when the phase stops being active.
+	// Open-ended for the last phase.
+	ActiveTo *time.Time `json:"active_to,omitempty"`
+	// The rate cards in effect for this phase, resolved to the version active at the
+	// queried time (the currently active version for the current phase, the first
+	// version for future phases, and the last version for past phases).
+	Items []SubscriptionItem `json:"items"`
+}
+
+// A reference to the plan a subscription was created from, pinned to an exact
+// revision.
+type SubscriptionPlanReference struct {
+	// The plan ID (exact revision).
+	ID string `json:"id"`
+	// The plan key. References the plan across versions.
+	Key string `json:"key"`
+	// The plan version.
+	Version int64 `json:"version"`
+}
+
+// The pro-rating configuration of a subscription.
+type SubscriptionProRatingConfig struct {
+	// Whether pro-rating is enabled.
+	Enabled bool `json:"enabled"`
+	// How pro-rating is calculated when enabled.
+	Mode RateCardProrationMode `json:"mode"`
+}
+
 // Subscription reference represents a reference to the specific subscription item
 // this entity represents.
 type SubscriptionReference struct {
 	// The ID of the subscription.
 	ID string `json:"id"`
+	// The display name of the subscription.
+	//
+	// Only populated where the referencing endpoint documents a `subscription` expand
+	// that resolves it.
+	Name *string `json:"name,omitempty"`
 	// The phase of the subscription.
 	Phase SubscriptionReferencePhase `json:"phase"`
 }
@@ -934,6 +3031,42 @@ type SubscriptionReferencePhase struct {
 type SubscriptionReferencePhaseItem struct {
 	// The ID of the item.
 	ID string `json:"id"`
+}
+
+// Subscription status.
+type SubscriptionStatus string
+
+const (
+	SubscriptionStatusActive    SubscriptionStatus = "active"
+	SubscriptionStatusInactive  SubscriptionStatus = "inactive"
+	SubscriptionStatusCanceled  SubscriptionStatus = "canceled"
+	SubscriptionStatusScheduled SubscriptionStatus = "scheduled"
+)
+
+func (value SubscriptionStatus) Valid() bool {
+	switch value {
+	case SubscriptionStatusActive, SubscriptionStatusInactive, SubscriptionStatusCanceled, SubscriptionStatusScheduled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Snapshot of the supplier's information at the time the invoice was issued.
+//
+// Structurally a read-only subset of `BillingParty` (the type configured on the
+// billing profile), so the snapshot stays aligned with the source. `key` is
+// omitted because it is not part of the snapshotted supplier data.
+type Supplier struct {
+	// Legal name or representation of the party.
+	Name *string `json:"name,omitempty"`
+	// The entity's legal identification used for tax purposes. They may have other
+	// numbers, but we're only interested in those valid for tax purposes.
+	TaxID *PartyTaxIdentity `json:"tax_id,omitempty"`
+	// Address for where information should be sent if needed.
+	Addresses *PartyAddresses `json:"addresses,omitempty"`
+	// Unique identifier for the party.
+	ID *string `json:"id,omitempty"`
 }
 
 // Tax behavior.
@@ -954,6 +3087,23 @@ func (value TaxBehavior) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// Tax configuration for a billable resource.
+//
+// Applies a tax code and tax behavior to the resulting invoice line items. When
+// not set, the applicable default is used: the billing profile default tax
+// configuration, then the organization default tax code.
+type TaxCodeConfig struct {
+	// Tax behavior.
+	//
+	// This enum is used to specify whether tax is included in the price or excluded
+	// from the price. If not specified, the billing profile is used to determine the
+	// tax behavior. If not specified in the billing profile, the provider's default
+	// behavior is used.
+	Behavior *TaxBehavior `json:"behavior,omitempty"`
+	// Tax code applied to the invoice line item.
+	Code *TaxCodeReference `json:"code,omitempty"`
 }
 
 // TaxCode reference.
@@ -1017,8 +3167,8 @@ type Totals struct {
 // Unit conversion configuration.
 //
 // Transforms raw metered quantities into billing-ready units before pricing and
-// entitlement evaluation. Applied at the rate card level so the same feature can
-// be billed in different units across plans.
+// entitlement evaluation. Stored with a resource's rating configuration so the
+// same metered feature can be billed in different units across plans and charges.
 //
 // Examples:
 //
@@ -1106,6 +3256,39 @@ const (
 func (value UnitConfigRoundingMode) Valid() bool {
 	switch value {
 	case UnitConfigRoundingModeCeiling, UnitConfigRoundingModeFloor, UnitConfigRoundingModeHalfUp, UnitConfigRoundingModeNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// A validation issue found while processing a billing resource.
+type ValidationIssue struct {
+	// Machine-readable error code.
+	Code string `json:"code"`
+	// Human-readable description of the error.
+	Message string `json:"message"`
+	// Additional structured context.
+	Attributes map[string]any `json:"attributes,omitempty"`
+	// Severity of the validation issue.
+	Severity ValidationIssueSeverity `json:"severity"`
+	// JSON path to the field that caused the validation issue, if applicable.
+	Field *string `json:"field,omitempty"`
+	// Component that reported the validation issue, if applicable.
+	Component *string `json:"component,omitempty"`
+}
+
+// Severity level of a billing validation issue.
+type ValidationIssueSeverity string
+
+const (
+	ValidationIssueSeverityCritical ValidationIssueSeverity = "critical"
+	ValidationIssueSeverityWarning  ValidationIssueSeverity = "warning"
+)
+
+func (value ValidationIssueSeverity) Valid() bool {
+	switch value {
+	case ValidationIssueSeverityCritical, ValidationIssueSeverityWarning:
 		return true
 	default:
 		return false

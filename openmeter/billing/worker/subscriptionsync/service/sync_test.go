@@ -41,6 +41,79 @@ func TestSubscriptionHandlerScenarios(t *testing.T) {
 	suite.Run(t, new(SubscriptionHandlerTestSuite))
 }
 
+func (s *SubscriptionHandlerTestSuite) TestLegacyBackendCreatesGatheringLineBeforeSurfacingMissingFeature() {
+	ctx := s.testContext()
+	start := s.mustParseTime("2024-01-01T00:00:00Z")
+	clock.FreezeTime(start)
+	defer clock.UnFreeze()
+
+	const missingFeatureKey = "missing-feature"
+	itemKey := s.APIRequestsTotalFeature.Key
+
+	// Given a valid subscription and a stale event view whose usage item references a feature that no longer resolves.
+	subsView := s.createSubscriptionFromPlanPhases([]productcatalog.Phase{
+		{
+			PhaseMeta: s.phaseMeta("first-phase", ""),
+			RateCards: productcatalog.RateCards{
+				&productcatalog.UsageBasedRateCard{
+					RateCardMeta: productcatalog.RateCardMeta{
+						Key:     itemKey,
+						Name:    itemKey,
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
+						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+							Amount: alpacadecimal.NewFromInt(1),
+						}),
+					},
+					BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
+				},
+			},
+		},
+	})
+
+	item := subsView.Phases[0].ItemsByKey[itemKey][0]
+	for _, rateCard := range []productcatalog.RateCard{item.Spec.RateCard, item.SubscriptionItem.RateCard} {
+		s.Require().NoError(rateCard.ChangeMeta(func(meta productcatalog.RateCardMeta) (productcatalog.RateCardMeta, error) {
+			meta.Key = missingFeatureKey
+			meta.Feature = productcatalog.NewFeatureReference(nil, lo.ToPtr(missingFeatureKey))
+
+			return meta, nil
+		}))
+	}
+
+	item.Feature = nil
+	subsView.Phases[0].ItemsByKey[itemKey][0] = item
+
+	// When the legacy billing backend synchronizes the event view.
+	err := s.Service.SyncByView(ctx, subsView, start.Add(time.Minute))
+
+	// Then synchronization succeeds and preserves the unresolved feature on a legacy gathering line.
+	s.Require().NoError(err)
+	gatheringInvoice := s.gatheringInvoice(ctx, s.Namespace, s.Customer.ID)
+	lines := gatheringInvoice.Lines.OrEmpty()
+	s.Require().Len(lines, 1)
+	s.Equal(billing.LineEngineTypeInvoice, lines[0].Engine)
+	s.Equal(missingFeatureKey, lines[0].FeatureKey)
+
+	// And the unresolved feature is surfaced when the line reaches its first invoice.
+	clock.FreezeTime(start.AddDate(0, 1, 0))
+	invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+		Customer: s.Customer.GetID(),
+	})
+	s.Require().NoError(err)
+	s.Require().Len(invoices, 1)
+	invoice := invoices[0]
+	s.Equal(billing.StandardInvoiceStatusDraftInvalidCreated, invoice.Status)
+	issue, found := lo.Find(invoice.ValidationIssues, func(issue billing.ValidationIssue) bool {
+		return issue.Code == billing.ErrInvoiceLineFeatureNotFound.Code
+	})
+	s.Require().True(found)
+	s.Equal(billing.ValidationIssueSeverityCritical, issue.Severity)
+	s.Equal(billing.LineEngineValidationComponent(billing.LineEngineTypeInvoice), issue.Component)
+	s.Equal(fmt.Sprintf("/lines/%s", lines[0].ID), issue.Path)
+	s.Equal(billing.ErrInvoiceLineFeatureNotFound.Message, issue.Message)
+	s.Equal(missingFeatureKey, issue.Attributes["feature_key"])
+}
+
 func (s *SubscriptionHandlerTestSuite) TestSubscriptionHappyPath() {
 	ctx := s.testContext()
 	namespace := s.Namespace
@@ -81,10 +154,9 @@ func (s *SubscriptionHandlerTestSuite) TestSubscriptionHappyPath() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 							},
 							BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
 						},
@@ -100,10 +172,9 @@ func (s *SubscriptionHandlerTestSuite) TestSubscriptionHappyPath() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(5),
 								}),
@@ -121,10 +192,9 @@ func (s *SubscriptionHandlerTestSuite) TestSubscriptionHappyPath() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(10),
 								}),
@@ -237,6 +307,7 @@ func (s *SubscriptionHandlerTestSuite) TestSubscriptionHappyPath() {
 		if err != nil {
 			fmt.Printf("current time: %s\n", clock.Now().Format(time.RFC3339))
 		}
+
 		s.NoError(err)
 		s.Len(invoices, 1)
 		invoice := invoices[0]
@@ -1984,10 +2055,9 @@ func (s *SubscriptionHandlerTestSuite) TestAlignedSubscriptionCancellation() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 							},
 							BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
 						},
@@ -2003,10 +2073,9 @@ func (s *SubscriptionHandlerTestSuite) TestAlignedSubscriptionCancellation() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(5),
 								}),
@@ -2150,11 +2219,10 @@ func (s *SubscriptionHandlerTestSuite) TestAlignedSubscriptionProgressiveBilling
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
-								Price:      testPrice,
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
+								Price:   testPrice,
 							},
 							BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
 						},
@@ -2466,10 +2534,9 @@ func (s *SubscriptionHandlerTestSuite) TestUsageBasedGatheringUpdate() {
 			RateCards: productcatalog.RateCards{
 				&productcatalog.UsageBasedRateCard{
 					RateCardMeta: productcatalog.RateCardMeta{
-						Key:        s.APIRequestsTotalFeature.Key,
-						Name:       s.APIRequestsTotalFeature.Key,
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Key:     s.APIRequestsTotalFeature.Key,
+						Name:    s.APIRequestsTotalFeature.Key,
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(10),
 						}),
@@ -2609,10 +2676,9 @@ func (s *SubscriptionHandlerTestSuite) TestUsageBasedGatheringUpdateDraftInvoice
 			RateCards: productcatalog.RateCards{
 				&productcatalog.UsageBasedRateCard{
 					RateCardMeta: productcatalog.RateCardMeta{
-						Key:        s.APIRequestsTotalFeature.Key,
-						Name:       s.APIRequestsTotalFeature.Key,
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Key:     s.APIRequestsTotalFeature.Key,
+						Name:    s.APIRequestsTotalFeature.Key,
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(10),
 						}),
@@ -2819,10 +2885,9 @@ func (s *SubscriptionHandlerTestSuite) TestUsageBasedGatheringUpdateIssuedInvoic
 			RateCards: productcatalog.RateCards{
 				&productcatalog.UsageBasedRateCard{
 					RateCardMeta: productcatalog.RateCardMeta{
-						Key:        s.APIRequestsTotalFeature.Key,
-						Name:       s.APIRequestsTotalFeature.Key,
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Key:     s.APIRequestsTotalFeature.Key,
+						Name:    s.APIRequestsTotalFeature.Key,
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(10),
 						}),
@@ -2972,10 +3037,9 @@ func (s *SubscriptionHandlerTestSuite) TestUsageBasedUpdateWithLineSplits() {
 			RateCards: productcatalog.RateCards{
 				&productcatalog.UsageBasedRateCard{
 					RateCardMeta: productcatalog.RateCardMeta{
-						Key:        s.APIRequestsTotalFeature.Key,
-						Name:       s.APIRequestsTotalFeature.Key,
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Key:     s.APIRequestsTotalFeature.Key,
+						Name:    s.APIRequestsTotalFeature.Key,
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(10),
 						}),
@@ -3258,6 +3322,7 @@ func (s *SubscriptionHandlerTestSuite) TestGatheringManualEditSync() {
 
 			updatedLine, err = line.Clone()
 			s.NoError(err)
+
 			return nil
 		},
 	})
@@ -3312,8 +3377,7 @@ func (s *SubscriptionHandlerTestSuite) TestSplitLineManualEditSync() {
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(5),
 						}),
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 					},
 					BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
 				},
@@ -3349,6 +3413,7 @@ func (s *SubscriptionHandlerTestSuite) TestSplitLineManualEditSync() {
 
 			updatedLine, err = line.Clone()
 			s.NoError(err)
+
 			return nil
 		},
 	})
@@ -3439,6 +3504,7 @@ func (s *SubscriptionHandlerTestSuite) TestGatheringManualDeleteSync() {
 			line.DeletedAt = lo.ToPtr(clock.Now())
 
 			updatedLine = lo.Must(line.Clone())
+
 			return nil
 		},
 		IncludeDeletedLines: true,
@@ -3620,6 +3686,7 @@ func (s *SubscriptionHandlerTestSuite) TestManualIgnoringOfSyncedLines() {
 			child.FeeLineConfigID = ""
 			return child
 		})
+
 		return line
 	})
 
@@ -3786,8 +3853,7 @@ func (s *SubscriptionHandlerTestSuite) TestSplitLineManualDeleteSync() {
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(5),
 						}),
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 					},
 					BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
 				},
@@ -3822,6 +3888,7 @@ func (s *SubscriptionHandlerTestSuite) TestSplitLineManualDeleteSync() {
 			line.DeletedAt = lo.ToPtr(clock.Now())
 
 			updatedLine = lo.Must(line.Clone())
+
 			return nil
 		},
 	})
@@ -3984,10 +4051,9 @@ func (s *SubscriptionHandlerTestSuite) TestInAdvanceInstantBillingOnSubscription
 				},
 				&productcatalog.UsageBasedRateCard{
 					RateCardMeta: productcatalog.RateCardMeta{
-						Key:        s.APIRequestsTotalFeature.Key,
-						Name:       s.APIRequestsTotalFeature.Key,
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Key:     s.APIRequestsTotalFeature.Key,
+						Name:    s.APIRequestsTotalFeature.Key,
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(10),
 						}),
@@ -4065,10 +4131,9 @@ func (s *SubscriptionHandlerTestSuite) TestInAdvanceInstantBillingOnSubscription
 				},
 				&productcatalog.UsageBasedRateCard{
 					RateCardMeta: productcatalog.RateCardMeta{
-						Key:        s.APIRequestsTotalFeature.Key,
-						Name:       s.APIRequestsTotalFeature.Key,
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Key:     s.APIRequestsTotalFeature.Key,
+						Name:    s.APIRequestsTotalFeature.Key,
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(10),
 						}),
@@ -4153,10 +4218,9 @@ func (s *SubscriptionHandlerTestSuite) TestDiscountSynchronization() {
 				},
 				&productcatalog.UsageBasedRateCard{
 					RateCardMeta: productcatalog.RateCardMeta{
-						Key:        s.APIRequestsTotalFeature.Key,
-						Name:       s.APIRequestsTotalFeature.Key,
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Key:     s.APIRequestsTotalFeature.Key,
+						Name:    s.APIRequestsTotalFeature.Key,
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(10),
 						}),
@@ -4185,6 +4249,7 @@ func (s *SubscriptionHandlerTestSuite) TestDiscountSynchronization() {
 			invoiceAsGathering, err := invoice.AsGatheringInvoice()
 			s.NoError(err)
 			gatheringInvoice = &invoiceAsGathering
+
 			continue
 		}
 
@@ -4315,10 +4380,9 @@ func (s *SubscriptionHandlerTestSuite) TestAlignedSubscriptionProratingBehavior(
 			},
 			&productcatalog.UsageBasedRateCard{
 				RateCardMeta: productcatalog.RateCardMeta{
-					Key:        s.APIRequestsTotalFeature.Key,
-					Name:       s.APIRequestsTotalFeature.Key,
-					FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-					FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+					Key:     s.APIRequestsTotalFeature.Key,
+					Name:    s.APIRequestsTotalFeature.Key,
+					Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 					Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 						Amount: alpacadecimal.NewFromFloat(10),
 					}),
@@ -4579,6 +4643,7 @@ func (s *SubscriptionHandlerTestSuite) TestSynchronizeSubscriptionPeriodAlgorith
 			invoice.Lines = billing.NewGatheringInvoiceLines([]billing.GatheringLine{
 				line,
 			})
+
 			return nil
 		},
 	})
@@ -4662,7 +4727,6 @@ func (s *SubscriptionHandlerTestSuite) TestDeletedCustomerHandling() {
 	// Then
 	//  we can still sync the subscription
 	//  and the deleted customer is billed for the outstanding amount
-
 	ctx := s.T().Context()
 	clock.FreezeTime(s.mustParseTime("2025-01-01T00:00:00Z"))
 	defer clock.UnFreeze()
@@ -4680,8 +4744,7 @@ func (s *SubscriptionHandlerTestSuite) TestDeletedCustomerHandling() {
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(5),
 						}),
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 					},
 					BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
 				},
@@ -4979,6 +5042,17 @@ func (s *SubscriptionHandlerTestSuite) TestSyncStateUpdateNoBillables() {
 		SyncedAt:      clock.Now().UTC(),
 		NextSyncAfter: nil,
 	}, syncStates[0])
+
+	// The optimized lookup fetches by globally unique subscription ID, but must
+	// still conceal sync states from callers requesting that ID in another namespace.
+	syncStates, err = s.Adapter.GetSyncStates(ctx, subscriptionsync.GetSyncStatesInput{
+		{
+			Namespace: "another-namespace",
+			ID:        subsView.Subscription.ID,
+		},
+	})
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), syncStates)
 }
 
 func (s *SubscriptionHandlerTestSuite) TestSyncStateUpdateWithFreePhaseActiveInTheFuture() {

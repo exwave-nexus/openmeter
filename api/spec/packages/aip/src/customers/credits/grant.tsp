@@ -1,5 +1,7 @@
 import "../../shared/index.tsp";
 import "../../currencies/index.tsp";
+import "../../billing/validationissue.tsp";
+import "../../tax/codes.tsp";
 
 namespace Customers;
 
@@ -106,26 +108,6 @@ enum CreditGrantVoidPaymentAdjustment {
 }
 
 /**
- * Tax configuration for a credit grant.
- *
- * Tax configuration should be provided to ensure correct revenue recognition,
- * including for externally funded grants.
- */
-@friendlyName("BillingCreditGrantTaxConfig")
-@summary("Tax configuration for a credit grant")
-model CreditGrantTaxConfig {
-  /**
-   * Tax behavior applied to the invoice line item.
-   */
-  behavior?: Common.BillingRoot.TaxBehavior;
-
-  /**
-   * Tax code applied to the invoice line item.
-   */
-  tax_code?: Shared.ResourceReference<Tax.TaxCode>;
-}
-
-/**
  * A credit grant allocates credits to a customer.
  *
  * Credits are drawn down against charges according to the settlement mode
@@ -144,7 +126,10 @@ model CreditGrant {
   funding_method: CreditFundingMethod;
 
   /**
-   * The currency of the granted credits.
+   * The fiat or custom currency of the granted credits.
+   *
+   * Funded custom-currency grants must define `purchase.cost_basis` to settle in a
+   * fiat currency.
    */
   @visibility(Lifecycle.Read, Lifecycle.Create)
   currency: Currencies.CurrencyCode;
@@ -170,7 +155,7 @@ model CreditGrant {
    * is used.
    */
   @visibility(Lifecycle.Read, Lifecycle.Create)
-  tax_config?: CreditGrantTaxConfig;
+  tax_config?: Tax.TaxCodeConfig;
 
   /**
    * Available when `funding_method` is `invoice`.
@@ -235,6 +220,16 @@ model CreditGrant {
    */
   @visibility(Lifecycle.Read)
   status: CreditGrantStatus;
+
+  /**
+   * Validation issues found while processing the credit grant.
+   *
+   * Present only when there are one or more validation findings. An empty list is
+   * omitted.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Validation issues")
+  validation_issues?: global.Billing.ValidationIssue[];
 }
 
 /**
@@ -243,29 +238,60 @@ model CreditGrant {
 @friendlyName("BillingCreditGrantPurchase")
 model CreditGrantPurchase {
   /**
-   * Currency of the purchase amount.
+   * Fiat currency the purchase is settled in.
+   *
+   * Must equal the grant `currency` for fiat grants and `cost_basis.fiat_currency`
+   * for custom-currency grants.
    */
   @visibility(Lifecycle.Read, Lifecycle.Create)
   currency: Shared.CurrencyCode;
 
   /**
-   * Cost basis per credit unit used to calculate the purchase amount.
+   * Fiat cost basis per credit unit of a fiat-currency grant.
    *
    * If `per_unit_cost_basis` is 0.50 and credit amount is
    * $100.00, the total
    * charge is $50.00. The value must be greater than 0. If the
    * cost basis is 0, use `funding_method=none` instead.
    *
-   * Defaults to 1.0.
+   * Only applies to fiat grants and cannot be combined with `cost_basis`. Defaults
+   * to 1.0 when neither is provided.
+   *
+   * @deprecated Use `cost_basis` with type `manual` instead.
    */
+  #deprecated "Use cost_basis instead"
   @visibility(Lifecycle.Read, Lifecycle.Create)
-  per_unit_cost_basis?: Shared.Numeric = "1.0";
+  per_unit_cost_basis?: Shared.Numeric;
 
   /**
-   * The purchase amount. Calculated from `per_unit_cost_basis` and credit `amount`.
+   * Defines how custom-currency credits are priced in the purchase `currency`; the
+   * resolved rate is exposed through `resolved_cost_basis`.
+   *
+   * Fiat grants accept only a `manual` cost basis without `fiat_currency`, where
+   * `rate` is the fiat cost per credit unit. Custom-currency grants require a cost
+   * basis of any type with `fiat_currency` set and equal to the purchase `currency`.
+   * A `dynamic` cost basis is resolved at the grant's effective time, so the
+   * currency cost basis must be effective by then. Cannot be combined with
+   * `per_unit_cost_basis`.
+   */
+  @visibility(Lifecycle.Create)
+  @summary("Cost basis")
+  cost_basis?: ChargeCostBasis;
+
+  /**
+   * The rate the purchase is settled at in the purchase `currency`. Present once the
+   * cost basis is resolved.
    */
   @visibility(Lifecycle.Read)
-  amount: Shared.Numeric;
+  @summary("Resolved cost basis")
+  resolved_cost_basis?: ChargeResolvedCostBasis;
+
+  /**
+   * The purchase amount, calculated from the resolved cost basis and credit
+   * `amount`. Present once the cost basis is resolved.
+   */
+  @visibility(Lifecycle.Read)
+  amount?: Shared.Numeric;
 
   /**
    * Controls when credits become available for consumption.
@@ -307,6 +333,29 @@ model CreditGrantFilters {
    */
   @example(#["input_tokens", "output_tokens"])
   features?: Shared.ResourceKey[];
+
+  /**
+   * Limit credits to charges from these plans. Entries are alternatives; when
+   * features are also specified, both dimensions must match. Omission or an empty
+   * list leaves plans unrestricted.
+   */
+  plans?: CreditGrantPlanFilter[];
+}
+
+/**
+ * A plan key and an optional version constraint for matching credit grants.
+ */
+@friendlyName("BillingCreditGrantPlanFilter")
+model CreditGrantPlanFilter {
+  /**
+   * The plan key in the customer's namespace.
+   */
+  key: Shared.ResourceKey;
+
+  /**
+   * Omission matches all versions, including future versions.
+   */
+  version?: Shared.VersionFilter;
 }
 
 /**

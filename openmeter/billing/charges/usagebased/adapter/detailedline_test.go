@@ -97,9 +97,9 @@ func (s *DetailedLineAdapterSuite) TestUpsertRunDetailedLinesReplacesAndSoftDele
 		To:   time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
 	}
 
-	createdCharges, err := s.adapter.CreateCharges(ctx, usagebased.CreateChargesInput{
+	createdCharges, err := s.adapter.CreateCharges(ctx, usagebased.CreateChargesAdapterInput{
 		Namespace: namespace,
-		Intents: []usagebased.CreateIntent{
+		Intents: []usagebased.CreateIntentAdapterInput{
 			{
 				Intent: usagebased.Intent{
 					Intent: chargesmeta.Intent{
@@ -136,26 +136,30 @@ func (s *DetailedLineAdapterSuite) TestUpsertRunDetailedLinesReplacesAndSoftDele
 	s.Require().Equal(usagebased.RatingEngineDelta, createdCharges[0].State.RatingEngine)
 
 	charge := createdCharges[0]
-	correctedRunBase, err := s.adapter.CreateRealizationRun(ctx, charge.GetChargeID(), usagebased.CreateRealizationRunInput{
-		FeatureID:       "feature-1",
-		Type:            usagebased.RealizationRunTypePartialInvoice,
-		StoredAtLT:      servicePeriod.From,
-		ServicePeriodTo: servicePeriod.From,
-		MeteredQuantity: alpacadecimal.NewFromInt(0),
-		Totals:          totals.Totals{},
+	correctedRunBase, err := s.adapter.CreateRealizationRun(ctx, charge.GetChargeID(), usagebased.CreateRealizationRunAdapterInput{
+		CreateRealizationRunInput: usagebased.CreateRealizationRunInput{
+			FeatureID:       "feature-1",
+			Type:            usagebased.RealizationRunTypePartialInvoice,
+			StoredAtLT:      servicePeriod.From,
+			ServicePeriodTo: servicePeriod.From,
+			MeteredQuantity: alpacadecimal.NewFromInt(0),
+			Totals:          totals.Totals{},
+		},
 	})
 	s.Require().NoError(err)
 
-	runBase, err := s.adapter.CreateRealizationRun(ctx, charge.GetChargeID(), usagebased.CreateRealizationRunInput{
-		FeatureID:       "feature-1",
-		Type:            usagebased.RealizationRunTypeFinalRealization,
-		StoredAtLT:      servicePeriod.To,
-		ServicePeriodTo: servicePeriod.To,
-		MeteredQuantity: alpacadecimal.NewFromInt(10),
-		Totals: totals.Totals{
-			Amount:       alpacadecimal.NewFromInt(1),
-			ChargesTotal: alpacadecimal.NewFromInt(1),
-			Total:        alpacadecimal.NewFromInt(1),
+	runBase, err := s.adapter.CreateRealizationRun(ctx, charge.GetChargeID(), usagebased.CreateRealizationRunAdapterInput{
+		CreateRealizationRunInput: usagebased.CreateRealizationRunInput{
+			FeatureID:       "feature-1",
+			Type:            usagebased.RealizationRunTypeFinalRealization,
+			StoredAtLT:      servicePeriod.To,
+			ServicePeriodTo: servicePeriod.To,
+			MeteredQuantity: alpacadecimal.NewFromInt(10),
+			Totals: totals.Totals{
+				Amount:       alpacadecimal.NewFromInt(1),
+				ChargesTotal: alpacadecimal.NewFromInt(1),
+				Total:        alpacadecimal.NewFromInt(1),
+			},
 		},
 	})
 	s.Require().NoError(err)
@@ -482,13 +486,15 @@ func (s *DetailedLineAdapterSuite) TestExpandRealizationsExcludesDeletedRuns() {
 	namespace := "usagebased-realizations-exclude-deleted-runs"
 	charge, runBase, servicePeriod := s.createChargeWithRun(namespace)
 
-	deletedRunBase, err := s.adapter.CreateRealizationRun(ctx, charge.GetChargeID(), usagebased.CreateRealizationRunInput{
-		FeatureID:       runBase.FeatureID,
-		Type:            usagebased.RealizationRunTypePartialInvoice,
-		StoredAtLT:      servicePeriod.From,
-		ServicePeriodTo: servicePeriod.From,
-		MeteredQuantity: alpacadecimal.Zero,
-		Totals:          totals.Totals{},
+	deletedRunBase, err := s.adapter.CreateRealizationRun(ctx, charge.GetChargeID(), usagebased.CreateRealizationRunAdapterInput{
+		CreateRealizationRunInput: usagebased.CreateRealizationRunInput{
+			FeatureID:       runBase.FeatureID,
+			Type:            usagebased.RealizationRunTypePartialInvoice,
+			StoredAtLT:      servicePeriod.From,
+			ServicePeriodTo: servicePeriod.From,
+			MeteredQuantity: alpacadecimal.Zero,
+			Totals:          totals.Totals{},
+		},
 	})
 	s.Require().NoError(err)
 
@@ -507,6 +513,42 @@ func (s *DetailedLineAdapterSuite) TestExpandRealizationsExcludesDeletedRuns() {
 	s.Equal(runBase.ID, fetchedCharge.Realizations[0].ID)
 }
 
+func (s *DetailedLineAdapterSuite) TestRealizationRunImmutableFlag() {
+	ctx := s.T().Context()
+	charge, _, servicePeriod := s.createChargeWithRun("usagebased-run-immutable")
+
+	createdRun, err := s.adapter.CreateRealizationRun(ctx, charge.GetChargeID(), usagebased.CreateRealizationRunAdapterInput{
+		CreateRealizationRunInput: usagebased.CreateRealizationRunInput{
+			FeatureID:       charge.State.FeatureID,
+			Type:            usagebased.RealizationRunTypePartialInvoice,
+			StoredAtLT:      servicePeriod.To,
+			ServicePeriodTo: servicePeriod.To,
+			MeteredQuantity: alpacadecimal.Zero,
+			Totals:          totals.Totals{},
+		},
+	})
+	s.Require().NoError(err)
+	s.False(createdRun.Immutable)
+
+	updatedRun, err := s.adapter.UpdateRealizationRun(ctx, usagebased.UpdateRealizationRunInput{
+		ID:        createdRun.ID,
+		Immutable: mo.Some(true),
+	})
+	s.Require().NoError(err)
+	s.True(updatedRun.Immutable)
+
+	fetchedCharge, err := s.adapter.GetByID(ctx, usagebased.GetByIDInput{
+		ChargeID: charge.GetChargeID(),
+		Expands:  chargesmeta.Expands{chargesmeta.ExpandRealizations},
+	})
+	s.Require().NoError(err)
+	fetchedRun, ok := lo.Find(fetchedCharge.Realizations, func(run usagebased.RealizationRun) bool {
+		return run.ID == createdRun.ID
+	})
+	s.Require().True(ok)
+	s.True(fetchedRun.Immutable)
+}
+
 func (s *DetailedLineAdapterSuite) createChargeWithRun(namespace string) (usagebased.Charge, usagebased.RealizationRunBase, timeutil.ClosedPeriod) {
 	s.T().Helper()
 
@@ -520,9 +562,9 @@ func (s *DetailedLineAdapterSuite) createChargeWithRun(namespace string) (usageb
 		To:   time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
 	}
 
-	createdCharges, err := s.adapter.CreateCharges(s.T().Context(), usagebased.CreateChargesInput{
+	createdCharges, err := s.adapter.CreateCharges(s.T().Context(), usagebased.CreateChargesAdapterInput{
 		Namespace: namespace,
-		Intents: []usagebased.CreateIntent{
+		Intents: []usagebased.CreateIntentAdapterInput{
 			{
 				Intent: usagebased.Intent{
 					Intent: chargesmeta.Intent{
@@ -559,21 +601,79 @@ func (s *DetailedLineAdapterSuite) createChargeWithRun(namespace string) (usageb
 	s.Require().Equal(usagebased.RatingEngineDelta, createdCharges[0].State.RatingEngine)
 
 	charge := createdCharges[0]
-	runBase, err := s.adapter.CreateRealizationRun(s.T().Context(), charge.GetChargeID(), usagebased.CreateRealizationRunInput{
-		FeatureID:       featureID,
-		Type:            usagebased.RealizationRunTypeFinalRealization,
-		StoredAtLT:      servicePeriod.To,
-		ServicePeriodTo: servicePeriod.To,
-		MeteredQuantity: alpacadecimal.NewFromInt(10),
-		Totals: totals.Totals{
-			Amount:       alpacadecimal.NewFromInt(1),
-			ChargesTotal: alpacadecimal.NewFromInt(1),
-			Total:        alpacadecimal.NewFromInt(1),
+	runBase, err := s.adapter.CreateRealizationRun(s.T().Context(), charge.GetChargeID(), usagebased.CreateRealizationRunAdapterInput{
+		CreateRealizationRunInput: usagebased.CreateRealizationRunInput{
+			FeatureID:       featureID,
+			Type:            usagebased.RealizationRunTypeFinalRealization,
+			StoredAtLT:      servicePeriod.To,
+			ServicePeriodTo: servicePeriod.To,
+			MeteredQuantity: alpacadecimal.NewFromInt(10),
+			Totals: totals.Totals{
+				Amount:       alpacadecimal.NewFromInt(1),
+				ChargesTotal: alpacadecimal.NewFromInt(1),
+				Total:        alpacadecimal.NewFromInt(1),
+			},
 		},
 	})
 	s.Require().NoError(err)
 
 	return charge, runBase, servicePeriod
+}
+
+func (s *DetailedLineAdapterSuite) TestCreateRealizationRunPersistsPriorRunSchema() {
+	ctx := s.T().Context()
+	charge, firstRun, servicePeriod := s.createChargeWithRun("usagebased-run-lineage-" + ulid.Make().String())
+
+	s.Require().Nil(firstRun.PriorRunID)
+
+	secondRun, err := s.adapter.CreateRealizationRun(ctx, charge.GetChargeID(), usagebased.CreateRealizationRunAdapterInput{
+		CreateRealizationRunInput: usagebased.CreateRealizationRunInput{
+			FeatureID:       charge.State.FeatureID,
+			Type:            usagebased.RealizationRunTypeFinalRealization,
+			StoredAtLT:      servicePeriod.To,
+			ServicePeriodTo: servicePeriod.To,
+			MeteredQuantity: alpacadecimal.NewFromInt(10),
+			Totals: totals.Totals{
+				Amount:       alpacadecimal.NewFromInt(1),
+				ChargesTotal: alpacadecimal.NewFromInt(1),
+				Total:        alpacadecimal.NewFromInt(1),
+			},
+		},
+		PriorRunID: &firstRun.ID,
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(&firstRun.ID, secondRun.PriorRunID)
+
+	persisted, err := s.dbClient.ChargeUsageBasedRuns.Get(ctx, secondRun.ID.ID)
+	s.Require().NoError(err)
+	s.Equal(usagebased.CurrentRealizationRunSchemaLevel, persisted.SchemaLevel)
+	s.Equal(firstRun.ID.ID, lo.FromPtr(persisted.PriorRunID))
+}
+
+func (s *DetailedLineAdapterSuite) TestSchemaDefaultCreatesCurrentRun() {
+	ctx := s.T().Context()
+	charge, _, servicePeriod := s.createChargeWithRun("usagebased-run-current-" + ulid.Make().String())
+
+	create := s.dbClient.ChargeUsageBasedRuns.Create().
+		SetNamespace(charge.Namespace).
+		SetChargeID(charge.ID).
+		SetFeatureID(charge.State.FeatureID).
+		SetType(usagebased.RealizationRunTypeFinalRealization).
+		SetInitialType(usagebased.RealizationRunTypeFinalRealization).
+		SetStoredAtLt(servicePeriod.To).
+		SetServicePeriodTo(servicePeriod.To).
+		SetDetailedLinesPresent(false).
+		SetMeteredQuantity(alpacadecimal.Zero).
+		SetNoFiatTransactionRequired(true)
+	create = totals.Set(create, totals.Totals{})
+
+	run, err := create.Save(ctx)
+	s.Require().NoError(err)
+	s.Equal(usagebased.CurrentRealizationRunSchemaLevel, run.SchemaLevel)
+
+	mapped, err := fromDBRunBase(run)
+	s.Require().NoError(err)
+	s.Nil(mapped.PriorRunID)
 }
 
 func (s *DetailedLineAdapterSuite) createCustomer(namespace string) string {

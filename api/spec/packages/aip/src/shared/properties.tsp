@@ -120,10 +120,10 @@ scalar CountryCode extends string;
 scalar Numeric extends string;
 
 /**
- * Monetary amount in a specific currency.
+ * Monetary amount in a specific fiat currency.
  */
-@friendlyName("CurrencyAmount")
-model CurrencyAmount {
+@friendlyName("FiatCurrencyAmount")
+model FiatCurrencyAmount {
   #suppress "@openmeter/api-spec-aip/doc-decorator" "shared model"
   amount: Shared.Numeric;
   #suppress "@openmeter/api-spec-aip/doc-decorator" "shared model"
@@ -157,6 +157,22 @@ model RecurringPeriod {
   @summary("Interval in ISO 8601 duration format")
   @example("P1M")
   interval: ISO8601Duration;
+}
+
+/**
+ * Recurring period input. The anchor is optional; the owning resource defines the
+ * default, typically its creation time.
+ */
+@friendlyName("RecurringPeriodInput")
+model RecurringPeriodInput {
+  ...OmitProperties<RecurringPeriod, "anchor">;
+
+  /**
+   * A date-time anchor to base the recurring period on.
+   */
+  @summary("Anchor time")
+  @example(DateTime.fromISO("2023-01-01T01:01:01.001Z"))
+  anchor?: DateTime;
 }
 
 /**

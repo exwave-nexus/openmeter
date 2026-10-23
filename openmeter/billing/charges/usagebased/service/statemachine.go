@@ -16,7 +16,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	usagebasedrating "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/rating"
 	usagebasedrun "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/run"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -32,7 +32,7 @@ type stateMachine struct {
 	Runs    *usagebasedrun.Service
 
 	CustomerOverride   billing.CustomerOverrideWithDetails
-	FeatureMeter       feature.FeatureMeter
+	FeatureMeters      billingfeaturemeter.FeatureMeters
 	CurrencyCalculator currencyx.Currency
 	CostBasisResolver  costbasis.Resolver
 }
@@ -46,7 +46,7 @@ type StateMachineConfig struct {
 	Runs               *usagebasedrun.Service
 	Logger             *slog.Logger
 	CustomerOverride   billing.CustomerOverrideWithDetails
-	FeatureMeter       feature.FeatureMeter
+	FeatureMeters      billingfeaturemeter.FeatureMeters
 	CurrencyCalculator currencyx.Currency
 	CostBasisResolver  costbasis.Resolver
 }
@@ -78,8 +78,8 @@ func (c StateMachineConfig) Validate() error {
 		errs = append(errs, fmt.Errorf("merged profile is required: %w", err))
 	}
 
-	if c.FeatureMeter.Meter == nil {
-		errs = append(errs, errors.New("feature meter is required"))
+	if c.FeatureMeters == nil {
+		errs = append(errs, errors.New("feature meters are required"))
 	}
 
 	if c.CurrencyCalculator == nil {
@@ -99,7 +99,10 @@ func (c StateMachineConfig) Validate() error {
 	return errors.Join(errs...)
 }
 
-func newStateMachineBase(config StateMachineConfig) (*stateMachine, error) {
+func newStateMachineBase(
+	config StateMachineConfig,
+	updateBaseHandlers ...chargestatemachine.UpdateBaseHandler[usagebased.ChargeBase],
+) (*stateMachine, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
@@ -110,17 +113,16 @@ func newStateMachineBase(config StateMachineConfig) (*stateMachine, error) {
 		Rater:              config.Rater,
 		Runs:               config.Runs,
 		CustomerOverride:   config.CustomerOverride,
-		FeatureMeter:       config.FeatureMeter,
+		FeatureMeters:      config.FeatureMeters,
 		CurrencyCalculator: config.CurrencyCalculator,
 		CostBasisResolver:  config.CostBasisResolver,
 	}
 
 	machine, err := chargestatemachine.New(chargestatemachine.Config[usagebased.Charge, usagebased.ChargeBase, usagebased.Status]{
-		Charge: config.Charge,
+		Charge:             config.Charge,
+		UpdateBaseHandlers: updateBaseHandlers,
 		Persistence: chargestatemachine.Persistence[usagebased.Charge, usagebased.ChargeBase]{
-			UpdateBase: func(ctx context.Context, base usagebased.ChargeBase) (usagebased.ChargeBase, error) {
-				return out.Adapter.UpdateCharge(ctx, base)
-			},
+			UpdateBase: out.Adapter.UpdateCharge,
 			Refetch: func(ctx context.Context, chargeID meta.ChargeID) (usagebased.Charge, error) {
 				return out.Adapter.GetByID(ctx, usagebased.GetByIDInput{
 					ChargeID: chargeID,
@@ -290,7 +292,21 @@ func (s *stateMachine) AdvanceAfterServicePeriodTo(ctx context.Context) error {
 }
 
 func (s *stateMachine) SyncFeatureIDFromFeatureMeter(ctx context.Context) error {
-	s.Charge.State.FeatureID = s.FeatureMeter.Feature.ID
+	if s.Charge.State.FeatureID != "" && !s.Charge.ValidationIssues.HasComponent(billing.ValidationComponentProductCatalog) {
+		return nil
+	}
+
+	featureMeter, err := s.FeatureMeters.Get(s.Charge)
+	if err != nil {
+		return err
+	}
+
+	if s.Charge.State.FeatureID == "" {
+		s.Charge.State.FeatureID = featureMeter.Feature.ID
+	}
+
+	s.Charge.ValidationIssues = s.Charge.ValidationIssues.WithoutComponent(billing.ValidationComponentProductCatalog)
+
 	return nil
 }
 
@@ -323,6 +339,7 @@ func (s *stateMachine) IsAfterCollectionPeriod(ctx context.Context, _ ...any) bo
 func (s *stateMachine) getFinalRunStoredAtLT() (time.Time, error) {
 	collectionPeriod := s.CustomerOverride.MergedProfile.WorkflowConfig.Collection.Interval
 	storedAtLT, _ := collectionPeriod.AddTo(s.Charge.Intent.GetEffectiveServicePeriod().To)
+
 	return meta.NormalizeTimestamp(storedAtLT), nil
 }
 

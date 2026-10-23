@@ -1,6 +1,7 @@
 package subscriptions
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -9,6 +10,9 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
 	"github.com/openmeterio/openmeter/openmeter/subscription"
+	subscriptiontestutils "github.com/openmeterio/openmeter/openmeter/subscription/testutils"
+	"github.com/openmeterio/openmeter/openmeter/testutils"
+	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/models"
 )
@@ -31,8 +35,8 @@ func TestToAPIBillingSubscriptionCurrencySemantics(t *testing.T) {
 	}
 
 	// when:
-	// - the subscription is mapped to the v3 API
-	result := ToAPIBillingSubscription(sub)
+	// - the subscription's own fields are mapped to the v3 API
+	result := subscriptionBaseFields(sub, clock.Now())
 
 	// then:
 	// - the invoice currency, mode, and pin resource identities are preserved
@@ -62,4 +66,137 @@ func TestFromAPIBillingSubscriptionCreateCostBasisMode(t *testing.T) {
 	// - the mode survives the API boundary
 	require.NoError(t, err)
 	require.Equal(t, subscription.CostBasisModePinned, result.CostBasisMode)
+}
+
+// TestFromAPIBillingSubscriptionCreateTiming verifies the create request's optional
+// timing maps to the domain scheduling timing: omitted defaults to immediate, the
+// enum values pass through, and a custom timestamp becomes a scheduled start. The
+// domain validates the resolved timing (e.g. rejecting a past instant); the
+// converter only maps.
+func TestFromAPIBillingSubscriptionCreateTiming(t *testing.T) {
+	customerID := customer.CustomerID{ID: "customer_1", Namespace: "default"}
+
+	mapTiming := func(t *testing.T, timing *api.BillingSubscriptionCreateTiming) subscription.Timing {
+		t.Helper()
+		result, err := FromAPIBillingSubscriptionCreate(
+			"default",
+			customerID,
+			"Subscription",
+			api.BillingSubscriptionCreate{Timing: timing},
+		)
+		require.NoError(t, err)
+
+		return result.Timing
+	}
+
+	t.Run("defaults to immediate when omitted", func(t *testing.T) {
+		got := mapTiming(t, nil)
+		require.NotNil(t, got.Enum)
+		require.Equal(t, subscription.TimingImmediate, *got.Enum)
+		require.Nil(t, got.Custom)
+	})
+
+	t.Run("maps the immediate enum", func(t *testing.T) {
+		var timing api.BillingSubscriptionCreateTiming
+		require.NoError(t, timing.FromBillingSubscriptionCreateTimingEnum(api.BillingSubscriptionCreateTimingEnumImmediate))
+
+		got := mapTiming(t, &timing)
+		require.NotNil(t, got.Enum)
+		require.Equal(t, subscription.TimingImmediate, *got.Enum)
+		require.Nil(t, got.Custom)
+	})
+
+	t.Run("maps a custom timestamp to a scheduled start", func(t *testing.T) {
+		at := testutils.GetRFC3339Time(t, "2026-01-01T00:00:00Z")
+		var timing api.BillingSubscriptionCreateTiming
+		require.NoError(t, timing.FromDateTime(at))
+
+		got := mapTiming(t, &timing)
+		require.Nil(t, got.Enum)
+		require.NotNil(t, got.Custom)
+		require.True(t, got.Custom.Equal(at))
+	})
+}
+
+// TestToAPIBillingSubscriptionViewRoundtrip exercises the full view -> API conversion
+// against a real subscription created through the service. Unlike the scalar-field
+// test above, this asserts the spec-driven parts the converter resolves from the view
+func TestToAPIBillingSubscriptionViewRoundtrip(t *testing.T) {
+	ctx := t.Context()
+
+	currentTime := testutils.GetRFC3339Time(t, "2021-01-01T00:00:11Z")
+	clock.FreezeTime(currentTime)
+	defer clock.UnFreeze()
+
+	dbDeps := subscriptiontestutils.SetupDBDeps(t)
+	defer dbDeps.Cleanup(t)
+
+	deps := subscriptiontestutils.NewService(t, dbDeps)
+	service := deps.SubscriptionService
+
+	// given: a subscription created from the example plan, which has phases and rate cards
+	cust := deps.CustomerAdapter.CreateExampleCustomer(t)
+	_ = deps.FeatureConnector.CreateExampleFeatures(t, deps.ExampleMeterID)
+	plan := deps.PlanHelper.CreatePlan(t, subscriptiontestutils.GetExamplePlanInput(t))
+
+	spec, err := subscription.NewSpecFromPlan(plan, subscription.CreateSubscriptionCustomerInput{
+		CustomerId:      cust.ID,
+		InvoiceCurrency: "USD",
+		ActiveFrom:      currentTime,
+		BillingAnchor:   currentTime,
+		Name:            "Test Subscription",
+		Annotations:     models.Annotations{},
+	})
+	require.NoError(t, err)
+
+	sub, err := service.Create(ctx, subscriptiontestutils.ExampleNamespace, spec)
+	require.NoError(t, err)
+
+	view, err := service.GetView(ctx, models.NamespacedID{ID: sub.ID, Namespace: sub.Namespace})
+	require.NoError(t, err)
+
+	// when: the view is mapped to the v3 API subscription
+	result, err := ToAPIBillingSubscription(view)
+	require.NoError(t, err)
+
+	// then: the scalar fields survive
+	require.Equal(t, sub.ID, result.Id)
+	require.Equal(t, cust.ID, result.CustomerId)
+	require.Equal(t, "USD", result.InvoiceCurrency)
+
+	// then: the phases roundtrip, each carrying resolved items with rate cards
+	require.NotEmpty(t, result.Phases, "expected phases on the expanded subscription")
+
+	foundItem := false
+	for _, phase := range result.Phases {
+		require.NotEmpty(t, phase.Key)
+		require.False(t, phase.ActiveFrom.IsZero())
+
+		for _, item := range phase.Items {
+			require.NotEmpty(t, item.RateCard.Key, "resolved item should carry a rate card")
+			require.False(t, item.ActiveFrom.IsZero())
+			foundItem = true
+		}
+	}
+
+	require.True(t, foundItem, "expected at least one resolved item across phases")
+
+	// then: the current aligned billing period is populated for the active subscription
+	require.NotNil(t, result.CurrentPeriod, "active subscription should expose a current period")
+	require.True(t, result.CurrentPeriod.To.After(result.CurrentPeriod.From))
+
+	// The base response carries every subscription field, without either view field.
+	baseJSON, err := json.Marshal(ToAPIBillingSubscriptionBase(view.Subscription))
+	require.NoError(t, err)
+	fullJSON, err := json.Marshal(result)
+	require.NoError(t, err)
+
+	var baseFields, fullFields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(baseJSON, &baseFields))
+	require.NoError(t, json.Unmarshal(fullJSON, &fullFields))
+	require.NotContains(t, baseFields, "phases")
+	require.NotContains(t, baseFields, "current_period")
+	delete(fullFields, "phases")
+	delete(fullFields, "current_period")
+	require.Equal(t, fullFields, baseFields)
 }

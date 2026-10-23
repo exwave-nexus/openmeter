@@ -17,6 +17,7 @@ import (
 	"github.com/lmittmann/tint"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -387,6 +388,7 @@ func kongReplaceAttr(groups []string, a slog.Attr) slog.Attr {
 	if len(groups) > 0 {
 		return a
 	}
+
 	switch a.Key {
 	case slog.TimeKey:
 		a.Key = "ts"
@@ -402,6 +404,7 @@ func kongReplaceAttr(groups []string, a slog.Attr) slog.Attr {
 	case "error", "err":
 		a.Key = "error.message"
 	}
+
 	return a
 }
 
@@ -573,7 +576,7 @@ func (e *fileExporter) Export(ctx context.Context, logs []sdklog.Record) error {
 		}
 
 		attrs := make([]any, 0, record.AttributesLen()*2)
-		record.WalkAttributes(func(attr log.KeyValue) bool {
+		record.WalkAttributes(func(attr attribute.KeyValue) bool {
 			attrs = append(attrs, attr.Key, attr.Value.AsString())
 			return true
 		})
@@ -590,6 +593,7 @@ func (e *fileExporter) Export(ctx context.Context, logs []sdklog.Record) error {
 		// Let's add retries eventually
 		_ = e.handler.Handle(ctx, rec)
 	}
+
 	return nil
 }
 

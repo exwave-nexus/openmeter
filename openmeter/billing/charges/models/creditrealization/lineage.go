@@ -7,19 +7,27 @@ import (
 	"github.com/openmeterio/openmeter/pkg/models"
 )
 
+// AnnotationLineageOriginKind retains the stored legacy lineage annotation key.
+//
+// Deprecated: Use ledger collection provenance.
 const AnnotationLineageOriginKind = "billing.credit_realization.lineage_origin_kind"
 
+// LineageOriginKind identifies the source of a legacy lineage root.
+//
+// Deprecated: Retained for legacy lineage histories.
 type LineageOriginKind string
 
 const (
-	LineageOriginKindRealCredit LineageOriginKind = "real_credit"
-	LineageOriginKindAdvance    LineageOriginKind = "advance"
+	LineageOriginKindRealCredit         LineageOriginKind = "real_credit"
+	LineageOriginKindAdvance            LineageOriginKind = "advance"
+	LineageOriginKindReceivableCoverage LineageOriginKind = "receivable_coverage"
 )
 
 func (k LineageOriginKind) Values() []string {
 	return []string{
 		string(LineageOriginKindRealCredit),
 		string(LineageOriginKindAdvance),
+		string(LineageOriginKindReceivableCoverage),
 	}
 }
 
@@ -51,6 +59,9 @@ func LineageOriginKindFromAnnotations(annotations models.Annotations) (LineageOr
 	return out, nil
 }
 
+// LineageSegmentState describes mutable backing state in a legacy history.
+//
+// Deprecated: Use ledger balances scoped by collection provenance.
 type LineageSegmentState string
 
 const (
@@ -63,6 +74,9 @@ const (
 	// LineageSegmentStateAdvanceBackfilled marks value that was originally advance-backed
 	// usage but was later covered by a credit purchase.
 	LineageSegmentStateAdvanceBackfilled LineageSegmentState = "advance_backfilled"
+	// LineageSegmentStateReceivableCoverage marks credit applied directly to a
+	// receivable. It preserves correction provenance but represents no accrued value.
+	LineageSegmentStateReceivableCoverage LineageSegmentState = "receivable_coverage"
 	// LineageSegmentStateEarningsRecognized marks value that has been recognized as earnings
 	// on the ledger (moved from accrued to earnings). BackingTransactionGroupID points to
 	// the recognition ledger transaction group.
@@ -74,6 +88,7 @@ func (s LineageSegmentState) Values() []string {
 		string(LineageSegmentStateRealCredit),
 		string(LineageSegmentStateAdvanceUncovered),
 		string(LineageSegmentStateAdvanceBackfilled),
+		string(LineageSegmentStateReceivableCoverage),
 		string(LineageSegmentStateEarningsRecognized),
 	}
 }
@@ -92,6 +107,8 @@ func InitialLineageSegmentState(originKind LineageOriginKind) LineageSegmentStat
 		return LineageSegmentStateRealCredit
 	case LineageOriginKindAdvance:
 		return LineageSegmentStateAdvanceUncovered
+	case LineageOriginKindReceivableCoverage:
+		return LineageSegmentStateReceivableCoverage
 	default:
 		return ""
 	}

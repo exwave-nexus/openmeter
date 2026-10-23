@@ -138,6 +138,12 @@ func (_c *ChargeUsageBasedCreate) SetManagedBy(v billing.InvoiceLineManagedBy) *
 	return _c
 }
 
+// SetSubscriptionPlan sets the "subscription_plan" field.
+func (_c *ChargeUsageBasedCreate) SetSubscriptionPlan(v *meta.SubscriptionPlan) *ChargeUsageBasedCreate {
+	_c.mutation.SetSubscriptionPlan(v)
+	return _c
+}
+
 // SetSubscriptionID sets the "subscription_id" field.
 func (_c *ChargeUsageBasedCreate) SetSubscriptionID(v string) *ChargeUsageBasedCreate {
 	_c.mutation.SetSubscriptionID(v)
@@ -294,6 +300,12 @@ func (_c *ChargeUsageBasedCreate) SetNillableDescription(v *string) *ChargeUsage
 	return _c
 }
 
+// SetValidationIssues sets the "validation_issues" field.
+func (_c *ChargeUsageBasedCreate) SetValidationIssues(v billing.ValidationIssues) *ChargeUsageBasedCreate {
+	_c.mutation.SetValidationIssues(v)
+	return _c
+}
+
 // SetInvoiceAt sets the "invoice_at" field.
 func (_c *ChargeUsageBasedCreate) SetInvoiceAt(v time.Time) *ChargeUsageBasedCreate {
 	_c.mutation.SetInvoiceAt(v)
@@ -335,6 +347,14 @@ func (_c *ChargeUsageBasedCreate) SetFeatureKey(v string) *ChargeUsageBasedCreat
 // SetFeatureID sets the "feature_id" field.
 func (_c *ChargeUsageBasedCreate) SetFeatureID(v string) *ChargeUsageBasedCreate {
 	_c.mutation.SetFeatureID(v)
+	return _c
+}
+
+// SetNillableFeatureID sets the "feature_id" field if the given value is not nil.
+func (_c *ChargeUsageBasedCreate) SetNillableFeatureID(v *string) *ChargeUsageBasedCreate {
+	if v != nil {
+		_c.SetFeatureID(*v)
+	}
 	return _c
 }
 
@@ -634,6 +654,11 @@ func (_c *ChargeUsageBasedCreate) check() error {
 			return &ValidationError{Name: "managed_by", err: fmt.Errorf(`db: validator failed for field "ChargeUsageBased.managed_by": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.SubscriptionPlan(); ok {
+		if err := v.Validate(); err != nil {
+			return &ValidationError{Name: "subscription_plan", err: fmt.Errorf(`db: validator failed for field "ChargeUsageBased.subscription_plan": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.TaxCodeID(); !ok {
 		return &ValidationError{Name: "tax_code_id", err: errors.New(`db: missing required field "ChargeUsageBased.tax_code_id"`)}
 	}
@@ -688,9 +713,6 @@ func (_c *ChargeUsageBasedCreate) check() error {
 			return &ValidationError{Name: "feature_key", err: fmt.Errorf(`db: validator failed for field "ChargeUsageBased.feature_key": %w`, err)}
 		}
 	}
-	if _, ok := _c.mutation.FeatureID(); !ok {
-		return &ValidationError{Name: "feature_id", err: errors.New(`db: missing required field "ChargeUsageBased.feature_id"`)}
-	}
 	if v, ok := _c.mutation.FeatureID(); ok {
 		if err := chargeusagebased.FeatureIDValidator(v); err != nil {
 			return &ValidationError{Name: "feature_id", err: fmt.Errorf(`db: validator failed for field "ChargeUsageBased.feature_id": %w`, err)}
@@ -727,9 +749,6 @@ func (_c *ChargeUsageBasedCreate) check() error {
 	}
 	if len(_c.mutation.CustomerIDs()) == 0 {
 		return &ValidationError{Name: "customer", err: errors.New(`db: missing required edge "ChargeUsageBased.customer"`)}
-	}
-	if len(_c.mutation.FeatureIDs()) == 0 {
-		return &ValidationError{Name: "feature", err: errors.New(`db: missing required edge "ChargeUsageBased.feature"`)}
 	}
 	if len(_c.mutation.TaxCodeIDs()) == 0 {
 		return &ValidationError{Name: "tax_code", err: errors.New(`db: missing required edge "ChargeUsageBased.tax_code"`)}
@@ -813,6 +832,14 @@ func (_c *ChargeUsageBasedCreate) createSpec() (*ChargeUsageBased, *sqlgraph.Cre
 		_spec.SetField(chargeusagebased.FieldManagedBy, field.TypeEnum, value)
 		_node.ManagedBy = value
 	}
+	if value, ok := _c.mutation.SubscriptionPlan(); ok {
+		vv, err := chargeusagebased.ValueScanner.SubscriptionPlan.Value(value)
+		if err != nil {
+			return nil, nil, err
+		}
+		_spec.SetField(chargeusagebased.FieldSubscriptionPlan, field.TypeString, vv)
+		_node.SubscriptionPlan = value
+	}
 	if value, ok := _c.mutation.AdvanceAfter(); ok {
 		_spec.SetField(chargeusagebased.FieldAdvanceAfter, field.TypeTime, value)
 		_node.AdvanceAfter = &value
@@ -852,6 +879,10 @@ func (_c *ChargeUsageBasedCreate) createSpec() (*ChargeUsageBased, *sqlgraph.Cre
 	if value, ok := _c.mutation.Description(); ok {
 		_spec.SetField(chargeusagebased.FieldDescription, field.TypeString, value)
 		_node.Description = &value
+	}
+	if value, ok := _c.mutation.ValidationIssues(); ok {
+		_spec.SetField(chargeusagebased.FieldValidationIssues, field.TypeJSON, value)
+		_node.ValidationIssues = value
 	}
 	if value, ok := _c.mutation.InvoiceAt(); ok {
 		_spec.SetField(chargeusagebased.FieldInvoiceAt, field.TypeTime, value)
@@ -1081,7 +1112,7 @@ func (_c *ChargeUsageBasedCreate) createSpec() (*ChargeUsageBased, *sqlgraph.Cre
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
-		_node.FeatureID = nodes[0]
+		_node.FeatureID = &nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.TaxCodeIDs(); len(nodes) > 0 {
@@ -1254,6 +1285,24 @@ func (u *ChargeUsageBasedUpsert) UpdateStatus() *ChargeUsageBasedUpsert {
 	return u
 }
 
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (u *ChargeUsageBasedUpsert) SetSubscriptionPhaseID(v string) *ChargeUsageBasedUpsert {
+	u.Set(chargeusagebased.FieldSubscriptionPhaseID, v)
+	return u
+}
+
+// UpdateSubscriptionPhaseID sets the "subscription_phase_id" field to the value that was provided on create.
+func (u *ChargeUsageBasedUpsert) UpdateSubscriptionPhaseID() *ChargeUsageBasedUpsert {
+	u.SetExcluded(chargeusagebased.FieldSubscriptionPhaseID)
+	return u
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (u *ChargeUsageBasedUpsert) ClearSubscriptionPhaseID() *ChargeUsageBasedUpsert {
+	u.SetNull(chargeusagebased.FieldSubscriptionPhaseID)
+	return u
+}
+
 // SetSubscriptionItemID sets the "subscription_item_id" field.
 func (u *ChargeUsageBasedUpsert) SetSubscriptionItemID(v string) *ChargeUsageBasedUpsert {
 	u.Set(chargeusagebased.FieldSubscriptionItemID, v)
@@ -1386,6 +1435,24 @@ func (u *ChargeUsageBasedUpsert) ClearDescription() *ChargeUsageBasedUpsert {
 	return u
 }
 
+// SetValidationIssues sets the "validation_issues" field.
+func (u *ChargeUsageBasedUpsert) SetValidationIssues(v billing.ValidationIssues) *ChargeUsageBasedUpsert {
+	u.Set(chargeusagebased.FieldValidationIssues, v)
+	return u
+}
+
+// UpdateValidationIssues sets the "validation_issues" field to the value that was provided on create.
+func (u *ChargeUsageBasedUpsert) UpdateValidationIssues() *ChargeUsageBasedUpsert {
+	u.SetExcluded(chargeusagebased.FieldValidationIssues)
+	return u
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (u *ChargeUsageBasedUpsert) ClearValidationIssues() *ChargeUsageBasedUpsert {
+	u.SetNull(chargeusagebased.FieldValidationIssues)
+	return u
+}
+
 // SetInvoiceAt sets the "invoice_at" field.
 func (u *ChargeUsageBasedUpsert) SetInvoiceAt(v time.Time) *ChargeUsageBasedUpsert {
 	u.Set(chargeusagebased.FieldInvoiceAt, v)
@@ -1443,6 +1510,12 @@ func (u *ChargeUsageBasedUpsert) SetFeatureID(v string) *ChargeUsageBasedUpsert 
 // UpdateFeatureID sets the "feature_id" field to the value that was provided on create.
 func (u *ChargeUsageBasedUpsert) UpdateFeatureID() *ChargeUsageBasedUpsert {
 	u.SetExcluded(chargeusagebased.FieldFeatureID)
+	return u
+}
+
+// ClearFeatureID clears the value of the "feature_id" field.
+func (u *ChargeUsageBasedUpsert) ClearFeatureID() *ChargeUsageBasedUpsert {
+	u.SetNull(chargeusagebased.FieldFeatureID)
 	return u
 }
 
@@ -1550,11 +1623,11 @@ func (u *ChargeUsageBasedUpsertOne) UpdateNewValues() *ChargeUsageBasedUpsertOne
 		if _, exists := u.create.mutation.ManagedBy(); exists {
 			s.SetIgnore(chargeusagebased.FieldManagedBy)
 		}
+		if _, exists := u.create.mutation.SubscriptionPlan(); exists {
+			s.SetIgnore(chargeusagebased.FieldSubscriptionPlan)
+		}
 		if _, exists := u.create.mutation.SubscriptionID(); exists {
 			s.SetIgnore(chargeusagebased.FieldSubscriptionID)
-		}
-		if _, exists := u.create.mutation.SubscriptionPhaseID(); exists {
-			s.SetIgnore(chargeusagebased.FieldSubscriptionPhaseID)
 		}
 		if _, exists := u.create.mutation.TaxCodeID(); exists {
 			s.SetIgnore(chargeusagebased.FieldTaxCodeID)
@@ -1703,6 +1776,27 @@ func (u *ChargeUsageBasedUpsertOne) SetStatus(v meta.ChargeStatus) *ChargeUsageB
 func (u *ChargeUsageBasedUpsertOne) UpdateStatus() *ChargeUsageBasedUpsertOne {
 	return u.Update(func(s *ChargeUsageBasedUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (u *ChargeUsageBasedUpsertOne) SetSubscriptionPhaseID(v string) *ChargeUsageBasedUpsertOne {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.SetSubscriptionPhaseID(v)
+	})
+}
+
+// UpdateSubscriptionPhaseID sets the "subscription_phase_id" field to the value that was provided on create.
+func (u *ChargeUsageBasedUpsertOne) UpdateSubscriptionPhaseID() *ChargeUsageBasedUpsertOne {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.UpdateSubscriptionPhaseID()
+	})
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (u *ChargeUsageBasedUpsertOne) ClearSubscriptionPhaseID() *ChargeUsageBasedUpsertOne {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.ClearSubscriptionPhaseID()
 	})
 }
 
@@ -1860,6 +1954,27 @@ func (u *ChargeUsageBasedUpsertOne) ClearDescription() *ChargeUsageBasedUpsertOn
 	})
 }
 
+// SetValidationIssues sets the "validation_issues" field.
+func (u *ChargeUsageBasedUpsertOne) SetValidationIssues(v billing.ValidationIssues) *ChargeUsageBasedUpsertOne {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.SetValidationIssues(v)
+	})
+}
+
+// UpdateValidationIssues sets the "validation_issues" field to the value that was provided on create.
+func (u *ChargeUsageBasedUpsertOne) UpdateValidationIssues() *ChargeUsageBasedUpsertOne {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.UpdateValidationIssues()
+	})
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (u *ChargeUsageBasedUpsertOne) ClearValidationIssues() *ChargeUsageBasedUpsertOne {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.ClearValidationIssues()
+	})
+}
+
 // SetInvoiceAt sets the "invoice_at" field.
 func (u *ChargeUsageBasedUpsertOne) SetInvoiceAt(v time.Time) *ChargeUsageBasedUpsertOne {
 	return u.Update(func(s *ChargeUsageBasedUpsert) {
@@ -1927,6 +2042,13 @@ func (u *ChargeUsageBasedUpsertOne) SetFeatureID(v string) *ChargeUsageBasedUpse
 func (u *ChargeUsageBasedUpsertOne) UpdateFeatureID() *ChargeUsageBasedUpsertOne {
 	return u.Update(func(s *ChargeUsageBasedUpsert) {
 		s.UpdateFeatureID()
+	})
+}
+
+// ClearFeatureID clears the value of the "feature_id" field.
+func (u *ChargeUsageBasedUpsertOne) ClearFeatureID() *ChargeUsageBasedUpsertOne {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.ClearFeatureID()
 	})
 }
 
@@ -2215,11 +2337,11 @@ func (u *ChargeUsageBasedUpsertBulk) UpdateNewValues() *ChargeUsageBasedUpsertBu
 			if _, exists := b.mutation.ManagedBy(); exists {
 				s.SetIgnore(chargeusagebased.FieldManagedBy)
 			}
+			if _, exists := b.mutation.SubscriptionPlan(); exists {
+				s.SetIgnore(chargeusagebased.FieldSubscriptionPlan)
+			}
 			if _, exists := b.mutation.SubscriptionID(); exists {
 				s.SetIgnore(chargeusagebased.FieldSubscriptionID)
-			}
-			if _, exists := b.mutation.SubscriptionPhaseID(); exists {
-				s.SetIgnore(chargeusagebased.FieldSubscriptionPhaseID)
 			}
 			if _, exists := b.mutation.TaxCodeID(); exists {
 				s.SetIgnore(chargeusagebased.FieldTaxCodeID)
@@ -2369,6 +2491,27 @@ func (u *ChargeUsageBasedUpsertBulk) SetStatus(v meta.ChargeStatus) *ChargeUsage
 func (u *ChargeUsageBasedUpsertBulk) UpdateStatus() *ChargeUsageBasedUpsertBulk {
 	return u.Update(func(s *ChargeUsageBasedUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (u *ChargeUsageBasedUpsertBulk) SetSubscriptionPhaseID(v string) *ChargeUsageBasedUpsertBulk {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.SetSubscriptionPhaseID(v)
+	})
+}
+
+// UpdateSubscriptionPhaseID sets the "subscription_phase_id" field to the value that was provided on create.
+func (u *ChargeUsageBasedUpsertBulk) UpdateSubscriptionPhaseID() *ChargeUsageBasedUpsertBulk {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.UpdateSubscriptionPhaseID()
+	})
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (u *ChargeUsageBasedUpsertBulk) ClearSubscriptionPhaseID() *ChargeUsageBasedUpsertBulk {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.ClearSubscriptionPhaseID()
 	})
 }
 
@@ -2526,6 +2669,27 @@ func (u *ChargeUsageBasedUpsertBulk) ClearDescription() *ChargeUsageBasedUpsertB
 	})
 }
 
+// SetValidationIssues sets the "validation_issues" field.
+func (u *ChargeUsageBasedUpsertBulk) SetValidationIssues(v billing.ValidationIssues) *ChargeUsageBasedUpsertBulk {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.SetValidationIssues(v)
+	})
+}
+
+// UpdateValidationIssues sets the "validation_issues" field to the value that was provided on create.
+func (u *ChargeUsageBasedUpsertBulk) UpdateValidationIssues() *ChargeUsageBasedUpsertBulk {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.UpdateValidationIssues()
+	})
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (u *ChargeUsageBasedUpsertBulk) ClearValidationIssues() *ChargeUsageBasedUpsertBulk {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.ClearValidationIssues()
+	})
+}
+
 // SetInvoiceAt sets the "invoice_at" field.
 func (u *ChargeUsageBasedUpsertBulk) SetInvoiceAt(v time.Time) *ChargeUsageBasedUpsertBulk {
 	return u.Update(func(s *ChargeUsageBasedUpsert) {
@@ -2593,6 +2757,13 @@ func (u *ChargeUsageBasedUpsertBulk) SetFeatureID(v string) *ChargeUsageBasedUps
 func (u *ChargeUsageBasedUpsertBulk) UpdateFeatureID() *ChargeUsageBasedUpsertBulk {
 	return u.Update(func(s *ChargeUsageBasedUpsert) {
 		s.UpdateFeatureID()
+	})
+}
+
+// ClearFeatureID clears the value of the "feature_id" field.
+func (u *ChargeUsageBasedUpsertBulk) ClearFeatureID() *ChargeUsageBasedUpsertBulk {
+	return u.Update(func(s *ChargeUsageBasedUpsert) {
+		s.ClearFeatureID()
 	})
 }
 

@@ -10,8 +10,11 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/ent/db"
 	"github.com/openmeterio/openmeter/openmeter/ent/db/predicate"
+	dbsubscription "github.com/openmeterio/openmeter/openmeter/ent/db/subscription"
 	dbsubscriptionitem "github.com/openmeterio/openmeter/openmeter/ent/db/subscriptionitem"
+	dbsubscriptionphase "github.com/openmeterio/openmeter/openmeter/ent/db/subscriptionphase"
 	"github.com/openmeterio/openmeter/openmeter/subscription"
+	"github.com/openmeterio/openmeter/openmeter/subscription/validators/itemreference"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/framework/entutils"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -23,12 +26,6 @@ type subscriptionItemRepo struct {
 }
 
 var _ subscription.SubscriptionItemRepository = (*subscriptionItemRepo)(nil)
-
-func NewSubscriptionItemRepo(db *db.Client) *subscriptionItemRepo {
-	return &subscriptionItemRepo{
-		db: db,
-	}
-}
 
 // validateCurrencyReferenceForPersistence enforces the repository contract
 // that custom currency references have already been resolved by the service.
@@ -78,6 +75,7 @@ func (r *subscriptionItemRepo) GetForSubscriptionAt(ctx context.Context, input s
 			Where(getItemForSubscriptionAtFilter(input)).
 			WithPhase().
 			WithTaxCode().
+			WithCustomCurrency().
 			All(ctx)
 		if err != nil {
 			return nil, err
@@ -90,6 +88,7 @@ func (r *subscriptionItemRepo) GetForSubscriptionAt(ctx context.Context, input s
 			if err != nil {
 				return nil, err
 			}
+
 			result = append(result, r)
 		}
 
@@ -109,6 +108,7 @@ func (r *subscriptionItemRepo) GetForSubscriptionsAt(ctx context.Context, input 
 			)).
 			WithPhase().
 			WithTaxCode().
+			WithCustomCurrency().
 			All(ctx)
 		if err != nil {
 			return nil, err
@@ -121,6 +121,7 @@ func (r *subscriptionItemRepo) GetForSubscriptionsAt(ctx context.Context, input 
 			if err != nil {
 				return nil, err
 			}
+
 			result = append(result, r)
 		}
 
@@ -139,6 +140,7 @@ func (r *subscriptionItemRepo) GetByID(ctx context.Context, id models.Namespaced
 			)).
 			WithPhase().
 			WithTaxCode().
+			WithCustomCurrency().
 			Only(ctx)
 
 		if db.IsNotFound(err) {
@@ -160,6 +162,11 @@ func (r *subscriptionItemRepo) Create(ctx context.Context, input subscription.Cr
 			return def, errors.New("priced subscription item currency must be materialized before persistence")
 		}
 
+		var featureKey *string
+		if feature := input.RateCard.AsMeta().Feature; feature != nil {
+			featureKey = feature.Key
+		}
+
 		cmd := repo.db.SubscriptionItem.Create().
 			SetNillableActiveFromOverrideRelativeToPhaseStart(input.ActiveFromOverrideRelativeToPhaseStart.ISOStringPtrOrNil()).
 			SetNillableActiveToOverrideRelativeToPhaseStart(input.ActiveToOverrideRelativeToPhaseStart.ISOStringPtrOrNil()).
@@ -173,7 +180,7 @@ func (r *subscriptionItemRepo) Create(ctx context.Context, input subscription.Cr
 			SetMetadata(input.RateCard.AsMeta().Metadata).
 			SetName(input.RateCard.AsMeta().Name).
 			SetNillableDescription(input.RateCard.AsMeta().Description).
-			SetNillableFeatureKey(input.RateCard.AsMeta().FeatureKey).
+			SetNillableFeatureKey(featureKey).
 			SetNillableEntitlementID(input.EntitlementID).
 			SetNillableBillingCadence(input.RateCard.GetBillingCadence().ISOStringPtrOrNil()).
 			SetNillableRestartsBillingPeriod(input.BillingBehaviorOverride.RestartBillingPeriod)
@@ -247,4 +254,37 @@ func (r *subscriptionItemRepo) Delete(ctx context.Context, input models.Namespac
 	})
 
 	return err
+}
+
+var _ itemreference.Repository = (*subscriptionItemRepo)(nil)
+
+func NewSubscriptionItemRepo(db *db.Client) *subscriptionItemRepo {
+	return &subscriptionItemRepo{
+		db: db,
+	}
+}
+
+func (r *subscriptionItemRepo) IsValidItemReference(ctx context.Context, input itemreference.ValidateInput) (bool, error) {
+	return entutils.TransactingRepo(ctx, r, func(ctx context.Context, repo *subscriptionItemRepo) (bool, error) {
+		valid, err := repo.db.SubscriptionItem.Query().
+			Where(
+				dbsubscriptionitem.ID(input.ItemID),
+				dbsubscriptionitem.Namespace(input.Namespace),
+				dbsubscriptionitem.HasPhaseWith(
+					dbsubscriptionphase.ID(input.PhaseID),
+					dbsubscriptionphase.Namespace(input.Namespace),
+					dbsubscriptionphase.SubscriptionID(input.SubscriptionID),
+					dbsubscriptionphase.HasSubscriptionWith(
+						dbsubscription.ID(input.SubscriptionID),
+						dbsubscription.Namespace(input.Namespace),
+					),
+				),
+			).
+			Exist(ctx)
+		if err != nil {
+			return false, fmt.Errorf("query subscription item reference: %w", err)
+		}
+
+		return valid, nil
+	})
 }

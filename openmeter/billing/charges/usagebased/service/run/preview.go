@@ -13,8 +13,8 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	usagebasedrating "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/rating"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/models"
 )
@@ -22,7 +22,7 @@ import (
 type BuildCreditThenInvoiceGatheringPreviewRunInput struct {
 	Charge             usagebased.Charge
 	CustomerOverride   billing.CustomerOverrideWithDetails
-	FeatureMeter       feature.FeatureMeter
+	FeatureMeter       billingfeaturemeter.FeatureMeter
 	Type               usagebased.RealizationRunType
 	StoredAtLT         time.Time
 	ServicePeriodTo    time.Time
@@ -102,6 +102,7 @@ func (s *Service) BuildCreditThenInvoiceGatheringPreviewRun(ctx context.Context,
 		return BuildCreditThenInvoiceGatheringPreviewRunResult{}, err
 	}
 
+	recorder := billing.ValidationIssueRecorder{}
 	ratingResult, err := s.rater.GetDetailedRatingForUsage(ctx, usagebasedrating.GetDetailedRatingForUsageInput{
 		Charge:          in.Charge,
 		StoredAtLT:      in.StoredAtLT,
@@ -109,7 +110,7 @@ func (s *Service) BuildCreditThenInvoiceGatheringPreviewRun(ctx context.Context,
 		Customer:        in.CustomerOverride,
 		FeatureMeter:    in.FeatureMeter,
 	})
-	if err != nil {
+	if err := recorder.RecordWarnings(err); err != nil {
 		return BuildCreditThenInvoiceGatheringPreviewRunResult{}, fmt.Errorf("get detailed rating for usage: %w", err)
 	}
 
@@ -133,6 +134,7 @@ func (s *Service) BuildCreditThenInvoiceGatheringPreviewRun(ctx context.Context,
 			InitialType:               in.Type,
 			StoredAtLT:                in.StoredAtLT,
 			ServicePeriodTo:           in.ServicePeriodTo,
+			PriorRunID:                in.Charge.Realizations.PriorRunIDForNextRun(),
 			LineID:                    lo.ToPtr(in.LineID),
 			InvoiceID:                 lo.ToPtr(in.InvoiceID),
 			MeteredQuantity:           ratingResult.Quantity,
@@ -145,5 +147,5 @@ func (s *Service) BuildCreditThenInvoiceGatheringPreviewRun(ctx context.Context,
 	return BuildCreditThenInvoiceGatheringPreviewRunResult{
 		Run:  previewRun,
 		Runs: slices.Concat(in.Charge.Realizations, usagebased.RealizationRuns{previewRun}),
-	}, nil
+	}, recorder.ErrorsOrNil()
 }

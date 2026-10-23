@@ -44,6 +44,7 @@ var (
 	ErrInvoiceWorkflowAppDeleted             = NewValidationError("invoice_workflow_app_deleted", "invoicing workflow app has been deleted")
 	WarnInvoiceWorkflowAppDeleteSkipped      = NewValidationWarning("invoice_workflow_app_delete_skipped", "external invoice deletion was skipped because the invoicing workflow app has been deleted")
 
+	ErrInvoiceLineFeatureNotFound                                = NewValidationError("invoice_line_feature_not_found", "invoice line: feature not found")
 	ErrInvoiceLineFeatureHasNoMeters                             = NewValidationError("invoice_line_feature_has_no_meters", "usage based invoice line: feature has no meters")
 	ErrInvoiceLineVolumeSplitNotSupported                        = NewValidationError("invoice_line_graduated_split_not_supported", "graduated tiered pricing is not supported for split periods")
 	ErrInvoiceLineNoTiers                                        = NewValidationError("invoice_line_no_tiers", "usage based invoice line: no tiers found")
@@ -57,6 +58,8 @@ var (
 	ErrInvoiceCreateUBPLinePeriodIsEmpty                         = NewValidationError("invoice_create_ubp_line_period_is_empty", "creating an usage based line: truncated period is empty")
 	ErrInvoiceLineCurrencyMismatch                               = NewValidationError("invoice_line_currency_mismatch", "invoice line currency mismatch")
 	ErrInvoiceLineSnapshotFailed                                 = NewValidationError("invoice_line_snapshot_failed", "invoice line snapshot failed")
+	WarnNegativeMeteredQuantityClamped                           = NewValidationWarning("negative_metered_quantity_clamped", "negative metered quantity was clamped to zero for rating")
+	WarnNegativePreLinePeriodMeteredQuantityClamped              = NewValidationWarning("negative_pre_line_period_metered_quantity_clamped", "negative pre-line period metered quantity was clamped to zero for rating")
 
 	ErrInvoiceDiscountInvalidLineReference                  = NewValidationError("invoice_discount_invalid_line_reference", "invoice discount references non-existing line")
 	ErrInvoiceDiscountNoWildcardDiscountOnGatheringInvoices = NewValidationError("invoice_discount_no_wildcard_discount_on_gathering_invoices", "wildcard discount on gathering invoices is not allowed")
@@ -70,10 +73,17 @@ var (
 	ErrInvoiceLineTaxConfigEditNotSupported        = NewValidationError("invoice_line_tax_config_edit_not_supported", "tax config editing is not supported for charge-managed invoice lines, please delete the charge instead")
 	ErrInvoiceLineZeroAmountDeleteInstead          = NewValidationError("invoice_line_zero_amount_delete_instead", "invoice line amount cannot be updated to zero, please delete the line instead")
 	ErrInvoiceLineZeroAmountCreate                 = NewValidationError("invoice_line_zero_amount_create", "creating zero amount flat fee invoice lines is not supported")
+	ErrInvoiceLineUnsupportedSettlementMode        = NewValidationError("invoice_line_unsupported_settlement_mode", "invoice line settlement mode is not supported")
 )
 
 const (
 	ImmutableInvoiceHandlingNotSupportedErrorCode = "immutable_invoice_handling_not_supported"
+
+	AttributeKeyInvoiceStatus  = "invoice_status"
+	AttributeKeyInvoiceTrigger = "invoice_trigger"
+	AttributeKeyLineID         = "line_id"
+	AttributeKeyOperation      = "operation"
+	AttributeKeySettlementMode = "settlement_mode"
 )
 
 var _ error = (*NotFoundError)(nil)
@@ -129,6 +139,9 @@ func EncodeValidationIssues[T error](err T) map[string]interface{} {
 
 var _ error = (*ValidationError)(nil)
 
+// ValidationError classifies otherwise untyped or aggregate validation failures.
+// Use ValidationIssue directly for named errors surfaced at API boundaries instead of nesting them in ValidationError.
+// TODO[later]: use models.ValidationError instead
 type ValidationError genericError
 
 func (e ValidationError) Error() string {
@@ -162,19 +175,4 @@ type AppError struct {
 
 func (e AppError) Error() string {
 	return fmt.Sprintf("app %s type with id %s in namespace %s: %s", e.AppType, e.AppID.ID, e.AppID.Namespace, e.Err.Error())
-}
-
-// ErrSnapshotInvalidDatabaseState is returned when the database state is invalid for snapshotting the line quantity.
-// This can happen if the feature or meter is not found. In such cases we should transition the invoice to
-// draft.invalid state.
-type ErrSnapshotInvalidDatabaseState struct {
-	Err error
-}
-
-func (e ErrSnapshotInvalidDatabaseState) Error() string {
-	return fmt.Sprintf("snapshotting line quantity: %s", e.Err.Error())
-}
-
-func (e ErrSnapshotInvalidDatabaseState) Unwrap() error {
-	return e.Err
 }

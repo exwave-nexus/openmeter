@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/flatfee"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	"github.com/openmeterio/openmeter/openmeter/subscription/validators/itemreference"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/framework/transaction"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -29,6 +31,7 @@ func (s *service) AdvanceCharge(ctx context.Context, input flatfee.AdvanceCharge
 		if err != nil {
 			return nil, err
 		}
+
 		if !canAdvance {
 			return nil, nil
 		}
@@ -37,6 +40,7 @@ func (s *service) AdvanceCharge(ctx context.Context, input flatfee.AdvanceCharge
 		if err != nil {
 			return nil, err
 		}
+
 		canAdvance, err = stateMachine.CanFire(ctx, meta.TriggerNext)
 		if err != nil {
 			return nil, fmt.Errorf("check next transition: %w", err)
@@ -69,6 +73,14 @@ func (s *service) TriggerPatch(ctx context.Context, chargeID meta.ChargeID, patc
 	var result meta.TriggerPatchResult[flatfee.Charge]
 
 	charge, err := s.withLockedCharge(ctx, chargeID, func(ctx context.Context, charge flatfee.Charge) (*flatfee.Charge, error) {
+		if patch.Op() == meta.PatchTypeUpdateSubscriptionReference {
+			if err := s.updateSubscriptionReference(ctx, &charge, patch); err != nil {
+				return nil, err
+			}
+
+			return &charge, nil
+		}
+
 		if patch.Op() == meta.PatchTypeClearOverride && !charge.Intent.HasOverrideLayer() {
 			// Clear is retry-safe: with no override row the effective intent is
 			// already the base, so state-machine activation would add no value.
@@ -104,6 +116,7 @@ func (s *service) TriggerPatch(ctx context.Context, chargeID meta.ChargeID, patc
 		if err != nil {
 			return nil, fmt.Errorf("failed to advance charge: %w", err)
 		}
+
 		canAdvance, err := stateMachine.CanFire(ctx, meta.TriggerNext)
 		if err != nil {
 			return nil, fmt.Errorf("check next transition: %w", err)
@@ -159,6 +172,63 @@ func applyBaseIntentPatchForOverriddenCharge(charge flatfee.Charge, patch meta.P
 	}
 
 	return nil, nil
+}
+
+func (s *service) updateSubscriptionReference(ctx context.Context, charge *flatfee.Charge, patch meta.Patch) error {
+	subscriptionReferencePatch, ok := patch.(meta.PatchUpdateSubscriptionReference)
+	if !ok {
+		return fmt.Errorf("expected %s patch, got %T", meta.PatchTypeUpdateSubscriptionReference, patch)
+	}
+
+	current := charge.Intent.GetSubscription()
+	if current == nil {
+		return models.NewGenericPreConditionFailedError(fmt.Errorf("charge[%s] is not associated with a subscription", charge.ID))
+	}
+
+	updated, err := subscriptionReferencePatch.Apply(*current)
+	if err != nil {
+		return fmt.Errorf("patch: %w", err)
+	}
+
+	if err := s.itemReferenceValidator.ValidateItemReference(ctx, itemreference.ValidateInput{
+		Namespace:      charge.Namespace,
+		SubscriptionID: updated.SubscriptionID,
+		PhaseID:        updated.PhaseID,
+		ItemID:         updated.ItemID,
+	}); err != nil {
+		return fmt.Errorf("validate subscription reference: %w", err)
+	}
+
+	if err := s.adapter.UpdateSubscriptionReference(ctx, meta.UpdateSubscriptionReferenceInput{
+		ChargeID: charge.GetChargeID(),
+		Target:   updated,
+	}); err != nil {
+		return fmt.Errorf("update subscription reference: %w", err)
+	}
+
+	lineReferenceInput := billing.SetLineSubscriptionReferenceByChargeIDInput{
+		Namespace:      charge.Namespace,
+		ChargeID:       charge.ID,
+		SubscriptionID: updated.SubscriptionID,
+		PhaseID:        updated.PhaseID,
+		ItemID:         updated.ItemID,
+	}
+
+	if err := s.lineSubscriptionReferenceService.SetGatheringLineSubscriptionReferenceByChargeID(ctx, lineReferenceInput); err != nil {
+		return fmt.Errorf("set gathering line subscription reference: %w", err)
+	}
+
+	if err := s.lineSubscriptionReferenceService.SetStandardLineSubscriptionReferenceByChargeID(ctx, lineReferenceInput); err != nil {
+		return fmt.Errorf("set standard line subscription reference: %w", err)
+	}
+
+	if *current != updated {
+		baseIntent := charge.Intent.GetBaseIntent()
+		baseIntent.Subscription = &updated
+		charge.Intent = flatfee.NewOverridableIntent(baseIntent, charge.Intent.GetOverrideLayerMutableFields())
+	}
+
+	return nil
 }
 
 func mutateBaseIntentPeriodForOverriddenCharge(charge *flatfee.Charge, patch periodPatch) error {

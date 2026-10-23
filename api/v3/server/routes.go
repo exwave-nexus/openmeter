@@ -3,11 +3,17 @@ package server
 import (
 	"net/http"
 
+	"github.com/samber/lo"
+
 	api "github.com/openmeterio/openmeter/api/v3"
 	"github.com/openmeterio/openmeter/api/v3/handlers/billinginvoices"
 	currencieshandler "github.com/openmeterio/openmeter/api/v3/handlers/currencies"
 	chargeshandler "github.com/openmeterio/openmeter/api/v3/handlers/customers/charges"
 	customerscreditshandler "github.com/openmeterio/openmeter/api/v3/handlers/customers/credits"
+	customersentitlementhandler "github.com/openmeterio/openmeter/api/v3/handlers/customers/entitlementaccess"
+	customersentitlementshandler "github.com/openmeterio/openmeter/api/v3/handlers/customers/entitlements"
+	entitlementshandler "github.com/openmeterio/openmeter/api/v3/handlers/entitlements"
+	grantshandler "github.com/openmeterio/openmeter/api/v3/handlers/grants"
 	planhandler "github.com/openmeterio/openmeter/api/v3/handlers/plans"
 	planaddonshandler "github.com/openmeterio/openmeter/api/v3/handlers/plans/planaddons"
 	subscriptionhandler "github.com/openmeterio/openmeter/api/v3/handlers/subscriptions"
@@ -87,6 +93,112 @@ func (s *Server) ListCustomerEntitlementAccess(w http.ResponseWriter, r *http.Re
 	s.customersEntitlementHandler.ListCustomerEntitlementAccess().With(customerId).ServeHTTP(w, r)
 }
 
+func (s *Server) GetCustomerEntitlementAccess(w http.ResponseWriter, r *http.Request, customerId api.ULID, featureKey api.ResourceKey) {
+	s.customersEntitlementHandler.GetCustomerEntitlementAccess().With(customersentitlementhandler.GetCustomerEntitlementAccessParams{
+		CustomerID: customerId,
+		FeatureKey: featureKey,
+	}).ServeHTTP(w, r)
+}
+
+func (s *Server) GetCustomerEntitlementValueByFeatureKey(w http.ResponseWriter, r *http.Request, customerId api.ULID, featureKey api.ResourceKey, params api.GetCustomerEntitlementValueByFeatureKeyParams) {
+	s.customersEntitlementHandler.GetCustomerEntitlementValueByFeatureKey().With(customersentitlementhandler.GetCustomerEntitlementValueByFeatureKeyParams{
+		CustomerID: customerId,
+		FeatureKey: featureKey,
+		Expand:     lo.FromPtr(params.Expand),
+		At:         params.At,
+	}).ServeHTTP(w, r)
+}
+
+// Customers Entitlements
+
+func (s *Server) CreateCustomerEntitlement(w http.ResponseWriter, r *http.Request, customerId api.ULID) {
+	s.customersEntitlementsHandler.CreateCustomerEntitlement().With(customersentitlementshandler.CreateCustomerEntitlementParams{
+		CustomerID: customerId,
+	}).ServeHTTP(w, r)
+}
+
+func (s *Server) GetCustomerEntitlement(w http.ResponseWriter, r *http.Request, customerId api.ULID, entitlementId api.ULID) {
+	s.customersEntitlementsHandler.GetCustomerEntitlement().With(customersentitlementshandler.GetCustomerEntitlementParams{
+		CustomerID:    customerId,
+		EntitlementID: entitlementId,
+	}).ServeHTTP(w, r)
+}
+
+func (s *Server) ListCustomerEntitlements(w http.ResponseWriter, r *http.Request, customerId api.ULID, params api.ListCustomerEntitlementsParams) {
+	s.customersEntitlementsHandler.ListCustomerEntitlements().With(customersentitlementshandler.ListCustomerEntitlementsParams{
+		CustomerID: customerId,
+		Params:     params,
+	}).ServeHTTP(w, r)
+}
+
+func (s *Server) ResetCustomerEntitlementUsage(w http.ResponseWriter, r *http.Request, customerId api.ULID, entitlementId api.ULID) {
+	s.customersEntitlementsHandler.ResetCustomerEntitlementUsage().With(customersentitlementshandler.ResetCustomerEntitlementUsageParams{
+		CustomerID:    customerId,
+		EntitlementID: entitlementId,
+	}).ServeHTTP(w, r)
+}
+
+func (s *Server) DeleteCustomerEntitlement(w http.ResponseWriter, r *http.Request, customerId api.ULID, entitlementId api.ULID) {
+	s.customersEntitlementsHandler.DeleteCustomerEntitlement().With(customersentitlementshandler.DeleteCustomerEntitlementParams{
+		CustomerID:    customerId,
+		EntitlementID: entitlementId,
+	}).ServeHTTP(w, r)
+}
+
+func (s *Server) OverrideCustomerEntitlement(w http.ResponseWriter, r *http.Request, customerId api.ULID, entitlementId api.ULID) {
+	s.customersEntitlementsHandler.OverrideCustomerEntitlement().With(customersentitlementshandler.OverrideCustomerEntitlementParams{
+		CustomerID:    customerId,
+		EntitlementID: entitlementId,
+	}).ServeHTTP(w, r)
+}
+
+func (s *Server) ListCustomerEntitlementGrants(w http.ResponseWriter, r *http.Request, customerId api.ULID, entitlementId api.ULID, params api.ListCustomerEntitlementGrantsParams) {
+	s.customersEntitlementsHandler.ListCustomerEntitlementGrants().With(customersentitlementshandler.ListCustomerEntitlementGrantsParams{
+		CustomerID:    customerId,
+		EntitlementID: entitlementId,
+		Params:        params,
+	}).ServeHTTP(w, r)
+}
+
+func (s *Server) CreateCustomerEntitlementGrant(w http.ResponseWriter, r *http.Request, customerId api.ULID, entitlementId api.ULID) {
+	s.customersEntitlementsHandler.CreateCustomerEntitlementGrant().With(customersentitlementshandler.CreateCustomerEntitlementGrantParams{
+		CustomerID:    customerId,
+		EntitlementID: entitlementId,
+	}).ServeHTTP(w, r)
+}
+
+// Customers Entitlements
+
+func (s *Server) GetCustomerEntitlementHistory(w http.ResponseWriter, r *http.Request, customerId api.ULID, entitlementId api.ULID, params api.GetCustomerEntitlementHistoryParams) {
+	s.customersEntitlementsHandler.GetCustomerEntitlementHistory().With(customersentitlementshandler.GetCustomerEntitlementHistoryParams{
+		CustomerID:    customerId,
+		EntitlementID: entitlementId,
+		Params:        params,
+	}).ServeHTTP(w, r)
+}
+
+func (s *Server) GetCustomerEntitlementValue(w http.ResponseWriter, r *http.Request, customerId api.ULID, entitlementId api.ULID, params api.GetCustomerEntitlementValueParams) {
+	s.customersEntitlementHandler.GetCustomerEntitlementValue().With(customersentitlementhandler.GetCustomerEntitlementValueParams{
+		CustomerID:    customerId,
+		EntitlementID: entitlementId,
+		Expand:        lo.FromPtr(params.Expand),
+		At:            params.At,
+	}).ServeHTTP(w, r)
+}
+
+// Grants
+
+func (s *Server) ListGrants(w http.ResponseWriter, r *http.Request, params api.ListGrantsParams) {
+	s.grantsHandler.ListGrants().With(params).ServeHTTP(w, r)
+}
+
+func (s *Server) VoidGrant(w http.ResponseWriter, r *http.Request, grantId api.ULID, params api.VoidGrantParams) {
+	s.grantsHandler.VoidGrant().With(grantshandler.VoidGrantParams{
+		GrantID: grantId,
+		Params:  params,
+	}).ServeHTTP(w, r)
+}
+
 // Subscriptions
 
 func (s *Server) CreateSubscription(w http.ResponseWriter, r *http.Request) {
@@ -113,12 +225,32 @@ func (s *Server) UnscheduleCancelation(w http.ResponseWriter, r *http.Request, s
 	s.subscriptionsHandler.UnscheduleCancelation().With(subscriptionId).ServeHTTP(w, r)
 }
 
+func (s *Server) UnscheduleSubscription(w http.ResponseWriter, r *http.Request, subscriptionId api.ULID) {
+	s.subscriptionsHandler.UnscheduleSubscription().With(subscriptionId).ServeHTTP(w, r)
+}
+
+func (s *Server) RestoreSubscription(w http.ResponseWriter, r *http.Request, subscriptionId api.ULID) {
+	s.subscriptionsHandler.RestoreSubscription().With(subscriptionId).ServeHTTP(w, r)
+}
+
 func (s *Server) ChangeSubscription(w http.ResponseWriter, r *http.Request, subscriptionId api.ULID) {
 	s.subscriptionsHandler.ChangeSubscription().
 		Chain(featuregate.NewMiddleware[subscriptionhandler.ChangeSubscriptionRequest, subscriptionhandler.ChangeSubscriptionResponse](
 			s.NamespaceDecoder.GetNamespace,
 			s.FeatureGate,
 		)).With(subscriptionId).ServeHTTP(w, r)
+}
+
+func (s *Server) MigrateSubscription(w http.ResponseWriter, r *http.Request, subscriptionId api.ULID) {
+	s.subscriptionsHandler.MigrateSubscription().
+		Chain(featuregate.NewMiddleware[subscriptionhandler.MigrateSubscriptionRequest, subscriptionhandler.MigrateSubscriptionResponse](
+			s.NamespaceDecoder.GetNamespace,
+			s.FeatureGate,
+		)).With(subscriptionId).ServeHTTP(w, r)
+}
+
+func (s *Server) EditSubscription(w http.ResponseWriter, r *http.Request, subscriptionId api.ULID) {
+	s.subscriptionsHandler.EditSubscription().With(subscriptionId).ServeHTTP(w, r)
 }
 
 // Subscription Addons
@@ -140,6 +272,13 @@ func (s *Server) GetSubscriptionAddon(w http.ResponseWriter, r *http.Request, su
 	}).ServeHTTP(w, r)
 }
 
+func (s *Server) UpdateSubscriptionAddon(w http.ResponseWriter, r *http.Request, subscriptionId api.ULID, subscriptionAddonId api.ULID) {
+	s.subscriptionAddonsHandler.UpdateSubscriptionAddon().With(subscriptionaddonshandler.UpdateSubscriptionAddonParams{
+		SubscriptionID:      subscriptionId,
+		SubscriptionAddonID: subscriptionAddonId,
+	}).ServeHTTP(w, r)
+}
+
 // Apps
 
 func (s *Server) ListApps(w http.ResponseWriter, r *http.Request, params api.ListAppsParams) {
@@ -156,6 +295,10 @@ func (s *Server) UninstallApp(w http.ResponseWriter, r *http.Request, appId api.
 
 func (s *Server) UpdateApp(w http.ResponseWriter, r *http.Request, appId api.ULID) {
 	s.appsHandler.UpdateApp().With(appId).ServeHTTP(w, r)
+}
+
+func (s *Server) ExecuteAppAction(w http.ResponseWriter, r *http.Request, appId api.ULID) {
+	s.appsHandler.ExecuteAppAction().With(appId).ServeHTTP(w, r)
 }
 
 func (s *Server) ListAppCatalog(w http.ResponseWriter, r *http.Request, params api.ListAppCatalogParams) {
@@ -541,6 +684,15 @@ func (s *Server) ListCreditTransactions(w http.ResponseWriter, r *http.Request, 
 
 // Charges
 
+func (s *Server) ListCharges(w http.ResponseWriter, r *http.Request, params api.ListChargesParams) {
+	if s.chargesHandler == nil {
+		unimplemented.ListCharges(w, r, params)
+		return
+	}
+
+	s.chargesHandler.ListCharges().With(params).ServeHTTP(w, r)
+}
+
 func (s *Server) ListCustomerCharges(w http.ResponseWriter, r *http.Request, customerId api.ULID, params api.ListCustomerChargesParams) {
 	if s.chargesHandler == nil {
 		unimplemented.ListCustomerCharges(w, r, customerId, params)
@@ -574,8 +726,82 @@ func (s *Server) UpdateOrganizationDefaultTaxCodes(w http.ResponseWriter, r *htt
 	s.taxcodesHandler.UpsertOrganizationDefaultTaxCodes().ServeHTTP(w, r)
 }
 
+// Entitlements
+
+func (s *Server) ListEntitlements(w http.ResponseWriter, r *http.Request, params api.ListEntitlementsParams) {
+	s.entitlementsHandler.ListEntitlements().With(params).ServeHTTP(w, r)
+}
+
+func (s *Server) GetEntitlement(w http.ResponseWriter, r *http.Request, entitlementId api.ULID) {
+	s.entitlementsHandler.GetEntitlement().With(entitlementshandler.GetEntitlementParams{
+		EntitlementID: entitlementId,
+	}).ServeHTTP(w, r)
+}
+
 // EntitlementAccess
 
 func (s *Server) QueryEntitlementAccess(w http.ResponseWriter, r *http.Request, params api.QueryEntitlementAccessParams) {
 	s.entitlementAccessHandler.QueryEntitlementAccess().With(params).ServeHTTP(w, r)
+}
+
+// Notification Channels
+
+func (s *Server) ListNotificationChannels(w http.ResponseWriter, r *http.Request, params api.ListNotificationChannelsParams) {
+	s.notificationChannelsHandler.ListNotificationChannels().With(params).ServeHTTP(w, r)
+}
+
+func (s *Server) CreateNotificationChannel(w http.ResponseWriter, r *http.Request) {
+	s.notificationChannelsHandler.CreateNotificationChannel().ServeHTTP(w, r)
+}
+
+func (s *Server) GetNotificationChannel(w http.ResponseWriter, r *http.Request, notificationChannelId api.ULID) {
+	s.notificationChannelsHandler.GetNotificationChannel().With(notificationChannelId).ServeHTTP(w, r)
+}
+
+func (s *Server) UpdateNotificationChannel(w http.ResponseWriter, r *http.Request, notificationChannelId api.ULID) {
+	s.notificationChannelsHandler.UpdateNotificationChannel().With(notificationChannelId).ServeHTTP(w, r)
+}
+
+func (s *Server) DeleteNotificationChannel(w http.ResponseWriter, r *http.Request, notificationChannelId api.ULID) {
+	s.notificationChannelsHandler.DeleteNotificationChannel().With(notificationChannelId).ServeHTTP(w, r)
+}
+
+// Notification rules
+
+func (s *Server) ListNotificationRules(w http.ResponseWriter, r *http.Request, params api.ListNotificationRulesParams) {
+	s.notificationRulesHandler.ListNotificationRules().With(params).ServeHTTP(w, r)
+}
+
+func (s *Server) CreateNotificationRule(w http.ResponseWriter, r *http.Request) {
+	s.notificationRulesHandler.CreateNotificationRule().ServeHTTP(w, r)
+}
+
+func (s *Server) GetNotificationRule(w http.ResponseWriter, r *http.Request, notificationRuleId api.ULID) {
+	s.notificationRulesHandler.GetNotificationRule().With(notificationRuleId).ServeHTTP(w, r)
+}
+
+func (s *Server) UpdateNotificationRule(w http.ResponseWriter, r *http.Request, notificationRuleId api.ULID) {
+	s.notificationRulesHandler.UpdateNotificationRule().With(notificationRuleId).ServeHTTP(w, r)
+}
+
+func (s *Server) DeleteNotificationRule(w http.ResponseWriter, r *http.Request, notificationRuleId api.ULID) {
+	s.notificationRulesHandler.DeleteNotificationRule().With(notificationRuleId).ServeHTTP(w, r)
+}
+
+func (s *Server) TestNotificationRule(w http.ResponseWriter, r *http.Request, notificationRuleId api.ULID) {
+	s.notificationRulesHandler.TestNotificationRule().With(notificationRuleId).ServeHTTP(w, r)
+}
+
+// Notification events
+
+func (s *Server) ListNotificationEvents(w http.ResponseWriter, r *http.Request, params api.ListNotificationEventsParams) {
+	s.notificationEventsHandler.ListNotificationEvents().With(params).ServeHTTP(w, r)
+}
+
+func (s *Server) GetNotificationEvent(w http.ResponseWriter, r *http.Request, notificationEventId api.ULID) {
+	s.notificationEventsHandler.GetNotificationEvent().With(notificationEventId).ServeHTTP(w, r)
+}
+
+func (s *Server) ResendNotificationEvent(w http.ResponseWriter, r *http.Request, notificationEventId api.ULID) {
+	s.notificationEventsHandler.ResendNotificationEvent().With(notificationEventId).ServeHTTP(w, r)
 }

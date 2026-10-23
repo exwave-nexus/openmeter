@@ -11,6 +11,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/flatfee"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/creditpurchase"
+	chargedetailedline "github.com/openmeterio/openmeter/openmeter/billing/charges/models/detailedline"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
@@ -73,6 +74,37 @@ func calculateFiatOverageForRun(charge flatfee.Charge, run flatfee.RealizationRu
 		FiatCurrency:          fiatOverage.Currency,
 		FiatOverage:           fiatOverage.Amount,
 		ShouldOmitInvoiceLine: fiatOverage.Amount.IsZero(),
+	}, nil
+}
+
+// resolveFiatOverageForLinePopulation reuses the gross FIAT amount persisted
+// by invoice preparation. This keeps retries from repeating conversion after
+// the durable accounting boundary has been crossed.
+func resolveFiatOverageForLinePopulation(
+	charge flatfee.Charge,
+	run flatfee.RealizationRun,
+	stage standardLinePopulationStage,
+) (calculateFiatOverageForRunResult, error) {
+	if stage != standardLinePopulationStageInvoiceFinalizing || run.AccruedUsage == nil {
+		return calculateFiatOverageForRun(charge, run)
+	}
+
+	costBasisIntent := charge.Intent.GetCostBasisIntent()
+	if costBasisIntent == nil {
+		return calculateFiatOverageForRunResult{}, errors.New("cost basis intent is required for a custom-currency invoice")
+	}
+
+	fiatCurrency, err := costBasisIntent.GetFiatCurrency()
+	if err != nil {
+		return calculateFiatOverageForRunResult{}, err
+	}
+
+	grossFiatAmount := run.AccruedUsage.Totals.Total
+
+	return calculateFiatOverageForRunResult{
+		FiatCurrency:          fiatCurrency,
+		FiatOverage:           grossFiatAmount,
+		ShouldOmitInvoiceLine: grossFiatAmount.IsZero(),
 	}, nil
 }
 
@@ -168,10 +200,11 @@ func populateCustomCurrencyOverageFromRun(
 	charge := input.Charge
 	run := input.Run
 
-	fiatOverage, err := calculateFiatOverageForRun(charge, run)
+	fiatOverage, err := resolveFiatOverageForLinePopulation(charge, run, input.Stage)
 	if err != nil {
 		return fmt.Errorf("custom currency charge[%s] converting overage to fiat: %w", charge.ID, err)
 	}
+
 	if fiatOverage.FiatCurrency == nil {
 		return fmt.Errorf("custom currency charge[%s] does not have an invoiceable fiat overage", charge.ID)
 	}
@@ -188,6 +221,7 @@ func populateCustomCurrencyOverageFromRun(
 	if stdLine.Annotations == nil {
 		stdLine.Annotations = models.Annotations{}
 	}
+
 	stdLine.Annotations[billing.AnnotationKeyReason] = lo.ToPtr(billing.AnnotationValueReasonOverage)
 
 	stdLine.RateCardDiscounts = billing.Discounts{}
@@ -211,6 +245,7 @@ func populateCustomCurrencyOverageFromRun(
 	if stdLine.Name != "" {
 		name = fmt.Sprintf("%s (overage)", stdLine.Name)
 	}
+
 	stdLine.Name = name
 
 	stdLineWithDetails, err := creditpurchase.WithDetailedLines(creditpurchase.WithDetailedLinesInput{
@@ -225,18 +260,21 @@ func populateCustomCurrencyOverageFromRun(
 	if err != nil {
 		return fmt.Errorf("populating custom currency overage line: %w", err)
 	}
+
 	*stdLine = *stdLineWithDetails
 
 	fiatCreditsApplied, err := run.FiatOverageCreditRealizations.AsCreditsApplied()
 	if err != nil {
 		return fmt.Errorf("mapping fiat overage credit realizations: %w", err)
 	}
+
 	stdLine.CreditsApplied = fiatCreditsApplied
 
 	detailedLines, err := stdLine.DetailedLines.WithCreditsApplied(fiatCreditsApplied, fiatOverage.FiatCurrency)
 	if err != nil {
 		return fmt.Errorf("applying fiat overage credits to detailed lines: %w", err)
 	}
+
 	stdLine.DetailedLines = stdLine.DetailedLinesWithIDReuse(detailedLines)
 	stdLine.Totals = stdLine.DetailedLines.SumTotals().RoundToPrecision(fiatOverage.FiatCurrency)
 
@@ -267,6 +305,7 @@ func mapFlatFeeDetailedLines(stdLine *billing.StandardLine, run flatfee.Realizat
 				Base:      base,
 				InvoiceID: stdLine.InvoiceID,
 			},
+			AmountDiscounts: chargedetailedline.MapAmountDiscountsToBilling(line.AmountDiscounts),
 		}
 	}), nil
 }

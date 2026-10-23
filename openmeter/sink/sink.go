@@ -288,6 +288,7 @@ func (s *Sink) flush(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to pause partitions before flush: %w", err)
 	}
+
 	defer func() {
 		err = s.resume()
 		if err != nil {
@@ -303,27 +304,17 @@ func (s *Sink) flush(ctx context.Context) error {
 	ctx, flushSpan := s.config.Tracer.Start(ctx, "flush", trace.WithSpanKind(trace.SpanKindConsumer), trace.WithAttributes(attribute.Int("size", len(messages))))
 	defer flushSpan.End()
 
-	// Dedupe messages so if we have multiple messages in the same batch
-	dedupedMessages := dedupeSinkMessages(messages)
+	dedupeCtx, dedupeSpan := s.config.Tracer.Start(ctx, "deduplicate-and-resolve-meters")
+	dedupedMessages, err := s.deduplicateAndResolveMeters(dedupeCtx, messages)
+	if err != nil {
+		dedupeSpan.RecordError(err)
+		dedupeSpan.SetStatus(codes.Error, "deduplication and meter resolution failure")
+		dedupeSpan.End()
 
-	// If deduplicator is set, let's reexecute the deduplication to decrease the number of messages double persisted
-	if s.config.Deduplicator != nil && len(dedupedMessages) > 0 {
-		dedupeResults, err := s.config.Deduplicator.CheckUniqueBatch(ctx, lo.Map(dedupedMessages, func(message sinkmodels.SinkMessage, _ int) dedupe.Item {
-			return message.GetDedupeItem()
-		}))
-		if err != nil {
-			return fmt.Errorf("failed to check uniqueness of kafka messages: %w", err)
-		}
-
-		updatedDedupedMessages := make([]sinkmodels.SinkMessage, 0, len(dedupedMessages))
-		for _, message := range dedupedMessages {
-			if _, ok := dedupeResults.UniqueItems[message.GetDedupeItem()]; ok {
-				updatedDedupedMessages = append(updatedDedupedMessages, message)
-			}
-		}
-
-		dedupedMessages = updatedDedupedMessages
+		return err
 	}
+
+	dedupeSpan.End()
 
 	// 1. Persist to storage
 	if len(dedupedMessages) > 0 {
@@ -384,6 +375,7 @@ func (s *Sink) flush(ctx context.Context) error {
 	if err != nil {
 		flushSpan.SetStatus(codes.Error, "failed to report flush metrics")
 		flushSpan.RecordError(err)
+
 		return fmt.Errorf("failed to report flush metrics: %w", err)
 	}
 
@@ -443,7 +435,8 @@ func (s *Sink) persistToStorage(ctx context.Context, messages []sinkmodels.SinkM
 		case sinkmodels.DROP:
 			// Skip event from batch
 			if s.config.LogDroppedEvents {
-				logger.WarnContext(ctx, "event dropped",
+				logger.WarnContext(
+					ctx, "event dropped",
 					slog.String("namespace", message.Namespace),
 					slog.String("event", string(message.KafkaMessage.Value)),
 					slog.Any("error", message.Status.DropError),
@@ -455,6 +448,7 @@ func (s *Sink) persistToStorage(ctx context.Context, messages []sinkmodels.SinkM
 		default:
 			return fmt.Errorf("unknown state type: %s", message.Status.State.String())
 		}
+
 		batch = append(batch, message)
 	}
 
@@ -467,8 +461,10 @@ func (s *Sink) persistToStorage(ctx context.Context, messages []sinkmodels.SinkM
 			// Returning and error means we will retry the whole batch again
 			storageSpan.SetStatus(codes.Error, "failure")
 			storageSpan.RecordError(err)
+
 			return fmt.Errorf("failed to sink to storage: %s", err)
 		}
+
 		logger.Debug("succeeded to sink to storage", "buffer size", len(messages))
 	}
 
@@ -496,9 +492,9 @@ func (s *Sink) dedupeSet(ctx context.Context, messages []sinkmodels.SinkMessage)
 			// Let's not insert already dropped messages into the deduplicator as this signals
 			// that we had a problem validating the message, we could redo any validation as needed
 			// later but if any error was transient let's retry the message if it's sent again.
-
 			if s.config.LogDroppedEvents {
-				logger.WarnContext(ctx, "event dropped",
+				logger.WarnContext(
+					ctx, "event dropped",
 					slog.String("namespace", message.Namespace),
 					slog.String("event", string(message.KafkaMessage.Value)),
 					slog.Any("error", message.Status.DropError),
@@ -526,7 +522,8 @@ func (s *Sink) dedupeSet(ctx context.Context, messages []sinkmodels.SinkMessage)
 			}
 
 			if len(existingItems) > 0 {
-				logger.ErrorContext(ctx, "dedupe: some items already existed in redis",
+				logger.ErrorContext(
+					ctx, "dedupe: some items already existed in redis",
 					"items", lo.Map(existingItems, func(item dedupe.Item, _ int) string {
 						return item.Key()
 					}),
@@ -546,10 +543,13 @@ func (s *Sink) dedupeSet(ctx context.Context, messages []sinkmodels.SinkMessage)
 		dedupeSet.SetStatus(codes.Error, "dedupe set failure")
 		dedupeSet.RecordError(err)
 		dedupeSet.End()
+
 		return fmt.Errorf("failed to sink to redis: %s", err)
 	}
+
 	dedupeSet.End()
 	logger.Debug("succeeded to sink to redis", "buffer size", len(messages))
+
 	return nil
 }
 
@@ -666,6 +666,7 @@ func (s *Sink) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to start flush event handler: %w", err)
 		}
 	}
+
 	logger.Info("starting sink")
 
 	// Fetch namespaces and meters and subscribe to them
@@ -707,6 +708,7 @@ func (s *Sink) Run(ctx context.Context) error {
 			if err := s.flush(ctx); err != nil {
 				return fmt.Errorf("failed to flush: %w", err)
 			}
+
 			continue
 
 		default:
@@ -728,7 +730,8 @@ func (s *Sink) Run(ctx context.Context) error {
 
 				s.buffer.Add(*sinkMessage)
 
-				logger.DebugContext(ctx, "event added to buffer",
+				logger.DebugContext(
+					ctx, "event added to buffer",
 					"partition", e.TopicPartition.Partition,
 					"offset", e.TopicPartition.Offset,
 					"event", sinkMessage.Serialized,
@@ -786,6 +789,7 @@ func (s *Sink) Run(ctx context.Context) error {
 	}
 
 	logger.Info("closing sink")
+
 	return s.Close()
 }
 
@@ -795,10 +799,12 @@ func (s *Sink) pause() error {
 	if err != nil {
 		return fmt.Errorf("failed to get assigned partitions: %w", err)
 	}
+
 	err = s.config.Consumer.Pause(assignedPartitions)
 	if err != nil {
 		return fmt.Errorf("failed to pause partitions before flush: %w", err)
 	}
+
 	return nil
 }
 
@@ -807,6 +813,7 @@ func (s *Sink) resume() error {
 	if err != nil {
 		return fmt.Errorf("failed to get assigned partitions: %w", err)
 	}
+
 	err = s.config.Consumer.Resume(assignedPartitions)
 	if err != nil {
 		return fmt.Errorf("failed to resume partitions after flush: %w", err)
@@ -820,18 +827,8 @@ func (s *Sink) rebalance(c *kafka.Consumer, event kafka.Event) error {
 
 	switch e := event.(type) {
 	case kafka.AssignedPartitions:
-		// We resume the consumer after the partitions are assigned to start processing new messages.
-		err := s.resume()
-		if err != nil {
-			return fmt.Errorf("failed to resume after assigned partitions: %w", err)
-		}
-
 		// Logs newly assigned partitions only (doesn't log already assigned partitions)
 		logger.Info("kafka partition assignment", "partitions", prettyPartitions(e.Partitions))
-
-		if len(e.Partitions) == 0 {
-			return nil
-		}
 
 		// Consumer to use the committed offset as a start position,
 		// with a fallback to `auto.offset.reset` if there is no committed offset.
@@ -842,9 +839,15 @@ func (s *Sink) rebalance(c *kafka.Consumer, event kafka.Event) error {
 		}
 
 		// IncrementalAssign adds the specified partitions to the current set of partitions to consume.
-		err = s.config.Consumer.IncrementalAssign(e.Partitions)
+		err := s.config.Consumer.IncrementalAssign(e.Partitions)
 		if err != nil {
 			return fmt.Errorf("failed to assign partitions: %w", err)
+		}
+
+		// Resume the full post-rebalance assignment, including partitions retained during a cooperative rebalance.
+		err = s.resume()
+		if err != nil {
+			return fmt.Errorf("failed to resume after assigned partitions: %w", err)
 		}
 
 	case kafka.RevokedPartitions:
@@ -913,7 +916,8 @@ func (s *Sink) parseMessage(ctx context.Context, e *kafka.Message) (*sinkmodels.
 		if sinkMessage.IngestedAt == nil && header.Key == kafkaingest.HeaderKeyIngestedAt {
 			ingestedAt, err := kafkaingest.FromIngestedAt(string(header.Value))
 			if err != nil {
-				s.config.Logger.ErrorContext(ctx, "failed to parse Kafka message header",
+				s.config.Logger.ErrorContext(
+					ctx, "failed to parse Kafka message header",
 					"kafka.message.header.key", kafkaingest.HeaderKeyIngestedAt,
 					"error", err,
 				)
@@ -926,7 +930,8 @@ func (s *Sink) parseMessage(ctx context.Context, e *kafka.Message) (*sinkmodels.
 	if sinkMessage.Namespace == "" {
 		sinkMessage.Status = sinkmodels.ProcessingStatus{
 			State: sinkmodels.DROP,
-			DropError: fmt.Errorf("failed to get namespace as header (%q) for Kafka Message is missing: %s",
+			DropError: fmt.Errorf(
+				"failed to get namespace as header (%q) for Kafka Message is missing: %s",
 				kafkaingest.HeaderKeyNamespace,
 				e.TopicPartition.String(),
 			),
@@ -959,34 +964,51 @@ func (s *Sink) parseMessage(ctx context.Context, e *kafka.Message) (*sinkmodels.
 
 	sinkMessage.Serialized = &kafkaCloudEvent
 
-	// Dedupe, this stores key in store which means if sink fails and restarts it will not process the same message again
-	// Dedupe is an optional dependency, so we check if it's set
-	if s.config.Deduplicator != nil {
-		isUnique, err := s.config.Deduplicator.CheckUnique(ctx, sinkMessage.GetDedupeItem())
+	return sinkMessage, nil
+}
+
+func (s *Sink) deduplicateAndResolveMeters(ctx context.Context, messages []sinkmodels.SinkMessage) ([]sinkmodels.SinkMessage, error) {
+	// Remove duplicates from the same batch to prevent logic errors
+	candidates := dedupeSinkMessages(messages)
+
+	// Check if the messages are unique using the deduplicator
+	var alreadyProcessed dedupe.ItemSet
+	if s.config.Deduplicator != nil && len(candidates) > 0 {
+		result, err := s.config.Deduplicator.CheckUniqueBatch(ctx, lo.Map(candidates, func(message sinkmodels.SinkMessage, _ int) dedupe.Item {
+			return message.GetDedupeItem()
+		}))
 		if err != nil {
-			// Stop processing, non-recoverable error
-			return sinkMessage, fmt.Errorf("failed to check uniqueness of kafka message: %w", err)
+			return nil, fmt.Errorf("failed to check uniqueness of kafka messages: %w", err)
 		}
 
-		if !isUnique {
-			sinkMessage.Status = sinkmodels.ProcessingStatus{
+		alreadyProcessed = result.AlreadyProcessedItems
+	}
+
+	for i := range messages {
+		message := &messages[i]
+		if message.Status.State != sinkmodels.OK {
+			continue
+		}
+
+		if _, ok := alreadyProcessed[message.GetDedupeItem()]; ok {
+			message.Status = sinkmodels.ProcessingStatus{
 				State:     sinkmodels.DROP,
 				DropError: errors.New("skipping non unique message"),
 			}
 
-			return sinkMessage, nil
+			continue
 		}
+
+		meters, err := s.meterCache.GetAffectedMeters(ctx, message)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get affected meters: %w", err)
+		}
+
+		message.Meters = meters
 	}
 
-	// Let's resolve affected meters
-	affectedMeters, err := s.meterCache.GetAffectedMeters(ctx, sinkMessage)
-	if err != nil {
-		return sinkMessage, fmt.Errorf("failed to get affected meters: %w", err)
-	}
-
-	sinkMessage.Meters = affectedMeters
-
-	return sinkMessage, err
+	// Final deduplication to remove duplicates from the same batch including REDIS checks
+	return dedupeSinkMessages(messages), nil
 }
 
 func (s *Sink) Close() error {

@@ -11,14 +11,22 @@ import (
 	"github.com/alpacahq/alpacadecimal"
 	"github.com/samber/lo"
 
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/externalid"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog/unitconfig"
 	"github.com/openmeterio/openmeter/openmeter/streaming"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/models"
+	"github.com/openmeterio/openmeter/pkg/ref"
 	"github.com/openmeterio/openmeter/pkg/slicesx"
 	"github.com/openmeterio/openmeter/pkg/timeutil"
+)
+
+var (
+	_ billingfeaturemeter.FeatureReferenceGetter = (*StandardLine)(nil)
+	_ billingfeaturemeter.FeatureReferenceOwner  = (*StandardLine)(nil)
 )
 
 // StandardLineBase represents the common fields for an invoice item.
@@ -38,7 +46,7 @@ type StandardLineBase struct {
 	// InvoiceAt is retained only to display the original invoice-at timestamp
 	// when a gathering line is rendered into a standard invoice line. Standard
 	// line business logic must not treat it as the line's scheduling source; use
-	// the line's creation timestamp when a standard-line fallback is needed.
+	// the line's service period end when resolving its collection deadline.
 	InvoiceAt                   time.Time  `json:"invoiceAt"`
 	OverrideCollectionPeriodEnd *time.Time `json:"overrideCollectionPeriodEnd,omitempty"`
 
@@ -67,6 +75,7 @@ func (i StandardLineBase) GetParentID() (string, bool) {
 	if i.ParentLineID == nil {
 		return "", false
 	}
+
 	return *i.ParentLineID, true
 }
 
@@ -91,10 +100,6 @@ func (i StandardLineBase) Validate() error {
 
 	if err := i.Period.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("period: %w", err))
-	}
-
-	if i.InvoiceAt.IsZero() {
-		errs = append(errs, errors.New("invoice at is required"))
 	}
 
 	if i.OverrideCollectionPeriodEnd != nil {
@@ -566,6 +571,7 @@ func (i StandardLine) RemoveMetaForCompare() (*StandardLine, error) {
 
 	out.DetailedLines = nil
 	out.DBState = nil
+
 	return out, nil
 }
 
@@ -579,6 +585,26 @@ func (i StandardLine) GetFeatureKey() string {
 	}
 
 	return i.UsageBased.FeatureKey
+}
+
+// GetFeatureMeterRef returns the line's feature dependency. Metered prices
+// require the associated meter, while flat prices may use a meterless feature.
+func (i StandardLine) GetFeatureMeterRef() *billingfeaturemeter.FeatureMeterRef {
+	if i.UsageBased == nil || i.UsageBased.FeatureKey == "" {
+		return nil
+	}
+
+	return &billingfeaturemeter.FeatureMeterRef{
+		IDOrKey:      ref.IDOrKey{Key: i.UsageBased.FeatureKey},
+		RequireMeter: i.UsageBased.Price != nil && i.UsageBased.Price.Type() != productcatalog.FlatPriceType,
+	}
+}
+
+func (i StandardLine) GetFeatureMeterOwner() billingfeaturemeter.FeatureReferenceIdentity {
+	return billingfeaturemeter.FeatureReferenceIdentity{
+		Kind: billingfeaturemeter.FeatureReferenceKindLines,
+		ID:   i.ID,
+	}
 }
 
 func (i StandardLine) GetPrice() *productcatalog.Price {
@@ -680,6 +706,7 @@ func (i *StandardLine) SaveDBSnapshot() error {
 	}
 
 	i.DBState = cloned
+
 	return nil
 }
 
@@ -716,12 +743,6 @@ func (i StandardLine) Validate() error {
 	}
 
 	if i.UsageBased.Price.Type() != productcatalog.FlatPriceType {
-		if i.InvoiceAt.
-			Truncate(streaming.MinimumWindowSizeDuration).
-			Before(i.Period.Truncate(streaming.MinimumWindowSizeDuration).To) {
-			errs = append(errs, fmt.Errorf("invoice at (%s) must be after period end (%s) for usage based line", i.InvoiceAt, i.Period.Truncate(streaming.MinimumWindowSizeDuration).To))
-		}
-
 		if i.Period.Truncate(streaming.MinimumWindowSizeDuration).IsEmpty() {
 			errs = append(errs, ValidationError{
 				Err: ErrInvoiceCreateUBPLinePeriodIsEmpty,
@@ -740,9 +761,9 @@ func (i StandardLine) Validate() error {
 	return errors.Join(errs...)
 }
 
-// NormalizeValues normalizes the values of the line to ensure they are matching the expected invariants:
+// NormalizeValues normalizes the values of the line for persistence:
 // - Period is truncated to the minimum window size duration
-// - InvoiceAt is truncated to the minimum window size duration
+// - the historical InvoiceAt value is truncated to the minimum window size duration
 // - UsageBased.Price is normalized to have the default inAdvance payment term for flat prices
 func (i StandardLine) WithNormalizedValues() (*StandardLine, error) {
 	out, err := i.Clone()
@@ -983,6 +1004,12 @@ func (c StandardLines) GetByChildUniqueReferenceID(id string) *StandardLine {
 	})
 }
 
+func (c StandardLines) WithoutDeletedLines() StandardLines {
+	return lo.Filter(c, func(line *StandardLine, _ int) bool {
+		return line.DeletedAt == nil
+	})
+}
+
 func ValidateStandardLineIDsMatchExactly(expected StandardLines, actual StandardLines) error {
 	expectedIDs := lo.Map(expected, func(line *StandardLine, _ int) string {
 		return line.ID
@@ -1025,24 +1052,6 @@ func (c *StandardLines) Sort() {
 	for idx := range *c {
 		(*c)[idx].SortDetailedLines()
 	}
-}
-
-func (c StandardLines) GetReferencedFeatureKeys() ([]string, error) {
-	out := make([]string, 0, len(c))
-
-	for _, line := range c {
-		if line.UsageBased == nil {
-			return nil, fmt.Errorf("usage based line is required")
-		}
-
-		if line.UsageBased.FeatureKey == "" {
-			continue
-		}
-
-		out = append(out, line.UsageBased.FeatureKey)
-	}
-
-	return lo.Uniq(out), nil
 }
 
 func (i StandardLines) AsGenericLines() []GenericInvoiceLine {
@@ -1089,7 +1098,7 @@ type UsageBasedLine struct {
 	// UnitConfig is the unit_config snapshot captured at billing time.
 	// It is nil for lines billed before unit_config was introduced, or for lines
 	// on prices that do not support unit conversion.
-	UnitConfig *productcatalog.UnitConfig `json:"unitConfig,omitempty"`
+	UnitConfig *unitconfig.UnitConfig `json:"unitConfig,omitempty"`
 }
 
 func (i UsageBasedLine) Equal(other *UsageBasedLine) bool {

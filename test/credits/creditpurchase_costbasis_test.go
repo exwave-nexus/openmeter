@@ -17,7 +17,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase"
 	creditpurchaseadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase/adapter"
 	creditpurchaseservice "github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase/service"
-	"github.com/openmeterio/openmeter/openmeter/billing/charges/lineage"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	metaadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/meta/adapter"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
@@ -63,14 +63,15 @@ func (s *CreditPurchaseCostBasisSuite) SetupSuite() {
 	})
 	s.Require().NoError(err)
 
-	handler, err := ledgerchargeadapter.NewCreditPurchaseHandler(
-		s.Ledger,
-		s.BalanceQuerier,
-		s.LedgerResolver,
-		s.LedgerAccountService,
-		s.BreakageService,
-		enttx.NewCreator(s.DBClient),
-	)
+	handler, err := ledgerchargeadapter.NewCreditPurchaseHandler(ledgerchargeadapter.CreditPurchaseHandlerConfig{
+		Ledger:             s.Ledger,
+		BalanceQuerier:     s.BalanceQuerier,
+		AccountResolver:    s.LedgerResolver,
+		AccountCatalog:     s.LedgerAccountService,
+		AdvanceService:     s.AdvanceService,
+		BreakageService:    s.BreakageService,
+		TransactionManager: enttx.NewCreator(s.DBClient),
+	})
 	s.Require().NoError(err)
 
 	s.creditPurchaseService, err = creditpurchaseservice.New(creditpurchaseservice.Config{
@@ -139,7 +140,7 @@ func (s *CreditPurchaseCostBasisSuite) TestDynamicInvoiceSettlementLifecycle() {
 		_, err = s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 			Customer: fixture.customerID,
 			Currency: currencyx.FiatCode(fixture.settlementCurrency),
-			Lines:    []billing.GatheringLine{*created.GatheringLineToCreate},
+			Lines:    billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{*created.GatheringLineToCreate}),
 		})
 		s.Require().NoError(err)
 
@@ -304,7 +305,7 @@ func (s *CreditPurchaseCostBasisSuite) TestDynamicInvoiceSettlementResolutionFai
 	_, err = s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: fixture.customerID,
 		Currency: currencyx.FiatCode(fixture.settlementCurrency),
-		Lines:    []billing.GatheringLine{*created.GatheringLineToCreate},
+		Lines:    billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{*created.GatheringLineToCreate}),
 	})
 	s.Require().NoError(err)
 
@@ -575,9 +576,13 @@ func (s *CreditPurchaseCostBasisSuite) mustAccountBalance(account ledger.Account
 // TODO: Use the production lineage service once advance lineage supports the
 // full identity of custom currencies instead of rejecting them.
 type creditPurchaseCostBasisLineage struct {
-	lineage.Service
+	legacylineage.Service
 }
 
-func (creditPurchaseCostBasisLineage) BackfillAdvanceLineageSegments(context.Context, lineage.BackfillAdvanceLineageSegmentsInput) error {
+func (creditPurchaseCostBasisLineage) BackfillAdvanceLineageSegments(context.Context, legacylineage.BackfillAdvanceLineageSegmentsInput) error {
 	return nil
+}
+
+func (creditPurchaseCostBasisLineage) LoadLineagesByCustomer(context.Context, legacylineage.LoadLineagesByCustomerInput) ([]legacylineage.Lineage, error) {
+	return nil, nil
 }

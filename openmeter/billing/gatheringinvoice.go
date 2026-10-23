@@ -10,9 +10,10 @@ import (
 	"github.com/samber/mo"
 
 	"github.com/openmeterio/openmeter/api"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/openmeter/customer"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog/unitconfig"
 	"github.com/openmeterio/openmeter/openmeter/streaming"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/expand"
@@ -22,6 +23,13 @@ import (
 	"github.com/openmeterio/openmeter/pkg/slicesx"
 	"github.com/openmeterio/openmeter/pkg/sortx"
 	timeutil "github.com/openmeterio/openmeter/pkg/timeutil"
+)
+
+var (
+	_ billingfeaturemeter.FeatureReferenceGetter = GatheringLineBase{}
+	_ billingfeaturemeter.FeatureReferenceOwner  = GatheringLineBase{}
+	_ billingfeaturemeter.FeatureReferenceGetter = GatheringLine{}
+	_ billingfeaturemeter.FeatureReferenceOwner  = GatheringLine{}
 )
 
 type GatheringInvoiceBase struct {
@@ -197,6 +205,7 @@ func (g *GatheringInvoice) SetLines(lines []GenericInvoiceLine) error {
 	}
 
 	g.Lines = NewGatheringInvoiceLines(mappedLines)
+
 	return nil
 }
 
@@ -271,29 +280,10 @@ func (l GatheringLines) Validate() error {
 			if err != nil {
 				return fmt.Errorf("line[%s]: %w", l.ID, err)
 			}
+
 			return nil
 		})...,
 	)
-}
-
-// CollectFeatureMeterRefs returns the feature dependencies that must resolve before
-// the lines can be persisted. Metered prices require a meter; flat prices may attach
-// a feature without one.
-func (l GatheringLines) CollectFeatureMeterRefs() []feature.FeatureMeterRef {
-	refs := make([]feature.FeatureMeterRef, 0, len(l))
-
-	for _, line := range l {
-		if line.FeatureKey == "" {
-			continue
-		}
-
-		refs = append(refs, feature.FeatureMeterRef{
-			IDOrKey:      ref.IDOrKey{Key: line.FeatureKey},
-			RequireMeter: line.Price.Type() != productcatalog.FlatPriceType,
-		})
-	}
-
-	return lo.Uniq(refs)
 }
 
 func (l GatheringLines) AsGenericLines() []GenericInvoiceLine {
@@ -372,23 +362,6 @@ func (l *GatheringInvoiceLines) Append(lines ...GatheringLine) {
 	l.Option = mo.Some(append(l.OrEmpty(), lines...))
 }
 
-func (l GatheringInvoiceLines) GetReferencedFeatureKeys() ([]string, error) {
-	if l.IsAbsent() {
-		return nil, nil
-	}
-
-	keys := make([]string, 0, len(l.OrEmpty()))
-	for _, line := range l.OrEmpty() {
-		if line.FeatureKey == "" {
-			continue
-		}
-
-		keys = append(keys, line.FeatureKey)
-	}
-
-	return lo.Uniq(keys), nil
-}
-
 func (l GatheringInvoiceLines) GetByID(id string) (GatheringLine, bool) {
 	if l.IsAbsent() {
 		return GatheringLine{}, false
@@ -448,7 +421,7 @@ type GatheringLineBase struct {
 	// GetUnitConfig) applies it. The charges path snapshots its own config directly on
 	// the standard line instead, so this field is only populated on legacy-path lines.
 	// Nil for lines without a unit_config rate card.
-	UnitConfig *productcatalog.UnitConfig `json:"unitConfig,omitempty"`
+	UnitConfig *unitconfig.UnitConfig `json:"unitConfig,omitempty"`
 
 	TaxConfig         *productcatalog.TaxConfig `json:"taxOverrides,omitempty"`
 	RateCardDiscounts Discounts                 `json:"rateCardDiscounts,omitempty"`
@@ -583,6 +556,26 @@ func (i GatheringLineBase) Clone() (GatheringLineBase, error) {
 
 func (i GatheringLineBase) GetFeatureKey() string {
 	return i.FeatureKey
+}
+
+// GetFeatureMeterRef returns the line's feature dependency. Metered prices require
+// the associated meter, while flat prices may use a meterless feature or no feature.
+func (i GatheringLineBase) GetFeatureMeterRef() *billingfeaturemeter.FeatureMeterRef {
+	if i.FeatureKey == "" {
+		return nil
+	}
+
+	return &billingfeaturemeter.FeatureMeterRef{
+		IDOrKey:      ref.IDOrKey{Key: i.FeatureKey},
+		RequireMeter: i.Price.Type() != productcatalog.FlatPriceType,
+	}
+}
+
+func (i GatheringLineBase) GetFeatureMeterOwner() billingfeaturemeter.FeatureReferenceIdentity {
+	return billingfeaturemeter.FeatureReferenceIdentity{
+		Kind: billingfeaturemeter.FeatureReferenceKindLines,
+		ID:   i.ID,
+	}
 }
 
 func (i GatheringLineBase) GetServicePeriod() timeutil.ClosedPeriod {
@@ -791,6 +784,7 @@ func (g GatheringLine) WithoutDBState() (GatheringLine, error) {
 	}
 
 	clone.DBState = nil
+
 	return clone, nil
 }
 
@@ -902,11 +896,31 @@ func (g GatheringLine) AsNewStandardLine(invoiceID string) (*StandardLine, error
 	return convertedLine, nil
 }
 
+type CreatePendingInvoiceLine struct {
+	GatheringLine
+
+	// BypassFeatureMeterValidation skips feature-meter validation when creating the
+	// pending line. The line engine owns subsequent handling of unresolved dependencies.
+	BypassFeatureMeterValidation bool `json:"-"`
+}
+
+func NewCreatePendingInvoiceLine(line GatheringLine) CreatePendingInvoiceLine {
+	return CreatePendingInvoiceLine{GatheringLine: line}
+}
+
+type CreatePendingInvoiceLines []CreatePendingInvoiceLine
+
+func NewCreatePendingInvoiceLines(lines []GatheringLine) CreatePendingInvoiceLines {
+	return lo.Map(lines, func(line GatheringLine, _ int) CreatePendingInvoiceLine {
+		return NewCreatePendingInvoiceLine(line)
+	})
+}
+
 type CreatePendingInvoiceLinesInput struct {
 	Customer customer.CustomerID `json:"customer"`
 	Currency currencyx.FiatCode  `json:"currency"`
 
-	Lines []GatheringLine `json:"lines"`
+	Lines CreatePendingInvoiceLines `json:"lines"`
 }
 
 func (c CreatePendingInvoiceLinesInput) Validate() error {
@@ -920,7 +934,9 @@ func (c CreatePendingInvoiceLinesInput) Validate() error {
 		errs = append(errs, fmt.Errorf("currency: %w", err))
 	}
 
-	for id, line := range c.Lines {
+	for id, createLine := range c.Lines {
+		line := createLine.GatheringLine
+
 		// Note: this is for validation purposes, as Line is copied, we are not altering the struct itself
 		line.Currency = c.Currency
 
@@ -1133,5 +1149,6 @@ func (i UpdateGatheringInvoiceInput) Validate() error {
 type PrepareBillableLinesInput = InvoicePendingLinesInput
 
 type PrepareBillableLinesResult struct {
-	LinesByCurrency map[currencyx.FiatCode]GatheringLines
+	LinesByCurrency            map[currencyx.FiatCode]GatheringLines
+	ValidationIssuesByCurrency map[currencyx.FiatCode]ValidationIssues
 }

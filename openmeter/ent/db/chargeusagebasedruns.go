@@ -61,6 +61,10 @@ type ChargeUsageBasedRuns struct {
 	StoredAtLt time.Time `json:"stored_at_lt,omitempty"`
 	// ServicePeriodTo holds the value of the "service_period_to" field.
 	ServicePeriodTo time.Time `json:"service_period_to,omitempty"`
+	// SchemaLevel holds the value of the "schema_level" field.
+	SchemaLevel int `json:"schema_level,omitempty"`
+	// PriorRunID holds the value of the "prior_run_id" field.
+	PriorRunID *string `json:"prior_run_id,omitempty"`
 	// DetailedLinesPresent holds the value of the "detailed_lines_present" field.
 	DetailedLinesPresent bool `json:"detailed_lines_present,omitempty"`
 	// DetailedLinesIncludeCreditAllocations holds the value of the "detailed_lines_include_credit_allocations" field.
@@ -73,6 +77,10 @@ type ChargeUsageBasedRuns struct {
 	MeteredQuantity alpacadecimal.Decimal `json:"metered_quantity,omitempty"`
 	// NoFiatTransactionRequired holds the value of the "no_fiat_transaction_required" field.
 	NoFiatTransactionRequired bool `json:"no_fiat_transaction_required,omitempty"`
+	// Immutable holds the value of the "immutable" field.
+	Immutable bool `json:"immutable,omitempty"`
+	// FiatOverageCreditAllocationCompleted holds the value of the "fiat_overage_credit_allocation_completed" field.
+	FiatOverageCreditAllocationCompleted bool `json:"fiat_overage_credit_allocation_completed,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the ChargeUsageBasedRunsQuery when eager-loading is set.
 	Edges        ChargeUsageBasedRunsEdges `json:"edges"`
@@ -89,6 +97,10 @@ type ChargeUsageBasedRunsEdges struct {
 	BillingInvoiceLine *BillingInvoiceLine `json:"billing_invoice_line,omitempty"`
 	// BillingInvoice holds the value of the billing_invoice edge.
 	BillingInvoice *BillingInvoice `json:"billing_invoice,omitempty"`
+	// NextRuns holds the value of the next_runs edge.
+	NextRuns []*ChargeUsageBasedRuns `json:"next_runs,omitempty"`
+	// PriorRun holds the value of the prior_run edge.
+	PriorRun *ChargeUsageBasedRuns `json:"prior_run,omitempty"`
 	// CreditAllocations holds the value of the credit_allocations edge.
 	CreditAllocations []*ChargeUsageBasedRunCreditAllocations `json:"credit_allocations,omitempty"`
 	// FiatOverageCreditAllocations holds the value of the fiat_overage_credit_allocations edge.
@@ -103,7 +115,7 @@ type ChargeUsageBasedRunsEdges struct {
 	Payment *ChargeUsageBasedRunPayment `json:"payment,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [10]bool
+	loadedTypes [12]bool
 }
 
 // UsageBasedOrErr returns the UsageBased value or an error if the edge
@@ -150,10 +162,30 @@ func (e ChargeUsageBasedRunsEdges) BillingInvoiceOrErr() (*BillingInvoice, error
 	return nil, &NotLoadedError{edge: "billing_invoice"}
 }
 
+// NextRunsOrErr returns the NextRuns value or an error if the edge
+// was not loaded in eager-loading.
+func (e ChargeUsageBasedRunsEdges) NextRunsOrErr() ([]*ChargeUsageBasedRuns, error) {
+	if e.loadedTypes[4] {
+		return e.NextRuns, nil
+	}
+	return nil, &NotLoadedError{edge: "next_runs"}
+}
+
+// PriorRunOrErr returns the PriorRun value or an error if the edge
+// was not loaded in eager-loading, or loaded but was not found.
+func (e ChargeUsageBasedRunsEdges) PriorRunOrErr() (*ChargeUsageBasedRuns, error) {
+	if e.PriorRun != nil {
+		return e.PriorRun, nil
+	} else if e.loadedTypes[5] {
+		return nil, &NotFoundError{label: chargeusagebasedruns.Label}
+	}
+	return nil, &NotLoadedError{edge: "prior_run"}
+}
+
 // CreditAllocationsOrErr returns the CreditAllocations value or an error if the edge
 // was not loaded in eager-loading.
 func (e ChargeUsageBasedRunsEdges) CreditAllocationsOrErr() ([]*ChargeUsageBasedRunCreditAllocations, error) {
-	if e.loadedTypes[4] {
+	if e.loadedTypes[6] {
 		return e.CreditAllocations, nil
 	}
 	return nil, &NotLoadedError{edge: "credit_allocations"}
@@ -162,7 +194,7 @@ func (e ChargeUsageBasedRunsEdges) CreditAllocationsOrErr() ([]*ChargeUsageBased
 // FiatOverageCreditAllocationsOrErr returns the FiatOverageCreditAllocations value or an error if the edge
 // was not loaded in eager-loading.
 func (e ChargeUsageBasedRunsEdges) FiatOverageCreditAllocationsOrErr() ([]*ChargeUsageBasedRunOverageCreditAllocations, error) {
-	if e.loadedTypes[5] {
+	if e.loadedTypes[7] {
 		return e.FiatOverageCreditAllocations, nil
 	}
 	return nil, &NotLoadedError{edge: "fiat_overage_credit_allocations"}
@@ -171,7 +203,7 @@ func (e ChargeUsageBasedRunsEdges) FiatOverageCreditAllocationsOrErr() ([]*Charg
 // DetailedLinesOrErr returns the DetailedLines value or an error if the edge
 // was not loaded in eager-loading.
 func (e ChargeUsageBasedRunsEdges) DetailedLinesOrErr() ([]*ChargeUsageBasedRunDetailedLine, error) {
-	if e.loadedTypes[6] {
+	if e.loadedTypes[8] {
 		return e.DetailedLines, nil
 	}
 	return nil, &NotLoadedError{edge: "detailed_lines"}
@@ -180,7 +212,7 @@ func (e ChargeUsageBasedRunsEdges) DetailedLinesOrErr() ([]*ChargeUsageBasedRunD
 // CorrectedDetailedLinesOrErr returns the CorrectedDetailedLines value or an error if the edge
 // was not loaded in eager-loading.
 func (e ChargeUsageBasedRunsEdges) CorrectedDetailedLinesOrErr() ([]*ChargeUsageBasedRunDetailedLine, error) {
-	if e.loadedTypes[7] {
+	if e.loadedTypes[9] {
 		return e.CorrectedDetailedLines, nil
 	}
 	return nil, &NotLoadedError{edge: "corrected_detailed_lines"}
@@ -191,7 +223,7 @@ func (e ChargeUsageBasedRunsEdges) CorrectedDetailedLinesOrErr() ([]*ChargeUsage
 func (e ChargeUsageBasedRunsEdges) InvoicedUsageOrErr() (*ChargeUsageBasedRunInvoicedUsage, error) {
 	if e.InvoicedUsage != nil {
 		return e.InvoicedUsage, nil
-	} else if e.loadedTypes[8] {
+	} else if e.loadedTypes[10] {
 		return nil, &NotFoundError{label: chargeusagebasedruninvoicedusage.Label}
 	}
 	return nil, &NotLoadedError{edge: "invoiced_usage"}
@@ -202,7 +234,7 @@ func (e ChargeUsageBasedRunsEdges) InvoicedUsageOrErr() (*ChargeUsageBasedRunInv
 func (e ChargeUsageBasedRunsEdges) PaymentOrErr() (*ChargeUsageBasedRunPayment, error) {
 	if e.Payment != nil {
 		return e.Payment, nil
-	} else if e.loadedTypes[9] {
+	} else if e.loadedTypes[11] {
 		return nil, &NotFoundError{label: chargeusagebasedrunpayment.Label}
 	}
 	return nil, &NotLoadedError{edge: "payment"}
@@ -215,9 +247,11 @@ func (*ChargeUsageBasedRuns) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case chargeusagebasedruns.FieldAmount, chargeusagebasedruns.FieldTaxesTotal, chargeusagebasedruns.FieldTaxesInclusiveTotal, chargeusagebasedruns.FieldTaxesExclusiveTotal, chargeusagebasedruns.FieldChargesTotal, chargeusagebasedruns.FieldDiscountsTotal, chargeusagebasedruns.FieldCreditsTotal, chargeusagebasedruns.FieldTotal, chargeusagebasedruns.FieldMeteredQuantity:
 			values[i] = new(alpacadecimal.Decimal)
-		case chargeusagebasedruns.FieldDetailedLinesPresent, chargeusagebasedruns.FieldDetailedLinesIncludeCreditAllocations, chargeusagebasedruns.FieldNoFiatTransactionRequired:
+		case chargeusagebasedruns.FieldDetailedLinesPresent, chargeusagebasedruns.FieldDetailedLinesIncludeCreditAllocations, chargeusagebasedruns.FieldNoFiatTransactionRequired, chargeusagebasedruns.FieldImmutable, chargeusagebasedruns.FieldFiatOverageCreditAllocationCompleted:
 			values[i] = new(sql.NullBool)
-		case chargeusagebasedruns.FieldID, chargeusagebasedruns.FieldNamespace, chargeusagebasedruns.FieldChargeID, chargeusagebasedruns.FieldFeatureID, chargeusagebasedruns.FieldType, chargeusagebasedruns.FieldInitialType, chargeusagebasedruns.FieldLineID, chargeusagebasedruns.FieldInvoiceID:
+		case chargeusagebasedruns.FieldSchemaLevel:
+			values[i] = new(sql.NullInt64)
+		case chargeusagebasedruns.FieldID, chargeusagebasedruns.FieldNamespace, chargeusagebasedruns.FieldChargeID, chargeusagebasedruns.FieldFeatureID, chargeusagebasedruns.FieldType, chargeusagebasedruns.FieldInitialType, chargeusagebasedruns.FieldPriorRunID, chargeusagebasedruns.FieldLineID, chargeusagebasedruns.FieldInvoiceID:
 			values[i] = new(sql.NullString)
 		case chargeusagebasedruns.FieldCreatedAt, chargeusagebasedruns.FieldUpdatedAt, chargeusagebasedruns.FieldDeletedAt, chargeusagebasedruns.FieldStoredAtLt, chargeusagebasedruns.FieldServicePeriodTo:
 			values[i] = new(sql.NullTime)
@@ -351,6 +385,19 @@ func (_m *ChargeUsageBasedRuns) assignValues(columns []string, values []any) err
 			} else if value.Valid {
 				_m.ServicePeriodTo = value.Time
 			}
+		case chargeusagebasedruns.FieldSchemaLevel:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field schema_level", values[i])
+			} else if value.Valid {
+				_m.SchemaLevel = int(value.Int64)
+			}
+		case chargeusagebasedruns.FieldPriorRunID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field prior_run_id", values[i])
+			} else if value.Valid {
+				_m.PriorRunID = new(string)
+				*_m.PriorRunID = value.String
+			}
 		case chargeusagebasedruns.FieldDetailedLinesPresent:
 			if value, ok := values[i].(*sql.NullBool); !ok {
 				return fmt.Errorf("unexpected type %T for field detailed_lines_present", values[i])
@@ -389,6 +436,18 @@ func (_m *ChargeUsageBasedRuns) assignValues(columns []string, values []any) err
 			} else if value.Valid {
 				_m.NoFiatTransactionRequired = value.Bool
 			}
+		case chargeusagebasedruns.FieldImmutable:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field immutable", values[i])
+			} else if value.Valid {
+				_m.Immutable = value.Bool
+			}
+		case chargeusagebasedruns.FieldFiatOverageCreditAllocationCompleted:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field fiat_overage_credit_allocation_completed", values[i])
+			} else if value.Valid {
+				_m.FiatOverageCreditAllocationCompleted = value.Bool
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -420,6 +479,16 @@ func (_m *ChargeUsageBasedRuns) QueryBillingInvoiceLine() *BillingInvoiceLineQue
 // QueryBillingInvoice queries the "billing_invoice" edge of the ChargeUsageBasedRuns entity.
 func (_m *ChargeUsageBasedRuns) QueryBillingInvoice() *BillingInvoiceQuery {
 	return NewChargeUsageBasedRunsClient(_m.config).QueryBillingInvoice(_m)
+}
+
+// QueryNextRuns queries the "next_runs" edge of the ChargeUsageBasedRuns entity.
+func (_m *ChargeUsageBasedRuns) QueryNextRuns() *ChargeUsageBasedRunsQuery {
+	return NewChargeUsageBasedRunsClient(_m.config).QueryNextRuns(_m)
+}
+
+// QueryPriorRun queries the "prior_run" edge of the ChargeUsageBasedRuns entity.
+func (_m *ChargeUsageBasedRuns) QueryPriorRun() *ChargeUsageBasedRunsQuery {
+	return NewChargeUsageBasedRunsClient(_m.config).QueryPriorRun(_m)
 }
 
 // QueryCreditAllocations queries the "credit_allocations" edge of the ChargeUsageBasedRuns entity.
@@ -531,6 +600,14 @@ func (_m *ChargeUsageBasedRuns) String() string {
 	builder.WriteString("service_period_to=")
 	builder.WriteString(_m.ServicePeriodTo.Format(time.ANSIC))
 	builder.WriteString(", ")
+	builder.WriteString("schema_level=")
+	builder.WriteString(fmt.Sprintf("%v", _m.SchemaLevel))
+	builder.WriteString(", ")
+	if v := _m.PriorRunID; v != nil {
+		builder.WriteString("prior_run_id=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
 	builder.WriteString("detailed_lines_present=")
 	builder.WriteString(fmt.Sprintf("%v", _m.DetailedLinesPresent))
 	builder.WriteString(", ")
@@ -552,6 +629,12 @@ func (_m *ChargeUsageBasedRuns) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("no_fiat_transaction_required=")
 	builder.WriteString(fmt.Sprintf("%v", _m.NoFiatTransactionRequired))
+	builder.WriteString(", ")
+	builder.WriteString("immutable=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Immutable))
+	builder.WriteString(", ")
+	builder.WriteString("fiat_overage_credit_allocation_completed=")
+	builder.WriteString(fmt.Sprintf("%v", _m.FiatOverageCreditAllocationCompleted))
 	builder.WriteByte(')')
 	return builder.String()
 }

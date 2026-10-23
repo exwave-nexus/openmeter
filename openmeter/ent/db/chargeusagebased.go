@@ -60,6 +60,8 @@ type ChargeUsageBased struct {
 	CustomCurrencyID *string `json:"custom_currency_id,omitempty"`
 	// ManagedBy holds the value of the "managed_by" field.
 	ManagedBy billing.InvoiceLineManagedBy `json:"managed_by,omitempty"`
+	// SubscriptionPlan holds the value of the "subscription_plan" field.
+	SubscriptionPlan *meta.SubscriptionPlan `json:"subscription_plan,omitempty"`
 	// SubscriptionID holds the value of the "subscription_id" field.
 	SubscriptionID *string `json:"subscription_id,omitempty"`
 	// SubscriptionPhaseID holds the value of the "subscription_phase_id" field.
@@ -88,6 +90,8 @@ type ChargeUsageBased struct {
 	Name string `json:"name,omitempty"`
 	// Description holds the value of the "description" field.
 	Description *string `json:"description,omitempty"`
+	// ValidationIssues holds the value of the "validation_issues" field.
+	ValidationIssues billing.ValidationIssues `json:"validation_issues,omitempty"`
 	// InvoiceAt holds the value of the "invoice_at" field.
 	InvoiceAt time.Time `json:"invoice_at,omitempty"`
 	// SettlementMode holds the value of the "settlement_mode" field.
@@ -99,7 +103,7 @@ type ChargeUsageBased struct {
 	// FeatureKey holds the value of the "feature_key" field.
 	FeatureKey string `json:"feature_key,omitempty"`
 	// FeatureID holds the value of the "feature_id" field.
-	FeatureID string `json:"feature_id,omitempty"`
+	FeatureID *string `json:"feature_id,omitempty"`
 	// RatingEngine holds the value of the "rating_engine" field.
 	RatingEngine usagebased.RatingEngine `json:"rating_engine,omitempty"`
 	// Price holds the value of the "price" field.
@@ -295,12 +299,14 @@ func (*ChargeUsageBased) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case chargeusagebased.FieldAnnotations, chargeusagebased.FieldMetadata:
+		case chargeusagebased.FieldAnnotations, chargeusagebased.FieldMetadata, chargeusagebased.FieldValidationIssues:
 			values[i] = new([]byte)
 		case chargeusagebased.FieldID, chargeusagebased.FieldCustomerID, chargeusagebased.FieldStatus, chargeusagebased.FieldUniqueReferenceID, chargeusagebased.FieldFiatCurrencyCode, chargeusagebased.FieldCustomCurrencyID, chargeusagebased.FieldManagedBy, chargeusagebased.FieldSubscriptionID, chargeusagebased.FieldSubscriptionPhaseID, chargeusagebased.FieldSubscriptionItemID, chargeusagebased.FieldTaxCodeID, chargeusagebased.FieldTaxBehavior, chargeusagebased.FieldNamespace, chargeusagebased.FieldName, chargeusagebased.FieldDescription, chargeusagebased.FieldSettlementMode, chargeusagebased.FieldFeatureKey, chargeusagebased.FieldFeatureID, chargeusagebased.FieldRatingEngine, chargeusagebased.FieldCurrentRealizationRunID, chargeusagebased.FieldCostBasisID, chargeusagebased.FieldStatusDetailed:
 			values[i] = new(sql.NullString)
 		case chargeusagebased.FieldServicePeriodFrom, chargeusagebased.FieldServicePeriodTo, chargeusagebased.FieldBillingPeriodFrom, chargeusagebased.FieldBillingPeriodTo, chargeusagebased.FieldFullServicePeriodFrom, chargeusagebased.FieldFullServicePeriodTo, chargeusagebased.FieldAdvanceAfter, chargeusagebased.FieldCreatedAt, chargeusagebased.FieldUpdatedAt, chargeusagebased.FieldDeletedAt, chargeusagebased.FieldInvoiceAt, chargeusagebased.FieldIntentDeletedAt:
 			values[i] = new(sql.NullTime)
+		case chargeusagebased.FieldSubscriptionPlan:
+			values[i] = chargeusagebased.ValueScanner.SubscriptionPlan.ScanValue()
 		case chargeusagebased.FieldDiscounts:
 			values[i] = chargeusagebased.ValueScanner.Discounts.ScanValue()
 		case chargeusagebased.FieldPrice:
@@ -403,6 +409,12 @@ func (_m *ChargeUsageBased) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ManagedBy = billing.InvoiceLineManagedBy(value.String)
 			}
+		case chargeusagebased.FieldSubscriptionPlan:
+			if value, err := chargeusagebased.ValueScanner.SubscriptionPlan.FromValue(values[i]); err != nil {
+				return err
+			} else {
+				_m.SubscriptionPlan = value
+			}
 		case chargeusagebased.FieldSubscriptionID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field subscription_id", values[i])
@@ -498,6 +510,14 @@ func (_m *ChargeUsageBased) assignValues(columns []string, values []any) error {
 				_m.Description = new(string)
 				*_m.Description = value.String
 			}
+		case chargeusagebased.FieldValidationIssues:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field validation_issues", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.ValidationIssues); err != nil {
+					return fmt.Errorf("unmarshal field validation_issues: %w", err)
+				}
+			}
 		case chargeusagebased.FieldInvoiceAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field invoice_at", values[i])
@@ -533,7 +553,8 @@ func (_m *ChargeUsageBased) assignValues(columns []string, values []any) error {
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field feature_id", values[i])
 			} else if value.Valid {
-				_m.FeatureID = value.String
+				_m.FeatureID = new(string)
+				*_m.FeatureID = value.String
 			}
 		case chargeusagebased.FieldRatingEngine:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -716,6 +737,11 @@ func (_m *ChargeUsageBased) String() string {
 	builder.WriteString("managed_by=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ManagedBy))
 	builder.WriteString(", ")
+	if v := _m.SubscriptionPlan; v != nil {
+		builder.WriteString("subscription_plan=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
 	if v := _m.SubscriptionID; v != nil {
 		builder.WriteString("subscription_id=")
 		builder.WriteString(*v)
@@ -772,6 +798,9 @@ func (_m *ChargeUsageBased) String() string {
 		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")
+	builder.WriteString("validation_issues=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ValidationIssues))
+	builder.WriteString(", ")
 	builder.WriteString("invoice_at=")
 	builder.WriteString(_m.InvoiceAt.Format(time.ANSIC))
 	builder.WriteString(", ")
@@ -791,8 +820,10 @@ func (_m *ChargeUsageBased) String() string {
 	builder.WriteString("feature_key=")
 	builder.WriteString(_m.FeatureKey)
 	builder.WriteString(", ")
-	builder.WriteString("feature_id=")
-	builder.WriteString(_m.FeatureID)
+	if v := _m.FeatureID; v != nil {
+		builder.WriteString("feature_id=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	builder.WriteString("rating_engine=")
 	builder.WriteString(fmt.Sprintf("%v", _m.RatingEngine))

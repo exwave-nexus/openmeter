@@ -12,10 +12,11 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/openmeterio/openmeter/openmeter/billing"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/openmeter/meter"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/openmeter/streaming"
-	"github.com/openmeterio/openmeter/pkg/ref"
 )
 
 type SnapshotLineQuantityInput struct {
@@ -28,8 +29,11 @@ func (i SnapshotLineQuantityInput) Validate() error {
 	if i.Invoice == nil {
 		errs = append(errs, errors.New("invoice is required"))
 	}
+
 	if i.Line == nil {
 		errs = append(errs, errors.New("line is required"))
+	} else if i.Line.Engine != billing.LineEngineTypeInvoice {
+		errs = append(errs, errors.New("line must be owned by the legacy invoice engine"))
 	}
 
 	return errors.Join(errs...)
@@ -42,21 +46,15 @@ func (e *Engine) SnapshotLineQuantity(ctx context.Context, input SnapshotLineQua
 		}
 	}
 
-	featureMeters, err := e.resolveFeatureMeters(ctx, input.Invoice.Namespace, billing.StandardLines{input.Line})
-	if err != nil {
+	if err := e.SnapshotLineQuantities(ctx, *input.Invoice, billing.StandardLines{input.Line}); err != nil {
 		return nil, fmt.Errorf("line[%s]: %w", input.Line.ID, err)
-	}
-
-	err = e.snapshotLineQuantity(ctx, input.Invoice.Customer, input.Line, featureMeters)
-	if err != nil {
-		return nil, err
 	}
 
 	return input.Line, nil
 }
 
 func (e *Engine) SnapshotLineQuantities(ctx context.Context, invoice billing.StandardInvoice, lines billing.StandardLines) error {
-	featureMeters, err := e.resolveFeatureMeters(ctx, invoice.Namespace, lines)
+	featureMeters, err := e.featureMeterResolver.Resolve(ctx, invoice.Namespace, lines...)
 	if err != nil {
 		return fmt.Errorf("resolving feature meters: %w", err)
 	}
@@ -68,46 +66,7 @@ func (e *Engine) SnapshotLineQuantities(ctx context.Context, invoice billing.Sta
 	return nil
 }
 
-func (e *Engine) resolveFeatureMeters(ctx context.Context, namespace string, lines billing.StandardLines) (feature.FeatureMeters, error) {
-	keys, err := lines.GetReferencedFeatureKeys()
-	if err != nil {
-		return nil, fmt.Errorf("getting referenced feature keys: %w", err)
-	}
-
-	featureMeters, err := e.featureService.ResolveFeatureMeters(ctx, namespace, lo.Map(keys, func(key string, _ int) feature.FeatureMeterRef {
-		return feature.FeatureMeterRef{
-			IDOrKey: ref.IDOrKey{Key: key},
-		}
-	})...)
-	if err != nil {
-		return nil, fmt.Errorf("resolving feature meters: %w", err)
-	}
-
-	return featureMetersErrorWrapper{featureMeters}, nil
-}
-
-// featureMetersErrorWrapper returns ErrSnapshotInvalidDatabaseState when a feature meter is unavailable during snapshotting.
-type featureMetersErrorWrapper struct {
-	feature.FeatureMeters
-}
-
-func (w featureMetersErrorWrapper) Get(featureKey string, requireMeter bool) (feature.FeatureMeter, error) {
-	featureMeter, err := w.FeatureMeters.Get(featureKey, requireMeter)
-	if err != nil {
-		return feature.FeatureMeter{}, &billing.ErrSnapshotInvalidDatabaseState{
-			Err: err,
-		}
-	}
-
-	return featureMeter, nil
-}
-
-func (e *Engine) snapshotMeteredLineQuantity(ctx context.Context, line *billing.StandardLine, customer billing.InvoiceCustomer, featureMeters feature.FeatureMeters) error {
-	featureMeter, err := featureMeters.Get(line.UsageBased.FeatureKey, true)
-	if err != nil {
-		return err
-	}
-
+func (e *Engine) snapshotMeteredLineQuantity(ctx context.Context, line *billing.StandardLine, customer billing.InvoiceCustomer, featureMeter billingfeaturemeter.FeatureMeter) error {
 	usage, err := e.getFeatureUsage(ctx,
 		getFeatureUsageInput{
 			Line:     line,
@@ -125,6 +84,7 @@ func (e *Engine) snapshotMeteredLineQuantity(ctx context.Context, line *billing.
 	line.UsageBased.Quantity = lo.ToPtr(usage.LinePeriodQty)
 	line.UsageBased.PreLinePeriodQuantity = lo.ToPtr(usage.PreLinePeriodQty)
 	line.UsageBased.MeteredPreLinePeriodQuantity = lo.ToPtr(usage.PreLinePeriodQty)
+
 	return nil
 }
 
@@ -133,18 +93,24 @@ func (e *Engine) snapshotFlatPriceLineQuantity(_ context.Context, line *billing.
 	line.UsageBased.Quantity = lo.ToPtr(alpacadecimal.NewFromInt(1))
 	line.UsageBased.PreLinePeriodQuantity = lo.ToPtr(alpacadecimal.Zero)
 	line.UsageBased.MeteredPreLinePeriodQuantity = lo.ToPtr(alpacadecimal.Zero)
+
 	return nil
 }
 
-func (e *Engine) snapshotLineQuantity(ctx context.Context, customer billing.InvoiceCustomer, line *billing.StandardLine, featureMeters feature.FeatureMeters) error {
-	if !line.DependsOnMeteredQuantity() {
+func (e *Engine) snapshotLineQuantity(ctx context.Context, customer billing.InvoiceCustomer, line *billing.StandardLine, featureMeters billingfeaturemeter.FeatureMeters) error {
+	if line.GetPrice().Type() == productcatalog.FlatPriceType {
 		return e.snapshotFlatPriceLineQuantity(ctx, line)
 	}
 
-	return e.snapshotMeteredLineQuantity(ctx, line, customer, featureMeters)
+	featureMeter, err := featureMeters.Get(line)
+	if err != nil {
+		return err
+	}
+
+	return e.snapshotMeteredLineQuantity(ctx, line, customer, featureMeter)
 }
 
-func (e *Engine) snapshotLineQuantitiesInParallel(ctx context.Context, customer billing.InvoiceCustomer, lines billing.StandardLines, featureMeters feature.FeatureMeters) error {
+func (e *Engine) snapshotLineQuantitiesInParallel(ctx context.Context, customer billing.InvoiceCustomer, lines billing.StandardLines, featureMeters billingfeaturemeter.FeatureMeters) error {
 	workerCount := e.maxParallelQuantitySnapshots
 
 	sem := semaphore.NewWeighted(int64(workerCount))

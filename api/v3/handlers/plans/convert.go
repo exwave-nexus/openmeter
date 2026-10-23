@@ -3,6 +3,7 @@ package plans
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	decimal "github.com/alpacahq/alpacadecimal"
@@ -15,7 +16,6 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/entitlement"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/plan"
-	"github.com/openmeterio/openmeter/openmeter/taxcode"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/datetime"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -57,7 +57,7 @@ func ToAPIBillingPlan(p plan.Plan) (api.BillingPlan, error) {
 		UpdatedAt:        p.UpdatedAt,
 		Version:          p.Version,
 		ProRatingEnabled: lo.ToPtr(p.ProRatingConfig.Enabled),
-		SettlementMode:   lo.ToPtr(api.BillingSettlementMode(p.SettlementMode)),
+		SettlementMode:   api.BillingSettlementMode(p.SettlementMode),
 		ValidationErrors: ToAPIProductCatalogValidationErrors(validationIssues),
 	}
 
@@ -119,16 +119,16 @@ func ToAPIBillingRateCard(rc productcatalog.RateCard) (api.BillingRateCard, erro
 		Name:        meta.Name,
 		Description: meta.Description,
 		Discounts:   ToAPIBillingRateCardDiscount(meta.Discounts),
-		TaxConfig:   ToAPIBillingRateCardTaxConfig(meta.TaxConfig, meta.TaxCode),
+		TaxConfig:   ToAPITaxCodeConfig(meta.TaxConfig),
 	}
 
 	if meta.Currency != nil {
 		result.Currency = lo.ToPtr(meta.Currency.GetCode().String())
 	}
 
-	if meta.FeatureID != nil {
+	if meta.Feature != nil && meta.Feature.ID != nil {
 		result.Feature = &api.FeatureReference{
-			Id: *meta.FeatureID,
+			Id: *meta.Feature.ID,
 		}
 	}
 
@@ -190,7 +190,7 @@ func ToAPIBillingRateCard(rc productcatalog.RateCard) (api.BillingRateCard, erro
 	if meta.UnitConfig != nil {
 		result.UnitConfig = lo.ToPtr(ToAPIBillingUnitConfig(*meta.UnitConfig))
 	} else {
-		unitConfig, err := ToAPIBillingRateCardUnitConfig(meta.Price)
+		unitConfig, err := ToAPIBillingUnitConfigFromLegacyPrice(meta.Price)
 		if err != nil {
 			return result, fmt.Errorf("failed to convert unit config: %w", err)
 		}
@@ -263,11 +263,11 @@ func ToAPIBillingRateCardEntitlement(t *productcatalog.EntitlementTemplate) (*ap
 	return out, nil
 }
 
-// ToAPIBillingRateCardUnitConfig synthesizes a v3 unit config from a v1 dynamic
-// or package price. v3 does not surface dynamic or package prices directly;
-// instead they are rendered as a unit price paired with a unit config that
-// describes the conversion that v1 applied implicitly.
-func ToAPIBillingRateCardUnitConfig(p *productcatalog.Price) (*api.BillingUnitConfig, error) {
+// ToAPIBillingUnitConfigFromLegacyPrice synthesizes a v3 unit config from a v1 dynamic or
+// package price. v3 does not surface dynamic or package prices directly; instead
+// they are rendered as a unit price paired with a unit config that describes the
+// conversion that v1 applied implicitly.
+func ToAPIBillingUnitConfigFromLegacyPrice(p *productcatalog.Price) (*api.BillingUnitConfig, error) {
 	if p == nil {
 		return nil, nil
 	}
@@ -450,6 +450,57 @@ func ToAPIBillingPrice(p *productcatalog.Price) (api.BillingPrice, error) {
 	return result, nil
 }
 
+// ToAPIBillingPriceUsageBased maps a domain usage price to the public
+// unit/graduated/volume union. Legacy dynamic and package prices are normalized
+// by ToAPIBillingPrice to their v3 unit-price representation.
+func ToAPIBillingPriceUsageBased(p *productcatalog.Price) (api.BillingPriceUsageBased, error) {
+	var result api.BillingPriceUsageBased
+
+	price, err := ToAPIBillingPrice(p)
+	if err != nil {
+		return result, err
+	}
+
+	discriminator, err := price.Discriminator()
+	if err != nil {
+		return result, fmt.Errorf("failed to read converted price type: %w", err)
+	}
+
+	switch discriminator {
+	case "unit":
+		unit, err := price.AsBillingPriceUnit()
+		if err != nil {
+			return result, fmt.Errorf("failed to read converted unit price: %w", err)
+		}
+
+		if err := result.FromBillingPriceUnit(unit); err != nil {
+			return result, fmt.Errorf("failed to set usage-based unit price: %w", err)
+		}
+	case "graduated":
+		graduated, err := price.AsBillingPriceGraduated()
+		if err != nil {
+			return result, fmt.Errorf("failed to read converted graduated price: %w", err)
+		}
+
+		if err := result.FromBillingPriceGraduated(graduated); err != nil {
+			return result, fmt.Errorf("failed to set usage-based graduated price: %w", err)
+		}
+	case "volume":
+		volume, err := price.AsBillingPriceVolume()
+		if err != nil {
+			return result, fmt.Errorf("failed to read converted volume price: %w", err)
+		}
+
+		if err := result.FromBillingPriceVolume(volume); err != nil {
+			return result, fmt.Errorf("failed to set usage-based volume price: %w", err)
+		}
+	default:
+		return result, fmt.Errorf("unsupported usage-based price type: %s", discriminator)
+	}
+
+	return result, nil
+}
+
 func ToAPIBillingPriceTiers(tiers []productcatalog.PriceTier) []api.BillingPriceTier {
 	result := make([]api.BillingPriceTier, 0, len(tiers))
 
@@ -480,15 +531,15 @@ func ToAPIBillingPriceTiers(tiers []productcatalog.PriceTier) []api.BillingPrice
 	return result
 }
 
-func ToAPIBillingRateCardTaxConfig(c *productcatalog.TaxConfig, tc *taxcode.TaxCode) *api.BillingRateCardTaxConfig {
-	if c == nil || tc == nil {
+func ToAPITaxCodeConfig(c *productcatalog.TaxConfig) *api.TaxCodeConfig {
+	if c == nil || (c.Behavior == nil && c.TaxCodeID == nil) {
 		return nil
 	}
 
-	result := &api.BillingRateCardTaxConfig{
-		Code: api.TaxCodeReference{
-			Id: tc.ID,
-		},
+	result := &api.TaxCodeConfig{}
+
+	if c.TaxCodeID != nil {
+		result.Code = &api.TaxCodeReference{Id: *c.TaxCodeID}
 	}
 
 	if c.Behavior != nil {
@@ -563,6 +614,11 @@ func FromAPIUpsertPlanRequest(ns string, planID string, body api.UpsertPlanReque
 		ProRatingConfig: lo.ToPtr(ToProRatingConfig(body.ProRatingEnabled)),
 	}
 
+	// A nil settlement mode leaves the existing value unchanged.
+	if body.SettlementMode != nil {
+		req.SettlementMode = lo.ToPtr(productcatalog.SettlementMode(*body.SettlementMode))
+	}
+
 	meta, err := labels.ToMetadata(body.Labels)
 	if err != nil {
 		return req, fmt.Errorf("failed to convert label metadata: %w", err)
@@ -605,6 +661,7 @@ func FromAPICreatePlanRequest(ns string, body api.CreatePlanRequest) (plan.Creat
 				Description:     body.Description,
 				Metadata:        meta,
 				ProRatingConfig: ToProRatingConfig(body.ProRatingEnabled),
+				SettlementMode:  productcatalog.SettlementMode(lo.FromPtr(body.SettlementMode)),
 			},
 		},
 	}
@@ -710,11 +767,16 @@ func FromAPIBillingRateCard(rc api.BillingRateCard) (productcatalog.RateCard, er
 	}
 
 	if rc.Feature != nil {
-		meta.FeatureID = &rc.Feature.Id
+		meta.Feature = productcatalog.NewFeatureReference(&rc.Feature.Id, nil)
 	}
 
 	if rc.TaxConfig != nil {
-		meta.TaxConfig = FromAPIBillingRateCardTaxConfig(*rc.TaxConfig)
+		taxConfig, err := FromAPITaxCodeConfig(*rc.TaxConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert tax config: %w", err)
+		}
+
+		meta.TaxConfig = taxConfig
 	}
 
 	if rc.Discounts != nil {
@@ -797,7 +859,7 @@ func FromAPIBillingRateCard(rc api.BillingRateCard) (productcatalog.RateCard, er
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported price type: %s", priceType)
+		return nil, models.NewGenericValidationError(fmt.Errorf("unsupported price type: %s", priceType))
 	}
 }
 
@@ -823,13 +885,9 @@ func FromAPIBillingRateCardEntitlement(e api.BillingRateCardEntitlement, billing
 			}
 		}
 
-		if usagePeriod.IsZero() {
-			if billingCadence == nil || billingCadence.IsZero() {
-				return nil, models.NewGenericValidationError(
-					fmt.Errorf("metered entitlement requires usage_period when it cannot be inferred from billing_cadence"),
-				)
-			}
-
+		// When neither is set the usage period stays zero and the domain
+		// validation reports it on the entitlement template.
+		if usagePeriod.IsZero() && billingCadence != nil {
 			usagePeriod = *billingCadence
 		}
 
@@ -983,6 +1041,51 @@ func FromAPIBillingPriceWithCommitments(p api.BillingPrice, commitments *api.Bil
 	}
 }
 
+// FromAPIBillingPriceUsageBased maps the public unit/graduated/volume union and
+// its sibling commitments into the domain price representation.
+func FromAPIBillingPriceUsageBased(p api.BillingPriceUsageBased, commitments *api.BillingSpendCommitments) (*productcatalog.Price, error) {
+	var price api.BillingPrice
+
+	discriminator, err := p.Discriminator()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read usage-based price type: %w", err)
+	}
+
+	switch discriminator {
+	case "unit":
+		unit, err := p.AsBillingPriceUnit()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read usage-based unit price: %w", err)
+		}
+
+		if err := price.FromBillingPriceUnit(unit); err != nil {
+			return nil, fmt.Errorf("failed to set unit price: %w", err)
+		}
+	case "graduated":
+		graduated, err := p.AsBillingPriceGraduated()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read usage-based graduated price: %w", err)
+		}
+
+		if err := price.FromBillingPriceGraduated(graduated); err != nil {
+			return nil, fmt.Errorf("failed to set graduated price: %w", err)
+		}
+	case "volume":
+		volume, err := p.AsBillingPriceVolume()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read usage-based volume price: %w", err)
+		}
+
+		if err := price.FromBillingPriceVolume(volume); err != nil {
+			return nil, fmt.Errorf("failed to set volume price: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported usage-based price type: %s", discriminator)
+	}
+
+	return FromAPIBillingPriceWithCommitments(price, commitments)
+}
+
 func ParseCommitments(c *api.BillingSpendCommitments) (productcatalog.Commitments, error) {
 	if c == nil {
 		return productcatalog.Commitments{}, nil
@@ -1050,16 +1153,26 @@ func FromAPIBillingPriceTiers(tiers []api.BillingPriceTier) ([]productcatalog.Pr
 	return result, nil
 }
 
-func FromAPIBillingRateCardTaxConfig(tc api.BillingRateCardTaxConfig) *productcatalog.TaxConfig {
-	result := &productcatalog.TaxConfig{
-		TaxCodeID: &tc.Code.Id,
+func FromAPITaxCodeConfig(tc api.TaxCodeConfig) (*productcatalog.TaxConfig, error) {
+	if tc.Code != nil && tc.Code.Id == "" {
+		return nil, models.NewGenericValidationError(errors.New("tax_config.code.id must be set when tax_config.code is present"))
+	}
+
+	if tc.Code == nil && tc.Behavior == nil {
+		return nil, models.NewGenericValidationError(errors.New("tax_config.code.id or tax_config.behavior must be set"))
+	}
+
+	result := &productcatalog.TaxConfig{}
+
+	if tc.Code != nil {
+		result.TaxCodeID = &tc.Code.Id
 	}
 
 	if tc.Behavior != nil {
 		result.Behavior = lo.ToPtr(productcatalog.TaxBehavior(*tc.Behavior))
 	}
 
-	return result
+	return result, nil
 }
 
 func FromAPIBillingRateCardDiscounts(d api.BillingRateCardDiscounts) (productcatalog.Discounts, error) {

@@ -14,7 +14,6 @@ import (
 type PriceAccessor interface {
 	GetPrice() *productcatalog.Price
 	GetServicePeriod() timeutil.ClosedPeriod
-	GetFeatureKey() string
 }
 
 type GatheringLineAccessor interface {

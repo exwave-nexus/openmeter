@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/samber/lo"
 	"github.com/samber/mo"
@@ -14,6 +15,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
+	"github.com/openmeterio/openmeter/pkg/filter"
 	"github.com/openmeterio/openmeter/pkg/framework/transaction"
 )
 
@@ -29,7 +31,7 @@ func (s *service) AdvanceCharges(ctx context.Context, input charges.AdvanceCharg
 	advancedCharges, err := transaction.Run(ctx, s.adapter, func(ctx context.Context) (charges.Charges, error) {
 		inScopeCharges, err := s.ListCharges(ctx, charges.ListChargesInput{
 			Namespace:   input.Customer.Namespace,
-			StatusNotIn: []meta.ChargeStatus{meta.ChargeStatusFinal},
+			Status:      &filter.FilterString{Nin: &[]string{string(meta.ChargeStatusFinal)}},
 			CustomerIDs: []string{input.Customer.ID},
 			Expands:     meta.Expands{meta.ExpandRealizations},
 		})
@@ -63,10 +65,12 @@ func (s *service) AdvanceCharges(ctx context.Context, input charges.AdvanceCharg
 			if err := mappedResult.requireInvoicePatchesIfAdvanceable(); err != nil {
 				return nil, fmt.Errorf("flat fee charge %s: %w", charge.ID, err)
 			}
+
 			if mappedResult.Charge != nil {
 				advancedChargesByID[charge.ID] = *mappedResult.Charge
 				advancedChargeIDs = append(advancedChargeIDs, charge.ID)
 			}
+
 			invoicePatches = append(invoicePatches, mappedResult.InvoicePatches...)
 
 			if mappedResult.CanAdvance {
@@ -89,10 +93,7 @@ func (s *service) AdvanceCharges(ctx context.Context, input charges.AdvanceCharg
 				return nil, fmt.Errorf("get customer override: %w", err)
 			}
 
-			featureMeters, err := s.featureService.ResolveFeatureMeters(ctx, input.Customer.Namespace, chargesByType.usageBased.GetFeatureKeysOrIDs()...)
-			if err != nil {
-				return nil, fmt.Errorf("resolve feature meters: %w", err)
-			}
+			featureMeters := s.featureMeterResolver.ResolveLazy(ctx, input.Customer.Namespace, chargesByType.usageBased...)
 
 			for _, charge := range chargesByType.usageBased {
 				result, err := s.usageBasedService.AdvanceCharge(ctx, usagebased.AdvanceChargeInput{
@@ -101,6 +102,10 @@ func (s *service) AdvanceCharges(ctx context.Context, input charges.AdvanceCharg
 					FeatureMeters:    mo.Some(featureMeters),
 				})
 				if err != nil {
+					if isPersistedProductCatalogValidationError(err, charge.ValidationIssues) {
+						continue
+					}
+
 					return nil, fmt.Errorf("advance usage based charge %s: %w", charge.ID, err)
 				}
 
@@ -108,10 +113,12 @@ func (s *service) AdvanceCharges(ctx context.Context, input charges.AdvanceCharg
 				if err := mappedResult.requireInvoicePatchesIfAdvanceable(); err != nil {
 					return nil, fmt.Errorf("usage based charge %s: %w", charge.ID, err)
 				}
+
 				if mappedResult.Charge != nil {
 					advancedChargesByID[charge.ID] = *mappedResult.Charge
 					advancedChargeIDs = append(advancedChargeIDs, charge.ID)
 				}
+
 				invoicePatches = append(invoicePatches, mappedResult.InvoicePatches...)
 
 				if mappedResult.CanAdvance {
@@ -129,6 +136,7 @@ func (s *service) AdvanceCharges(ctx context.Context, input charges.AdvanceCharg
 		if err != nil {
 			return nil, err
 		}
+
 		for chargeID, result := range continuedResults {
 			if result.Charge != nil {
 				advancedChargesByID[chargeID] = *result.Charge
@@ -140,7 +148,7 @@ func (s *service) AdvanceCharges(ctx context.Context, input charges.AdvanceCharg
 			advancedCharges = append(advancedCharges, advancedChargesByID[chargeID])
 		}
 
-		currencies, err := collectCurrencies(advancedCharges)
+		currencies, err := collectEarningsRecognitionCurrencies(advancedCharges)
 		if err != nil {
 			return nil, err
 		}
@@ -158,12 +166,42 @@ func (s *service) AdvanceCharges(ctx context.Context, input charges.AdvanceCharg
 	return advancedCharges, nil
 }
 
-func collectCurrencies(chargeList charges.Charges) ([]currencies.Currency, error) {
-	out, err := lo.MapErr(chargeList, func(c charges.Charge, _ int) (currencies.Currency, error) {
-		return c.GetCurrency()
+// isPersistedProductCatalogValidationError identifies dependency failures that
+// are already represented by the charge's durable validation state. Returning
+// them as operation failures would turn a stable blocked charge into worker
+// retries even though there is no unrecorded failure to recover.
+func isPersistedProductCatalogValidationError(err error, persisted billing.ValidationIssues) bool {
+	if !billing.IsValidationIssueOnly(err) {
+		return false
+	}
+
+	issues, systemErr := billing.ToValidationIssues(
+		billing.ValidationWithComponent(billing.ValidationComponentProductCatalog, err),
+	)
+	if systemErr != nil || len(issues) == 0 {
+		return false
+	}
+
+	return lo.EveryBy(issues, func(issue billing.ValidationIssue) bool {
+		return issue.Code != "" && slices.ContainsFunc(persisted, func(persistedIssue billing.ValidationIssue) bool {
+			return persistedIssue.Component == issue.Component && persistedIssue.Code == issue.Code
+		})
 	})
-	if err != nil {
-		return nil, fmt.Errorf("get currencies: %w", err)
+}
+
+// collectEarningsRecognitionCurrencies resolves the native currency of every
+// advanced charge. Credit-backed lineage and its accrued balance use that same
+// currency for both fiat and custom-currency charges.
+func collectEarningsRecognitionCurrencies(chargeList charges.Charges) ([]currencies.Currency, error) {
+	out := make([]currencies.Currency, 0, len(chargeList))
+
+	for _, c := range chargeList {
+		chargeCurrency, err := c.GetCurrency()
+		if err != nil {
+			return nil, fmt.Errorf("get currency: %w", err)
+		}
+
+		out = append(out, chargeCurrency)
 	}
 
 	return lo.UniqByErr(out, func(c currencies.Currency) (string, error) {

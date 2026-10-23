@@ -2,13 +2,42 @@ package billingservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/samber/lo"
 
 	"github.com/openmeterio/openmeter/openmeter/billing"
+	"github.com/openmeterio/openmeter/pkg/framework/transaction"
 )
+
+// runInTransactionWithValidationWarningsAllowed runs one line-engine attempt in a
+// savepoint. Warning-only results release the savepoint and are returned beside
+// the usable result. Every other error rolls the whole attempt back.
+func (s *Service) runInTransactionWithValidationWarningsAllowed[T any](
+	ctx context.Context,
+	callback func(context.Context) (T, error),
+) (T, billing.ValidationIssues, error) {
+	var warnings billing.ValidationIssues
+
+	result, err := transaction.Run(ctx, s.adapter, func(ctx context.Context) (T, error) {
+		result, callbackErr := callback(ctx)
+
+		var extractionErr error
+		warnings, extractionErr = billing.ToValidationIssues(callbackErr, billing.RequireWarningsOnly())
+		if extractionErr != nil {
+			return lo.Empty[T](), callbackErr
+		}
+
+		return result, nil
+	})
+	if err != nil {
+		return lo.Empty[T](), nil, err
+	}
+
+	return result, warnings, nil
+}
 
 type engineRegistry struct {
 	mu               sync.RWMutex
@@ -40,6 +69,7 @@ func (r *engineRegistry) Register(eng billing.LineEngine) error {
 	}
 
 	r.engines[engineType] = eng
+
 	return nil
 }
 
@@ -121,6 +151,7 @@ func (r *engineRegistry) populateGatheringLineEngine(line *billing.GatheringLine
 	}
 
 	line.Engine = billing.LineEngineTypeInvoice
+
 	return nil
 }
 
@@ -130,6 +161,7 @@ func (r *engineRegistry) populateStandardLineEngine(line *billing.StandardLine) 
 	}
 
 	line.Engine = billing.LineEngineTypeInvoice
+
 	return nil
 }
 
@@ -141,6 +173,73 @@ type GatheringLinesWithEngine struct {
 type StandardLinesWithEngine struct {
 	Engine billing.LineEngine
 	Lines  billing.StandardLines
+}
+
+type gatheringLineBillabilityResult struct {
+	billing.IsLineBillableAsOfResult
+	Engine billing.LineEngine
+}
+
+func (s *Service) areGatheringLinesBillableAsOf(ctx context.Context, input billing.AreLinesBillableAsOfInput) ([]gatheringLineBillabilityResult, error) {
+	if len(input.Lines) == 0 {
+		return []gatheringLineBillabilityResult{}, nil
+	}
+
+	if err := input.Validate(); err != nil {
+		return nil, fmt.Errorf("validating billability input: %w", err)
+	}
+
+	linesWithEngines, err := s.lineEngines.groupGatheringLinesByEngine(input.Lines)
+	if err != nil {
+		return nil, fmt.Errorf("grouping gathering lines by engine: %w", err)
+	}
+
+	resultsByLineID := make(map[string]gatheringLineBillabilityResult, len(input.Lines))
+	var errs []error
+	for _, grouped := range linesWithEngines {
+		engineType := grouped.Engine.GetLineEngineType()
+		results, err := grouped.Engine.AreLinesBillableAsOf(ctx, billing.AreLinesBillableAsOfInput{
+			Invoice:            input.Invoice,
+			AsOf:               input.AsOf,
+			ProgressiveBilling: input.ProgressiveBilling,
+			Lines:              grouped.Lines,
+		})
+		if err != nil && !billing.IsValidationIssueOnly(err) {
+			return nil, fmt.Errorf("checking line billability with engine %s: %w", engineType, err)
+		}
+
+		errs = append(errs, billing.NewLineEngineValidationError(grouped.Engine, err))
+
+		if len(results) != len(grouped.Lines) {
+			return nil, fmt.Errorf("engine %s returned %d billability results for %d inputs", engineType, len(results), len(grouped.Lines))
+		}
+
+		for index, result := range results {
+			lineID := grouped.Lines[index].ID
+			if err := result.Validate(); err != nil {
+				return nil, fmt.Errorf("validating line[%s] billability result from engine %s: %w", lineID, engineType, err)
+			}
+
+			resultsByLineID[lineID] = gatheringLineBillabilityResult{
+				IsLineBillableAsOfResult: result,
+				Engine:                   grouped.Engine,
+			}
+		}
+	}
+
+	results, err := lo.MapErr(input.Lines, func(line billing.GatheringLine, _ int) (gatheringLineBillabilityResult, error) {
+		result, ok := resultsByLineID[line.ID]
+		if !ok {
+			return gatheringLineBillabilityResult{}, fmt.Errorf("billability result for line[%s] is missing", line.ID)
+		}
+
+		return result, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return results, errors.Join(errs...)
 }
 
 func (r *engineRegistry) groupGatheringLinesByEngine(lines billing.GatheringLines) ([]GatheringLinesWithEngine, error) {

@@ -15,8 +15,8 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/invoicedusage"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/payment"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
+	billingrating "github.com/openmeterio/openmeter/openmeter/billing/rating"
 	"github.com/openmeterio/openmeter/pkg/models"
-	"github.com/openmeterio/openmeter/pkg/timeutil"
 )
 
 type RealizationRunType string
@@ -39,6 +39,7 @@ func (t RealizationRunType) Validate() error {
 	if !slices.Contains(t.Values(), string(t)) {
 		return models.NewGenericValidationError(fmt.Errorf("invalid realization run type: %s", t))
 	}
+
 	return nil
 }
 
@@ -54,18 +55,23 @@ func (i RealizationRunID) Validate() error {
 	return models.NamespacedID(i).Validate()
 }
 
-// BillingMeteredQuantity maps a cumulative charge run quantity to the quantity
-// semantics expected by billing.StandardLine. RealizationRun.MeteredQuantity is
-// cumulative from the charge service-period start to the run's ServicePeriodTo,
-// while standard invoice lines need the current line-period quantity plus the
-// quantity already represented by earlier billed lines.
+const (
+	CurrentRealizationRunSchemaLevel = 2
+)
+
+// BillingMeteredQuantity preserves the signed meter difference between raw
+// cumulative charge run snapshots for a standard invoice line. Warning: these
+// values can be negative; rating clamps negative cumulative snapshots to zero
+// before deriving billable usage.
 type BillingMeteredQuantity struct {
-	// PreLinePeriod is the cumulative quantity already represented by earlier
-	// billed runs.
+	// PreLinePeriod is the prior run's raw cumulative meter snapshot.
 	PreLinePeriod alpacadecimal.Decimal
-	// LinePeriod is the quantity represented by the current standard invoice
-	// line.
+	// LinePeriod is the raw difference between current and prior snapshots.
 	LinePeriod alpacadecimal.Decimal
+
+	// BillableUsage is the difference between clamped cumulative snapshots. Its
+	// line-period quantity can be negative when earlier usage is corrected.
+	BillableUsage billingrating.Usage
 }
 
 type CreateRealizationRunInput struct {
@@ -106,10 +112,6 @@ func (r CreateRealizationRunInput) Validate() error {
 		errs = append(errs, fmt.Errorf("stored at lt must be set"))
 	}
 
-	if r.MeteredQuantity.IsNegative() {
-		errs = append(errs, fmt.Errorf("metered quantity must be zero or positive"))
-	}
-
 	if err := r.Totals.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("totals: %w", err))
 	}
@@ -132,13 +134,15 @@ func (r CreateRealizationRunInput) Validate() error {
 type UpdateRealizationRunInput struct {
 	ID RealizationRunID
 
-	Type                      mo.Option[RealizationRunType]    `json:"type"`
-	StoredAtLT                mo.Option[time.Time]             `json:"storedAtLT"`
-	DeletedAt                 mo.Option[*time.Time]            `json:"deletedAt,omitempty"`
-	LineID                    mo.Option[*string]               `json:"lineId,omitempty"`
-	MeteredQuantity           mo.Option[alpacadecimal.Decimal] `json:"meteredQuantity"`
-	Totals                    mo.Option[totals.Totals]         `json:"totals"`
-	NoFiatTransactionRequired mo.Option[bool]                  `json:"noFiatTransactionRequired"`
+	Type                                 mo.Option[RealizationRunType]    `json:"type"`
+	StoredAtLT                           mo.Option[time.Time]             `json:"storedAtLT"`
+	DeletedAt                            mo.Option[*time.Time]            `json:"deletedAt,omitempty"`
+	LineID                               mo.Option[*string]               `json:"lineId,omitempty"`
+	MeteredQuantity                      mo.Option[alpacadecimal.Decimal] `json:"meteredQuantity"`
+	Totals                               mo.Option[totals.Totals]         `json:"totals"`
+	NoFiatTransactionRequired            mo.Option[bool]                  `json:"noFiatTransactionRequired"`
+	Immutable                            mo.Option[bool]                  `json:"immutable"`
+	FiatOverageCreditAllocationCompleted mo.Option[bool]                  `json:"fiatOverageCreditAllocationCompleted"`
 }
 
 func (r UpdateRealizationRunInput) Normalized() UpdateRealizationRunInput {
@@ -181,10 +185,6 @@ func (r UpdateRealizationRunInput) Validate() error {
 		}
 	}
 
-	if r.MeteredQuantity.IsPresent() && r.MeteredQuantity.OrEmpty().IsNegative() {
-		errs = append(errs, fmt.Errorf("metered quantity must be zero or positive"))
-	}
-
 	if r.Totals.IsPresent() {
 		if err := r.Totals.OrEmpty().Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("totals: %w", err))
@@ -207,11 +207,21 @@ type RealizationRunBase struct {
 	StoredAtLT  time.Time          `json:"storedAtLT"`
 	// ServicePeriodTo is the end of the service period for the realization run.
 	ServicePeriodTo time.Time `json:"servicePeriodTo"`
+	// PriorRunID identifies the preceding non-voided realization run. It is nil
+	// for the first run.
+	PriorRunID *RealizationRunID `json:"priorRunId,omitempty"`
 	// MeteredQuantity is the metered quantity for time IN [intent.servicePeriod.from, servicePeriodTo) capped by stored_at < StoredAtLT.
+	// Warning: this raw value can be negative. Rating clamps negative cumulative
+	// quantities to zero before deriving billable usage.
 	MeteredQuantity alpacadecimal.Decimal `json:"meteredQuantity"`
 	// Totals includes credit allocations and excludes taxes.
 	Totals                    totals.Totals `json:"totals"`
 	NoFiatTransactionRequired bool          `json:"noFiatTransactionRequired"`
+	// Immutable means the backing invoice crossed the external issuance boundary.
+	Immutable bool `json:"immutable"`
+	// FiatOverageCreditAllocationCompleted distinguishes a successful
+	// zero-allocation result from pending allocation.
+	FiatOverageCreditAllocationCompleted bool `json:"fiatOverageCreditAllocationCompleted"`
 	// DetailedLinesIncludeCreditAllocations describes if credit allocation is applied to the detailed lines.
 	// Credits-only: always false
 	// Credit-then-invoice:
@@ -266,16 +276,26 @@ func (r RealizationRunBase) Validate() error {
 		errs = append(errs, fmt.Errorf("stored at lt must be set"))
 	}
 
-	if r.MeteredQuantity.IsNegative() {
-		errs = append(errs, fmt.Errorf("metered quantity must be zero or positive"))
-	}
-
 	if err := r.Totals.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("totals: %w", err))
 	}
 
 	if r.ServicePeriodTo.IsZero() {
 		errs = append(errs, fmt.Errorf("service period to must be set"))
+	}
+
+	if r.PriorRunID != nil {
+		if err := r.PriorRunID.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("prior run id: %w", err))
+		}
+
+		if r.PriorRunID.Namespace != r.ID.Namespace {
+			errs = append(errs, fmt.Errorf("prior run namespace must match run namespace"))
+		}
+
+		if *r.PriorRunID == r.ID {
+			errs = append(errs, fmt.Errorf("prior run id cannot reference the run itself"))
+		}
 	}
 
 	return models.NewNillableGenericValidationError(errors.Join(errs...))
@@ -349,88 +369,66 @@ func (r RealizationRun) IsVoidedBillingHistory() bool {
 
 type RealizationRuns []RealizationRun
 
-// BisectByTimestamp splits non-voided realization runs by their
-// derived service period relative to at.
-//
-// The returned before slice contains every non-voided run whose derived
-// service period ends at or before at. The returned containingOrAfter slice
-// contains every non-voided run whose derived service period contains at, or
-// whose derived service period starts after at. Each run's service-period start
-// is derived from the previous non-voided run's ServicePeriodTo, with the first
-// run starting at chargeIntentServicePeriod.From. Both returned slices are
-// sorted by ServicePeriodTo and then CreatedAt.
-func (r RealizationRuns) BisectByTimestamp(chargeIntentServicePeriod timeutil.ClosedPeriod, at time.Time) (before RealizationRuns, containingOrAfter RealizationRuns) {
-	previousServicePeriodTo := meta.NormalizeTimestamp(chargeIntentServicePeriod.From)
-	at = meta.NormalizeTimestamp(at)
-
-	nonVoidedRuns := r.WithoutVoidedBillingHistory()
-
-	slices.SortStableFunc(nonVoidedRuns, func(a RealizationRun, b RealizationRun) int {
-		if c := meta.NormalizeTimestamp(a.ServicePeriodTo).Compare(meta.NormalizeTimestamp(b.ServicePeriodTo)); c != 0 {
-			return c
-		}
-
-		return a.CreatedAt.Compare(b.CreatedAt)
-	})
-
-	for _, run := range nonVoidedRuns {
-		runPeriodTo := meta.NormalizeTimestamp(run.ServicePeriodTo)
-
-		containsAt := !at.Before(previousServicePeriodTo) && at.Before(runPeriodTo)
-		startsAfterAt := previousServicePeriodTo.After(at)
-		if containsAt || startsAfterAt {
-			containingOrAfter = append(containingOrAfter, run)
-		} else {
-			before = append(before, run)
-		}
-
-		previousServicePeriodTo = runPeriodTo
-	}
-
-	return before, containingOrAfter
-}
-
 func (r RealizationRuns) MapToBillingMeteredQuantity(currentRun RealizationRun) (BillingMeteredQuantity, error) {
 	preLinePeriod := alpacadecimal.Zero
-	var latestPriorRun *RealizationRun
-
-	for idx := range r {
-		if r[idx].IsVoidedBillingHistory() {
-			continue
+	if currentRun.PriorRunID != nil {
+		priorRun, err := r.GetByID(currentRun.PriorRunID.ID)
+		if err != nil {
+			return BillingMeteredQuantity{}, fmt.Errorf("resolve prior realization run %s for run %s: %w", currentRun.PriorRunID.ID, currentRun.ID.ID, err)
 		}
 
-		if !r[idx].ServicePeriodTo.Before(currentRun.ServicePeriodTo) {
-			continue
+		if priorRun.ID.Namespace != currentRun.ID.Namespace {
+			return BillingMeteredQuantity{}, fmt.Errorf("prior realization run %s namespace does not match run %s namespace", priorRun.ID.ID, currentRun.ID.ID)
 		}
 
-		if latestPriorRun == nil || r[idx].ServicePeriodTo.After(latestPriorRun.ServicePeriodTo) {
-			latestPriorRun = &r[idx]
+		if priorRun.ID == currentRun.ID {
+			return BillingMeteredQuantity{}, fmt.Errorf("prior realization run cannot reference run %s itself", currentRun.ID.ID)
 		}
-	}
 
-	if latestPriorRun != nil {
 		// Standard invoice line quantities intentionally use the prior run's
 		// persisted cumulative quantity. That value may have been captured with
 		// an older StoredAtLT than the current run. Period-preserving rating may
 		// still freshly snapshot prior event-time periods with the current
-		// StoredAtLT for correction calculation, but invoice line quantities
-		// should reflect what was previously billed.
-		preLinePeriod = latestPriorRun.MeteredQuantity
+		// StoredAtLT for correction calculation, but the invoice line's raw
+		// metered fields retain the persisted prior snapshot.
+		preLinePeriod = priorRun.MeteredQuantity
 	}
 
-	linePeriod := currentRun.MeteredQuantity.Sub(preLinePeriod)
-	if linePeriod.IsNegative() {
-		return BillingMeteredQuantity{}, fmt.Errorf(
-			"line period metered quantity is negative: current=%s pre_line=%s",
-			currentRun.MeteredQuantity.String(),
-			preLinePeriod.String(),
-		)
-	}
+	clampedCurrent := alpacadecimal.Max(alpacadecimal.Zero, currentRun.MeteredQuantity)
+	clampedPreLinePeriod := alpacadecimal.Max(alpacadecimal.Zero, preLinePeriod)
 
 	return BillingMeteredQuantity{
 		PreLinePeriod: preLinePeriod,
-		LinePeriod:    linePeriod,
+		LinePeriod:    currentRun.MeteredQuantity.Sub(preLinePeriod),
+		// The invoice retains the signed meter interval, while its billable quantity
+		// reflects the difference between clamped cumulative snapshots.
+		//
+		// Example:
+		// - PreLinePeriod: -5
+		// - MeteredQuantity: 8
+		// - LinePeriod: 8 - (-5) = 13
+		//
+		// BillableUsage will be:
+		// - Quantity: 8 - 0 = 8
+		// - PreLinePeriodQuantity: 0
+		BillableUsage: billingrating.Usage{
+			Quantity:              clampedCurrent.Sub(clampedPreLinePeriod),
+			PreLinePeriodQuantity: clampedPreLinePeriod,
+		},
 	}, nil
+}
+
+func (r RealizationRuns) PriorMeteredQuantity(priorRunID *RealizationRunID) (alpacadecimal.Decimal, error) {
+	if priorRunID == nil {
+		return alpacadecimal.Zero, nil
+	}
+
+	priorRun, err := r.GetByID(priorRunID.ID)
+	if err != nil {
+		return alpacadecimal.Decimal{}, fmt.Errorf("resolve prior realization run %s: %w", priorRunID.ID, err)
+	}
+
+	return priorRun.MeteredQuantity, nil
 }
 
 // WithoutVoidedBillingHistory returns runs that still represent effective
@@ -458,6 +456,26 @@ func (r RealizationRuns) Latest() (RealizationRun, bool) {
 	}), true
 }
 
+// PriorRunIDForNextRun returns the most recently created run that still
+// represents effective billing history. A nil result identifies the first
+// effective run.
+func (r RealizationRuns) PriorRunIDForNextRun() *RealizationRunID {
+	nonVoidedRuns := r.WithoutVoidedBillingHistory()
+	if len(nonVoidedRuns) == 0 {
+		return nil
+	}
+
+	priorRun := lo.MaxBy(nonVoidedRuns, func(run RealizationRun, latest RealizationRun) bool {
+		if c := run.CreatedAt.Compare(latest.CreatedAt); c != 0 {
+			return c > 0
+		}
+
+		return run.ID.ID > latest.ID.ID
+	})
+
+	return lo.ToPtr(priorRun.ID)
+}
+
 func (r RealizationRuns) Validate() error {
 	var errs []error
 	for idx, realizationRun := range r {
@@ -465,6 +483,7 @@ func (r RealizationRuns) Validate() error {
 			errs = append(errs, fmt.Errorf("realization run[%d]: %w", idx, err))
 		}
 	}
+
 	return models.NewNillableGenericValidationError(errors.Join(errs...))
 }
 
@@ -481,6 +500,7 @@ func (r RealizationRuns) GetByID(id string) (RealizationRun, error) {
 			return run, nil
 		}
 	}
+
 	return RealizationRun{}, fmt.Errorf("realization run not found [id=%s]", id)
 }
 
@@ -508,5 +528,6 @@ func (r *RealizationRuns) SetRealizationRun(updatedRun RealizationRun) error {
 			return nil
 		}
 	}
+
 	return fmt.Errorf("realization run not found [id=%s]", updatedRun.ID.ID)
 }

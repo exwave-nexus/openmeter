@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	currencytestutils "github.com/openmeterio/openmeter/openmeter/currencies/testutils"
+	"github.com/openmeterio/openmeter/openmeter/ent/db/planratecard"
 	"github.com/openmeterio/openmeter/openmeter/meter"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/addon"
@@ -85,8 +87,7 @@ func TestPlanService(t *testing.T) {
 				Name:                features[0].Name,
 				Description:         lo.ToPtr("RateCard 1"),
 				Metadata:            models.Metadata{"name": features[0].Name},
-				FeatureKey:          lo.ToPtr(features[0].Key),
-				FeatureID:           lo.ToPtr(features[0].ID),
+				Feature:             productcatalog.NewFeatureReference(lo.ToPtr(features[0].ID), lo.ToPtr(features[0].Key)),
 				EntitlementTemplate: productcatalog.NewEntitlementTemplateFrom(productcatalog.BooleanEntitlementTemplate{}),
 				TaxConfig: &productcatalog.TaxConfig{
 					Stripe: &productcatalog.StripeTaxConfig{
@@ -132,8 +133,7 @@ func TestPlanService(t *testing.T) {
 								Name:        features[0].Name,
 								Description: lo.ToPtr("RateCard 1"),
 								Metadata:    models.Metadata{"name": features[0].Name},
-								FeatureKey:  nil,
-								FeatureID:   lo.ToPtr(features[0].ID),
+								Feature:     productcatalog.NewFeatureReference(lo.ToPtr(features[0].ID), nil),
 								TaxConfig: &productcatalog.TaxConfig{
 									Stripe: &productcatalog.StripeTaxConfig{
 										Code: "txcd_10000000",
@@ -163,8 +163,7 @@ func TestPlanService(t *testing.T) {
 								Name:        features[0].Name,
 								Description: lo.ToPtr("RateCard 1"),
 								Metadata:    models.Metadata{"name": features[0].Name},
-								FeatureKey:  lo.ToPtr(features[0].Key),
-								FeatureID:   nil,
+								Feature:     productcatalog.NewFeatureReference(nil, lo.ToPtr(features[0].Key)),
 								TaxConfig: &productcatalog.TaxConfig{
 									Stripe: &productcatalog.StripeTaxConfig{
 										Code: "txcd_10000000",
@@ -314,8 +313,7 @@ func TestPlanService(t *testing.T) {
 									Name:        features[0].Name,
 									Description: lo.ToPtr("RateCard 1"),
 									Metadata:    models.Metadata{"name": features[0].Name},
-									FeatureKey:  lo.ToPtr(features[0].Key),
-									FeatureID:   nil,
+									Feature:     productcatalog.NewFeatureReference(nil, lo.ToPtr(features[0].Key)),
 									EntitlementTemplate: productcatalog.NewEntitlementTemplateFrom(
 										productcatalog.MeteredEntitlementTemplate{
 											Metadata:                nil,
@@ -433,8 +431,7 @@ func TestPlanService(t *testing.T) {
 											Name:        features[0].Name,
 											Description: lo.ToPtr("RateCard 1"),
 											Metadata:    models.Metadata{"name": features[0].Name},
-											FeatureKey:  nil,
-											FeatureID:   lo.ToPtr(features[0].ID),
+											Feature:     productcatalog.NewFeatureReference(lo.ToPtr(features[0].ID), nil),
 											TaxConfig: &productcatalog.TaxConfig{
 												Stripe: &productcatalog.StripeTaxConfig{
 													Code: "txcd_10000000",
@@ -736,7 +733,9 @@ func TestPlanService(t *testing.T) {
 			var planV3 *plan.Plan
 
 			t.Run("V3", func(t *testing.T) {
-				planV3, err = env.Plan.CreatePlan(ctx, planInput)
+				planV3, err = env.Plan.NextPlan(t.Context(), plan.NextPlanInput{
+					NamespacedID: publishedPlanV2.NamespacedID,
+				})
 				require.NoErrorf(t, err, "creating a new draft Plan from active must not fail")
 				require.NotNil(t, planV3, "new draft Plan must not be empty")
 
@@ -744,6 +743,11 @@ func TestPlanService(t *testing.T) {
 
 				assert.Equalf(t, productcatalog.PlanStatusDraft, planV3.Status(),
 					"Plan Status mismatch: expected=%s, actual=%s", productcatalog.PlanStatusDraft, planV3.Status())
+
+				plan.AssertPlanEqual(t, *publishedPlanV2, *planV3)
+				assert.Equal(t, publishedPlanV2.Metadata, planV3.Metadata)
+				assert.Equal(t, publishedPlanV2.BillingCadence, planV3.BillingCadence)
+				assert.Equal(t, publishedPlanV2.ProRatingConfig, planV3.ProRatingConfig)
 
 				t.Run("Addon", func(t *testing.T) {
 					var planAddonV3 *planaddon.PlanAddon
@@ -921,6 +925,57 @@ func TestPlanCustomCurrencyIntegration(t *testing.T) {
 	require.NotNil(t, storedRateCard.Currency)
 	require.Equal(t, customCurrency, storedRateCard.Currency.GetCode())
 	require.Equal(t, customCurrency, storedRateCard.EffectiveCurrency(stored.Currency).GetCode())
+}
+
+func TestUpdateScheduledPlanRejectsWarnings(t *testing.T) {
+	env := pctestutils.NewTestEnv(t)
+	t.Cleanup(func() { env.Close(t) })
+
+	// given: a draft plan with a monthly rate card cadence
+	created, err := env.Plan.CreatePlan(t.Context(), pctestutils.NewTestPlan(t, pctestutils.NewTestNamespace(t)))
+	require.NoError(t, err)
+	week := datetime.MustParseDuration(t, "P1W")
+	month := datetime.MustParseDuration(t, "P1M")
+
+	// when: a draft update ignores the cadence alignment warning
+	updated, err := env.Plan.UpdatePlan(t.Context(), plan.UpdatePlanInput{
+		NamespacedID:            created.NamespacedID,
+		BillingCadence:          &week,
+		IgnoreNonCriticalIssues: true,
+	})
+
+	// then: the draft update still succeeds
+	require.NoError(t, err)
+	require.Equal(t, week, updated.BillingCadence)
+
+	_, err = env.Plan.UpdatePlan(t.Context(), plan.UpdatePlanInput{
+		NamespacedID:   created.NamespacedID,
+		BillingCadence: &month,
+	})
+	require.NoError(t, err)
+
+	publishAt := time.Now().Add(24 * time.Hour).Truncate(time.Microsecond)
+	scheduled, err := env.Plan.PublishPlan(t.Context(), plan.PublishPlanInput{
+		NamespacedID: created.NamespacedID,
+		EffectivePeriod: productcatalog.EffectivePeriod{
+			EffectiveFrom: &publishAt,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, productcatalog.PlanStatusScheduled, scheduled.Status())
+
+	// when: the same update is requested for the scheduled plan
+	_, err = env.Plan.UpdatePlan(t.Context(), plan.UpdatePlanInput{
+		NamespacedID:            created.NamespacedID,
+		BillingCadence:          &week,
+		IgnoreNonCriticalIssues: true,
+	})
+
+	// then: the warning blocks the update and leaves the stored cadence intact
+	require.ErrorContains(t, err, productcatalog.ErrRateCardBillingCadenceUnaligned.Error())
+	stored, err := env.Plan.GetPlan(t.Context(), plan.GetPlanInput{NamespacedID: created.NamespacedID})
+	require.NoError(t, err)
+	require.Equal(t, month, stored.BillingCadence)
 }
 
 func TestUpdatePlanValidatesCurrenciesUsingUpdatedSettlementMode(t *testing.T) {
@@ -1392,9 +1447,9 @@ func TestUpdatePlanInputRejectsPersistedUnrepresentableFields(t *testing.T) {
 
 		return &productcatalog.UsageBasedRateCard{
 			RateCardMeta: productcatalog.RateCardMeta{
-				Key:        featureKey,
-				Name:       "Usage",
-				FeatureKey: &featureKey,
+				Key:     featureKey,
+				Name:    "Usage",
+				Feature: productcatalog.NewFeatureReference(nil, &featureKey),
 				Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 					Amount: decimal.NewFromInt(1),
 				}),
@@ -1474,6 +1529,119 @@ func TestUpdatePlanInputRejectsPersistedUnrepresentableFields(t *testing.T) {
 
 			err := input.ValidateWithPlan(persisted)
 			require.ErrorIs(t, err, tt.expected)
+		})
+	}
+}
+
+func TestCatalogRateCardBillingCadenceAuthoring(t *testing.T) {
+	env := pctestutils.NewTestEnv(t)
+	t.Cleanup(func() { env.Close(t) })
+	namespace := pctestutils.NewTestNamespace(t)
+	for _, tc := range []struct {
+		cadence string
+		valid   bool
+	}{
+		{"PT1H", false}, {"PT23H59M59S", false}, {"P1D", true}, {"PT24H", true},
+	} {
+		t.Run(tc.cadence, func(t *testing.T) {
+			// given: a plan and add-on with the candidate rate-card cadence
+			input := pctestutils.NewTestPlan(t, namespace)
+			input.Key = "cadence-" + tc.cadence
+			period := datetime.MustParseDuration(t, tc.cadence)
+			input.Phases[0].RateCards[0].(*productcatalog.FlatFeeRateCard).BillingCadence = &period
+			// when: draft authoring allows warning-only validation issues
+			input.IgnoreNonCriticalIssues = true
+			_, planErr := env.Plan.CreatePlan(t.Context(), input)
+			addInput := pctestutils.NewTestAddon(t, namespace, input.Phases[0].RateCards...)
+			addInput.Key = input.Key
+			addInput.IgnoreNonCriticalIssues = true
+			_, addonErr := env.Addon.CreateAddon(t.Context(), addInput)
+			planUpdate := plan.UpdatePlanInput{NamespacedID: models.NamespacedID{Namespace: namespace, ID: "test"}, Phases: &input.Phases}
+			planUpdate.IgnoreNonCriticalIssues = true
+			addonUpdate := addon.UpdateAddonInput{NamespacedID: planUpdate.NamespacedID, RateCards: &addInput.RateCards}
+			addonUpdate.IgnoreNonCriticalIssues = true
+			// then: drafts accept the cadence, while strict validation rejects sub-day values
+			for _, err := range []error{planErr, addonErr, planUpdate.Validate(), addonUpdate.Validate()} {
+				require.NoError(t, err)
+			}
+
+			input.IgnoreNonCriticalIssues = false
+			addInput.IgnoreNonCriticalIssues = false
+			planUpdate.IgnoreNonCriticalIssues = false
+			addonUpdate.IgnoreNonCriticalIssues = false
+			if !tc.valid {
+				for _, err := range []error{input.Validate(), addInput.Validate(), planUpdate.Validate(), addonUpdate.Validate()} {
+					require.ErrorContains(t, err, "rate card billing cadence must be at least 24 hours")
+				}
+
+				for _, check := range []struct {
+					err   error
+					field string
+				}{
+					{input.Plan.Validate(), fmt.Sprintf("phases[key=%s].ratecards[key=%s].billingCadence", input.Phases[0].Key, input.Phases[0].RateCards[0].Key())},
+					{addInput.Addon.Validate(), fmt.Sprintf("ratecards[key=%s].billingCadence", addInput.RateCards[0].Key())},
+				} {
+					issues, err := models.AsValidationIssues(check.err)
+					require.NoError(t, err)
+					found := false
+					for _, issue := range issues {
+						if issue.Code() == productcatalog.ErrCodeRateCardBillingCadenceTooShort {
+							require.Equal(t, check.field, issue.Field().String())
+							require.Equal(t, models.ErrorSeverityWarning, issue.Severity())
+							found = true
+						}
+					}
+
+					require.True(t, found)
+				}
+			}
+		})
+	}
+}
+
+func TestNextPlanCopiesLegacyWarnings(t *testing.T) {
+	for _, tc := range []struct {
+		cadence      string
+		publishError string
+	}{
+		{"PT1H", "rate card billing cadence must be at least 24 hours"},
+		{"P1W", "ratecards with prices must have compatible billing cadence"},
+	} {
+		t.Run(tc.cadence, func(t *testing.T) {
+			// given: a published plan with a stored rate-card cadence that now produces a warning
+			env := pctestutils.NewTestEnv(t)
+			t.Cleanup(func() { env.Close(t) })
+			namespace := pctestutils.NewTestNamespace(t)
+			created, err := env.Plan.CreatePlan(t.Context(), pctestutils.NewTestPlan(t, namespace))
+			require.NoError(t, err)
+			publishAt := time.Now().Truncate(time.Microsecond)
+			published, err := env.Plan.PublishPlan(t.Context(), plan.PublishPlanInput{
+				NamespacedID: created.NamespacedID,
+				EffectivePeriod: productcatalog.EffectivePeriod{
+					EffectiveFrom: &publishAt,
+				},
+			})
+			require.NoError(t, err)
+			rateCard, err := env.Client.PlanRateCard.Query().Where(planratecard.Key("api_requests")).Only(t.Context())
+			require.NoError(t, err)
+			_, err = env.Client.PlanRateCard.UpdateOneID(rateCard.ID).
+				SetBillingCadence(datetime.ISODurationString(tc.cadence)).Save(t.Context())
+			require.NoError(t, err)
+
+			// when: the next draft is created from the legacy plan
+			next, err := env.Plan.NextPlan(t.Context(), plan.NextPlanInput{NamespacedID: published.NamespacedID})
+
+			// then: warnings can be repaired in a draft, but it cannot be published unchanged
+			require.NoError(t, err)
+			require.Equal(t, productcatalog.PlanStatusDraft, next.Status())
+			require.Equal(t, datetime.ISODurationString(tc.cadence), next.Phases[0].RateCards[0].GetBillingCadence().ISOString())
+			_, err = env.Plan.PublishPlan(t.Context(), plan.PublishPlanInput{
+				NamespacedID: next.NamespacedID,
+				EffectivePeriod: productcatalog.EffectivePeriod{
+					EffectiveFrom: &publishAt,
+				},
+			})
+			require.ErrorContains(t, err, tc.publishError)
 		})
 	}
 }

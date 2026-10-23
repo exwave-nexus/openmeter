@@ -246,6 +246,17 @@ func (s *service) Update(ctx context.Context, subscriptionID models.NamespacedID
 			return def, err
 		}
 
+		// An edit may have read its spec before a concurrent migration acquired
+		// the customer lock. Do not apply those old terms over the migrated plan.
+		lockedSubscription, err := s.SubscriptionRepo.GetByID(ctx, subscriptionID)
+		if err != nil {
+			return def, err
+		}
+
+		if !lockedSubscription.PlanRef.NilEqual(view.Subscription.PlanRef) {
+			return def, models.NewGenericConflictError(errors.New("subscription plan changed during update; retry with the current subscription"))
+		}
+
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 
@@ -377,6 +388,13 @@ func (s *service) Cancel(ctx context.Context, subscriptionID models.NamespacedID
 			return subscription.Subscription{}, err
 		}
 
+		// Include any edits or migrations that committed while cancellation was
+		// waiting for the lock, so their items and entitlements are ended too.
+		view, err = s.GetView(ctx, subscriptionID)
+		if err != nil {
+			return subscription.Subscription{}, err
+		}
+
 		if err := s.validateCancel(ctx, view, timing); err != nil {
 			return subscription.Subscription{}, err
 		}
@@ -491,6 +509,7 @@ func (s *service) Get(ctx context.Context, subscriptionID models.NamespacedID) (
 	if err != nil {
 		return subscription.Subscription{}, err
 	}
+
 	return sub, nil
 }
 
@@ -547,27 +566,47 @@ func (s *service) ExpandViews(ctx context.Context, subs []subscription.Subscript
 		return nil, nil
 	}
 
-	// If we have multiple customer ids, we can't expand the views
-	if len(lo.Uniq(slicesx.Map(subs, func(s subscription.Subscription) string {
-		return s.CustomerId
-	}))) != 1 {
-		return nil, fmt.Errorf("ExpandViews only supports a single customer id for now")
+	// Customer and feature lookups are namespace-scoped, so ExpandViews operates on a
+	// single namespace. Reject mixed-namespace input rather than silently expanding
+	// everything against the first subscription's namespace.
+	namespaces := lo.Uniq(slicesx.Map(subs, func(s subscription.Subscription) string {
+		return s.Namespace
+	}))
+	if len(namespaces) != 1 {
+		return nil, fmt.Errorf("ExpandViews only supports a single namespace, got %d", len(namespaces))
 	}
 
-	customerID := subs[0].CustomerId
+	namespace := namespaces[0]
 
-	cus, err := s.CustomerService.GetCustomer(ctx, customer.GetCustomerInput{
-		CustomerID: &customer.CustomerID{
-			Namespace: subs[0].Namespace,
-			ID:        customerID,
-		},
+	// Batch-fetch every distinct customer on the set, then attach the right one to
+	// each view. A single-customer slice (e.g. from GetView) is just the trivial case.
+	customerIDs := lo.Uniq(slicesx.Map(subs, func(s subscription.Subscription) string {
+		return s.CustomerId
+	}))
+
+	customerList, err := s.CustomerService.ListCustomers(ctx, customer.ListCustomersInput{
+		Namespace:   namespace,
+		CustomerIDs: customerIDs,
+		Page:        pagination.NewPage(1, len(customerIDs)),
+		// Match the prior GetCustomer-by-ID behavior, which resolved a subscription's
+		// customer even when soft-deleted; otherwise expanding a subscription of a
+		// deleted customer (e.g. via GetView) would start to fail.
+		IncludeDeleted: true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get customer: %w", err)
+		return nil, fmt.Errorf("failed to list customers: %w", err)
 	}
 
-	if cus == nil {
-		return nil, fmt.Errorf("customer is nil")
+	customersByID := make(map[string]*customer.Customer, len(customerList.Items))
+	for i := range customerList.Items {
+		c := &customerList.Items[i]
+		customersByID[c.ID] = c
+	}
+
+	for _, sub := range subs {
+		if _, ok := customersByID[sub.CustomerId]; !ok {
+			return nil, fmt.Errorf("customer %s not found for subscription %s", sub.CustomerId, sub.ID)
+		}
 	}
 
 	now := clock.Now()
@@ -604,7 +643,7 @@ func (s *service) ExpandViews(ctx context.Context, subs []subscription.Subscript
 
 		if len(uniqFeatureIDs) > 0 {
 			featsOfEnts, err = s.FeatureService.ListFeatures(ctx, feature.ListFeaturesParams{
-				Namespace:       cus.Namespace,
+				Namespace:       namespace,
 				IncludeArchived: true,
 				IDsOrKeys:       uniqFeatureIDs,
 			})
@@ -621,7 +660,12 @@ func (s *service) ExpandViews(ctx context.Context, subs []subscription.Subscript
 			keyOrIDS := make(map[string]struct{}, len(items))
 
 			for _, item := range items {
-				fKey, fID := lo.FromPtr(item.RateCard.AsMeta().FeatureKey), lo.FromPtr(item.RateCard.AsMeta().FeatureID)
+				reference := item.RateCard.AsMeta().Feature
+				if reference == nil {
+					continue
+				}
+
+				fKey, fID := lo.FromPtr(reference.Key), lo.FromPtr(reference.ID)
 
 				if fKey != "" {
 					keyOrIDS[fKey] = struct{}{}
@@ -639,7 +683,7 @@ func (s *service) ExpandViews(ctx context.Context, subs []subscription.Subscript
 
 		if len(uniqFeatureKeyOrIDs) > 0 {
 			featsOfItems, err = s.FeatureService.ListFeatures(ctx, feature.ListFeaturesParams{
-				Namespace:       cus.Namespace,
+				Namespace:       namespace,
 				IncludeArchived: true,
 				IDsOrKeys:       uniqFeatureKeyOrIDs,
 			})
@@ -715,7 +759,12 @@ func (s *service) ExpandViews(ctx context.Context, subs []subscription.Subscript
 	featsOfItemsBySub := lo.MapEntries(itemsBySub, func(key string, items []subscription.SubscriptionItem) (string, []feature.Feature) {
 		found := make([]feature.Feature, 0)
 		for _, item := range items {
-			fKey, fID := lo.FromPtr(item.RateCard.AsMeta().FeatureKey), lo.FromPtr(item.RateCard.AsMeta().FeatureID)
+			reference := item.RateCard.AsMeta().Feature
+			if reference == nil {
+				continue
+			}
+
+			fKey, fID := lo.FromPtr(reference.Key), lo.FromPtr(reference.ID)
 
 			if fKey == "" && fID == "" {
 				continue
@@ -743,7 +792,8 @@ func (s *service) ExpandViews(ctx context.Context, subs []subscription.Subscript
 	})
 
 	return slicesx.MapWithErr(subs, func(s subscription.Subscription) (subscription.SubscriptionView, error) {
-		view, err := subscription.NewSubscriptionView(s, lo.FromPtr(cus),
+		view, err := subscription.NewSubscriptionView(
+			s, lo.FromPtr(customersByID[s.CustomerId]),
 			phasesBySub[s.ID],
 			itemsBySub[s.ID],
 			entsBySub[s.ID],
@@ -753,6 +803,29 @@ func (s *service) ExpandViews(ctx context.Context, subs []subscription.Subscript
 
 		return lo.FromPtr(view), err
 	})
+}
+
+// ListViews lists the subscriptions matching the criteria and expands them to full
+// views, preserving List's order and total count.
+func (s *service) ListViews(ctx context.Context, params subscription.ListSubscriptionsInput) (pagination.Result[subscription.SubscriptionView], error) {
+	var def pagination.Result[subscription.SubscriptionView]
+
+	list, err := s.List(ctx, params)
+	if err != nil {
+		return def, err
+	}
+
+	// ExpandViews maps over its input in order, so the views keep List's sort order.
+	views, err := s.ExpandViews(ctx, list.Items)
+	if err != nil {
+		return def, fmt.Errorf("failed to expand subscriptions to views: %w", err)
+	}
+
+	return pagination.Result[subscription.SubscriptionView]{
+		Page:       list.Page,
+		TotalCount: list.TotalCount,
+		Items:      views,
+	}, nil
 }
 
 func (s *service) updateCustomerCurrencyIfNotSet(ctx context.Context, sub subscription.Subscription, currentSpec subscription.SubscriptionSpec) error {

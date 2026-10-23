@@ -13,6 +13,8 @@ import (
 	dbplan "github.com/openmeterio/openmeter/openmeter/ent/db/plan"
 	"github.com/openmeterio/openmeter/openmeter/ent/db/predicate"
 	dbsubscription "github.com/openmeterio/openmeter/openmeter/ent/db/subscription"
+	dbsubscriptionitem "github.com/openmeterio/openmeter/openmeter/ent/db/subscriptionitem"
+	dbsubscriptionphase "github.com/openmeterio/openmeter/openmeter/ent/db/subscriptionphase"
 	"github.com/openmeterio/openmeter/openmeter/subscription"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/filter"
@@ -42,6 +44,37 @@ func withSubscriptionReferences(q *db.SubscriptionQuery) *db.SubscriptionQuery {
 		})
 }
 
+func (r *subscriptionRepo) AdvancePlanReference(ctx context.Context, input subscription.AdvancePlanReferenceInput) error {
+	if err := input.Validate(); err != nil {
+		return err
+	}
+
+	_, err := entutils.TransactingRepo(ctx, r, func(ctx context.Context, repo *subscriptionRepo) (struct{}, error) {
+		exists, err := repo.db.Plan.Query().Where(
+			dbplan.Namespace(input.SubscriptionID.Namespace), dbplan.ID(input.TargetPlan.Id),
+			dbplan.Key(input.TargetPlan.Key), dbplan.Version(input.TargetPlan.Version),
+		).Exist(ctx)
+		if err != nil {
+			return struct{}{}, err
+		}
+
+		if !exists {
+			return struct{}{}, models.NewGenericValidationError(errors.New("target plan reference does not exist in the subscription namespace"))
+		}
+
+		_, err = repo.db.Subscription.UpdateOneID(input.SubscriptionID.ID).
+			Where(dbsubscription.Namespace(input.SubscriptionID.Namespace), dbsubscription.PlanID(input.CurrentPlan.Id)).
+			SetPlanID(input.TargetPlan.Id).Save(ctx)
+		if db.IsNotFound(err) {
+			return struct{}{}, models.NewGenericConflictError(errors.New("subscription plan changed during migration"))
+		}
+
+		return struct{}{}, err
+	})
+
+	return err
+}
+
 func (r *subscriptionRepo) SetEndOfCadence(ctx context.Context, id models.NamespacedID, at *time.Time) (*subscription.Subscription, error) {
 	return entutils.TransactingRepo(ctx, r, func(ctx context.Context, repo *subscriptionRepo) (*subscription.Subscription, error) {
 		_, err := repo.db.Subscription.UpdateOneID(id.ID).SetOrClearActiveTo(at).Where(dbsubscription.Namespace(id.Namespace)).Save(ctx)
@@ -50,6 +83,7 @@ func (r *subscriptionRepo) SetEndOfCadence(ctx context.Context, id models.Namesp
 				id.ID,
 			)
 		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -75,6 +109,7 @@ func (r *subscriptionRepo) UpdateAnnotations(ctx context.Context, id models.Name
 				id.ID,
 			)
 		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -166,6 +201,7 @@ func (r *subscriptionRepo) CreateCostBasisPins(ctx context.Context, inputs []sub
 			errs = append(errs, fmt.Errorf("input[%d]: %w", idx, err))
 		}
 	}
+
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}
@@ -196,6 +232,7 @@ func (r *subscriptionRepo) Delete(ctx context.Context, id models.NamespacedID) e
 		if db.IsNotFound(err) {
 			return subscription.NewSubscriptionNotFoundError(id.ID)
 		}
+
 		if err != nil {
 			return err
 		}
@@ -219,11 +256,24 @@ func (r *subscriptionRepo) List(ctx context.Context, in subscription.ListSubscri
 			query = query.Where(dbsubscription.NamespaceIn(in.Namespaces...))
 		}
 
+		if in.ExcludeCustomCurrency {
+			// Match the schedule loaded by GetView, including past and future items
+			// but excluding deleted revisions. InvoiceCurrency is always fiat.
+			query = query.Where(dbsubscription.Not(dbsubscription.HasPhasesWith(
+				dbsubscriptionphase.Or(dbsubscriptionphase.DeletedAtIsNil(), dbsubscriptionphase.DeletedAtGT(now)),
+				dbsubscriptionphase.HasItemsWith(
+					dbsubscriptionitem.Or(dbsubscriptionitem.DeletedAtIsNil(), dbsubscriptionitem.DeletedAtGT(now)),
+					dbsubscriptionitem.CustomCurrencyIDNotNil(),
+				),
+			)))
+		}
+
 		if in.PlanKey != nil {
 			if p := filter.SelectPredicate[predicate.Plan](filter.Filter(*in.PlanKey), dbplan.FieldKey); p != nil {
 				query = query.Where(dbsubscription.HasPlanWith(*p))
 			}
 		}
+
 		query = filter.ApplyToQuery(query, in.ID, dbsubscription.FieldID)
 		query = filter.ApplyToQuery(query, in.CustomerID, dbsubscription.FieldCustomerID)
 		query = filter.ApplyToQuery(query, in.PlanID, dbsubscription.FieldPlanID)

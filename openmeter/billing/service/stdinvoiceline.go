@@ -13,6 +13,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/sequence"
 	"github.com/openmeterio/openmeter/openmeter/billing/service/invoicecalc"
 	"github.com/openmeterio/openmeter/openmeter/customer"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/framework/transaction"
@@ -26,6 +27,7 @@ func (s *Service) CreatePendingInvoiceLines(ctx context.Context, input billing.C
 	for i := range input.Lines {
 		input.Lines[i].Namespace = input.Customer.Namespace
 		input.Lines[i].Currency = input.Currency
+		input.Lines[i].RateCardDiscounts = input.Lines[i].RateCardDiscounts.UpsertCorrelationIDs()
 
 		if input.Lines[i].ChargeID != nil && input.Lines[i].Engine == "" {
 			// Charge-backed pending lines must set their engine explicitly. Defaulting them
@@ -35,7 +37,7 @@ func (s *Service) CreatePendingInvoiceLines(ctx context.Context, input billing.C
 			}
 		}
 
-		if err := s.lineEngines.populateGatheringLineEngine(&input.Lines[i]); err != nil {
+		if err := s.lineEngines.populateGatheringLineEngine(&input.Lines[i].GatheringLine); err != nil {
 			return nil, fmt.Errorf("line[%d]: populating engine: %w", i, err)
 		}
 	}
@@ -53,8 +55,10 @@ func (s *Service) CreatePendingInvoiceLines(ctx context.Context, input billing.C
 		}
 	}
 
-	featureMeterRefs := billing.GatheringLines(input.Lines).CollectFeatureMeterRefs()
-	_, err = s.featureService.ResolveFeatureMeters(ctx, input.Customer.Namespace, featureMeterRefs...)
+	linesRequiringFeatureMeterValidation := lo.Filter(input.Lines, func(line billing.CreatePendingInvoiceLine, _ int) bool {
+		return !line.BypassFeatureMeterValidation
+	})
+	err = s.featureMeterResolver.RequireFeatureMeters(ctx, input.Customer.Namespace, linesRequiringFeatureMeterValidation...)
 	if err != nil {
 		return nil, billing.ValidationError{
 			Err: fmt.Errorf("resolving pending line feature meters: %w", err),
@@ -84,6 +88,12 @@ func (s *Service) CreatePendingInvoiceLines(ctx context.Context, input billing.C
 			}
 		}
 
+		for i := range input.Lines {
+			if err := productcatalog.ResolveTaxConfig(ctx, s.taxCodeService, input.Customer.Namespace, input.Lines[i].TaxConfig); err != nil {
+				return nil, fmt.Errorf("resolving line[%d] tax config: %w", i, err)
+			}
+		}
+
 		// let's resolve the customer's settings
 		customerProfile, err := s.GetCustomerOverride(ctx, billing.GetCustomerOverrideInput{
 			Customer: input.Customer,
@@ -103,7 +113,9 @@ func (s *Service) CreatePendingInvoiceLines(ctx context.Context, input billing.C
 
 		gatheringInvoice := gatheringInvoiceUpsertResult.Invoice
 
-		linesToCreate, err := slicesx.MapWithErr(input.Lines, func(l billing.GatheringLine) (billing.GatheringLine, error) {
+		linesToCreate, err := slicesx.MapWithErr(input.Lines, func(createLine billing.CreatePendingInvoiceLine) (billing.GatheringLine, error) {
+			l := createLine.GatheringLine
+
 			l.Namespace = input.Customer.Namespace
 			l.Currency = input.Currency
 
@@ -239,6 +251,7 @@ func (s *Service) upsertGatheringInvoiceForCurrency(ctx context.Context, currenc
 				if l.DeletedAt == nil {
 					l.DeletedAt = lo.ToPtr(clock.Now())
 				}
+
 				return l
 			})
 		}

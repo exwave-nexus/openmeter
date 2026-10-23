@@ -8,6 +8,7 @@ import (
 	"github.com/samber/mo"
 	"github.com/stretchr/testify/require"
 
+	"github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/stddetailedline"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
@@ -15,6 +16,52 @@ import (
 	"github.com/openmeterio/openmeter/pkg/models"
 	"github.com/openmeterio/openmeter/pkg/timeutil"
 )
+
+func TestStandardLineFeatureMeterReference(t *testing.T) {
+	// given:
+	// - persisted standard lines with metered, flat, and absent feature dependencies
+	unitPrice := productcatalog.NewPriceFrom(productcatalog.UnitPrice{Amount: alpacadecimal.NewFromInt(1)})
+	flatPrice := productcatalog.NewPriceFrom(productcatalog.FlatPrice{Amount: alpacadecimal.NewFromInt(1)})
+	lines := StandardLines{
+		{
+			StandardLineBase: StandardLineBase{ManagedResource: models.ManagedResource{ID: "metered-line"}},
+			UsageBased:       &UsageBasedLine{FeatureKey: "metered-feature", Price: unitPrice},
+		},
+		{
+			StandardLineBase: StandardLineBase{ManagedResource: models.ManagedResource{ID: "flat-line"}},
+			UsageBased:       &UsageBasedLine{FeatureKey: "flat-feature", Price: flatPrice},
+		},
+		{
+			StandardLineBase: StandardLineBase{ManagedResource: models.ManagedResource{ID: "featureless-line"}},
+		},
+	}
+
+	// when:
+	// - their feature references and identities are read
+	meteredRef := lines[0].GetFeatureMeterRef()
+	flatRef := lines[1].GetFeatureMeterRef()
+	featurelessRef := lines[2].GetFeatureMeterRef()
+
+	// then:
+	// - meter requirements follow the price and every persisted line retains its identity
+	require.Equal(t, "metered-feature", meteredRef.IDOrKey.Key)
+	require.True(t, meteredRef.RequireMeter)
+	require.Equal(t, "flat-feature", flatRef.IDOrKey.Key)
+	require.False(t, flatRef.RequireMeter)
+	require.Nil(t, featurelessRef)
+	require.Equal(t, featuremeter.FeatureReferenceIdentity{
+		Kind: featuremeter.FeatureReferenceKindLines,
+		ID:   "metered-line",
+	}, lines[0].GetFeatureMeterOwner())
+	require.Equal(t, featuremeter.FeatureReferenceIdentity{
+		Kind: featuremeter.FeatureReferenceKindLines,
+		ID:   "flat-line",
+	}, lines[1].GetFeatureMeterOwner())
+	require.Equal(t, featuremeter.FeatureReferenceIdentity{
+		Kind: featuremeter.FeatureReferenceKindLines,
+		ID:   "featureless-line",
+	}, lines[2].GetFeatureMeterOwner())
+}
 
 func TestStandardLineValidateAllowsNonNegativeTotals(t *testing.T) {
 	line := validStandardLineForValidation()
@@ -25,6 +72,33 @@ func TestStandardLineValidateAllowsNonNegativeTotals(t *testing.T) {
 	line.Totals.Total = alpacadecimal.NewFromInt(1)
 
 	require.NoError(t, line.Validate())
+}
+
+func TestStandardLineValidateIgnoresInvoiceAt(t *testing.T) {
+	t.Parallel()
+
+	line := validStandardLineForValidation()
+	line.UsageBased.Price = productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+		Amount: alpacadecimal.NewFromInt(1),
+	})
+	line.UsageBased.FeatureKey = "feature-key"
+
+	for name, invoiceAt := range map[string]time.Time{
+		"zero":                {},
+		"before period start": line.Period.From.Add(-time.Hour),
+		"inside period":       line.Period.From.Add(30 * time.Minute),
+		"at period end":       line.Period.To,
+		"after period end":    line.Period.To.Add(time.Hour),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			line := line
+			line.InvoiceAt = invoiceAt
+
+			require.NoError(t, line.Validate())
+		})
+	}
 }
 
 func TestStandardLineValidateRejectsNegativeTotals(t *testing.T) {

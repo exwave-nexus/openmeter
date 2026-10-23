@@ -13,9 +13,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	usagebasedrating "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/rating"
-	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
 	"github.com/openmeterio/openmeter/openmeter/customer"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/framework/transaction"
 	"github.com/openmeterio/openmeter/pkg/slicesx"
@@ -26,26 +24,35 @@ const (
 	defaultMaxParallelRatingsPerRequest = 5
 )
 
+type realtimeUsageRating struct {
+	Usage            usagebasedrating.GetTotalsForUsageResult
+	ValidationIssues billing.ValidationIssues
+}
+
 func (s *service) GetByIDs(ctx context.Context, input usagebased.GetByIDsInput) ([]usagebased.Charge, error) {
 	if err := input.Validate(); err != nil {
 		return nil, err
 	}
 
-	return transaction.Run(ctx, s.adapter, func(ctx context.Context) ([]usagebased.Charge, error) {
-		charges, err := s.adapter.GetByIDs(ctx, input)
+	// The realtime usage expansion queries ClickHouse per charge, so it runs
+	// after the adapter read instead of inside the transaction: a remote call
+	// must not pin the pooled Postgres connection. Callers that wrap this in
+	// their own transaction hoist the expansion the same way.
+	charges, err := transaction.Run(ctx, s.adapter, func(ctx context.Context) ([]usagebased.Charge, error) {
+		return s.adapter.GetByIDs(ctx, input)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if input.Expands.Has(meta.ExpandRealtimeUsage) {
+		charges, err = s.expandChargesUsage(ctx, input.Namespace, charges)
 		if err != nil {
 			return nil, err
 		}
+	}
 
-		if input.Expands.Has(meta.ExpandRealtimeUsage) {
-			charges, err = s.expandChargesUsage(ctx, input.Namespace, charges)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		return charges, nil
-	})
+	return charges, nil
 }
 
 func (s *service) GetByID(ctx context.Context, input usagebased.GetByIDInput) (usagebased.Charge, error) {
@@ -53,25 +60,29 @@ func (s *service) GetByID(ctx context.Context, input usagebased.GetByIDInput) (u
 		return usagebased.Charge{}, err
 	}
 
-	return transaction.Run(ctx, s.adapter, func(ctx context.Context) (usagebased.Charge, error) {
-		charge, err := s.adapter.GetByID(ctx, input)
+	// The realtime totals read rates against ClickHouse, so it runs after
+	// the adapter read instead of inside the transaction; see GetByIDs.
+	charge, err := transaction.Run(ctx, s.adapter, func(ctx context.Context) (usagebased.Charge, error) {
+		return s.adapter.GetByID(ctx, input)
+	})
+	if err != nil {
+		return usagebased.Charge{}, err
+	}
+
+	if input.Expands.Has(meta.ExpandRealtimeUsage) {
+		totals, err := s.GetCurrentTotals(ctx, usagebased.GetCurrentTotalsInput{
+			ChargeID: charge.GetChargeID(),
+		})
 		if err != nil {
 			return usagebased.Charge{}, err
 		}
 
-		if input.Expands.Has(meta.ExpandRealtimeUsage) {
-			totals, err := s.GetCurrentTotals(ctx, usagebased.GetCurrentTotalsInput{
-				ChargeID: charge.GetChargeID(),
-			})
-			if err != nil {
-				return usagebased.Charge{}, err
-			}
+		charge.Expands.RealtimeUsage = &totals.DueTotals
+		charge.Expands.RealtimeQuantity = &totals.MeteredQuantity
+		charge = withRealtimeValidationIssues(charge, totals.ValidationIssues)
+	}
 
-			charge.Expands.RealtimeUsage = &totals.DueTotals
-		}
-
-		return charge, nil
-	})
+	return charge, nil
 }
 
 func (s *service) expandChargesUsage(ctx context.Context, namespace string, charges usagebased.Charges) (usagebased.Charges, error) {
@@ -91,18 +102,12 @@ func (s *service) expandChargesUsage(ctx context.Context, namespace string, char
 		if err != nil {
 			return nil, err
 		}
+
 		customerOverridesById[customerID] = customerOverride
 	}
 
-	// Fetch all references featureMeters in bulk
-	referencedFeatureMeters := lo.Uniq(lo.Map(charges, func(charge usagebased.Charge, _ int) feature.FeatureMeterRef {
-		return feature.FeatureMeterRef{
-			IDOrKey:      charge.GetFeatureKeyOrID(),
-			RequireMeter: true,
-		}
-	}))
-
-	featureMeters, err := s.featureService.ResolveFeatureMeters(ctx, namespace, referencedFeatureMeters...)
+	// Fetch all referenced feature meters in bulk.
+	featureMeters, err := s.featureMeterResolver.Resolve(ctx, namespace, charges...)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +122,7 @@ func (s *service) expandChargesUsage(ctx context.Context, namespace string, char
 	var wg sync.WaitGroup
 
 	for _, charge := range charges {
-		featureMeter, err := charge.ResolveFeatureMeter(featureMeters)
+		featureMeter, err := featureMeters.Get(charge)
 		if err != nil {
 			errCh <- fmt.Errorf("resolving feature meter: %w", err)
 			break
@@ -145,20 +150,24 @@ func (s *service) expandChargesUsage(ctx context.Context, namespace string, char
 				}
 			}()
 
-			var dueTotals totals.Totals
-			dueTotals, err = s.rater.GetTotalsForUsage(ctx, usagebasedrating.GetTotalsForUsageInput{
+			var ratedUsage usagebasedrating.GetTotalsForUsageResult
+			ratedUsage, err = s.rater.GetTotalsForUsage(ctx, usagebasedrating.GetTotalsForUsageInput{
 				Charge:                  charge,
 				Customer:                customerOverridesById[charge.GetCustomerID()],
 				FeatureMeter:            featureMeter,
 				StoredAtLT:              storedAt,
 				IgnoreMinimumCommitment: storedAt.Before(charge.Intent.GetEffectiveServicePeriod().To),
 			})
+			issues, err := billing.ToValidationIssues(err, billing.RequireWarningsOnly())
 			if err != nil {
 				err = fmt.Errorf("get totals for charge %s: %w", charge.ID, err)
 				return
 			}
 
-			ratingResults.Store(charge.GetChargeID(), dueTotals)
+			ratingResults.Store(charge.GetChargeID(), realtimeUsageRating{
+				Usage:            ratedUsage,
+				ValidationIssues: issues,
+			})
 		})
 	}
 
@@ -179,17 +188,30 @@ func (s *service) expandChargesUsage(ctx context.Context, namespace string, char
 	}
 
 	return slicesx.MapWithErr(charges, func(charge usagebased.Charge) (usagebased.Charge, error) {
-		dueTotalsAny, ok := ratingResults.Load(charge.GetChargeID())
+		ratedAny, ok := ratingResults.Load(charge.GetChargeID())
 		if !ok {
 			return charge, fmt.Errorf("totals result not found for charge %s", charge.ID)
 		}
 
-		dueTotals, ok := dueTotalsAny.(totals.Totals)
+		rated, ok := ratedAny.(realtimeUsageRating)
 		if !ok {
 			return charge, fmt.Errorf("invalid totals type for charge %s", charge.ID)
 		}
 
-		charge.Expands.RealtimeUsage = &dueTotals
-		return charge, nil
+		charge.Expands.RealtimeUsage = &rated.Usage.Totals
+		charge.Expands.RealtimeQuantity = &rated.Usage.MeteredQuantity
+
+		return withRealtimeValidationIssues(charge, rated.ValidationIssues), nil
 	})
+}
+
+// Realtime warnings describe this read's metered snapshot, not persisted charge state.
+func withRealtimeValidationIssues(charge usagebased.Charge, issues billing.ValidationIssues) usagebased.Charge {
+	charge.ValidationIssues, _ = replaceValidationIssueComponent(
+		charge.ValidationIssues,
+		billing.ValidationComponentBillingRating,
+		issues,
+	)
+
+	return charge
 }

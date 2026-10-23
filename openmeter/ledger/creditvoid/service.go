@@ -42,24 +42,31 @@ func (c Config) Validate() error {
 	if c.Adapter == nil {
 		errs = append(errs, errors.New("adapter is required"))
 	}
+
 	if c.Ledger == nil {
 		errs = append(errs, errors.New("ledger is required"))
 	}
+
 	if c.Dependencies.AccountService == nil {
 		errs = append(errs, errors.New("account service is required"))
 	}
+
 	if c.Dependencies.AccountCatalog == nil {
 		errs = append(errs, errors.New("account catalog is required"))
 	}
+
 	if c.Dependencies.BalanceQuerier == nil {
 		errs = append(errs, errors.New("balance querier is required"))
 	}
+
 	if c.Breakage == nil {
 		errs = append(errs, errors.New("breakage service is required"))
 	}
+
 	if c.AccountLocker == nil {
 		errs = append(errs, errors.New("account locker is required"))
 	}
+
 	if c.TransactionManager == nil {
 		errs = append(errs, errors.New("transaction manager is required"))
 	}
@@ -138,30 +145,37 @@ func (i ListVoidedCreditImpactsInput) Validate() error {
 	if err := i.CustomerID.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("customer id: %w", err))
 	}
+
 	if i.Currency != nil {
 		if err := i.Currency.Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("currency: %w", err))
 		}
 	}
+
 	if i.AsOf.IsZero() {
 		errs = append(errs, errors.New("as of is required"))
 	}
+
 	if i.After != nil {
 		if err := i.After.Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("after: %w", err))
 		}
 	}
+
 	if i.Before != nil {
 		if err := i.Before.Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("before: %w", err))
 		}
 	}
+
 	if i.After != nil && i.Before != nil {
 		errs = append(errs, errors.New("after and before cannot be set together"))
 	}
+
 	if err := breakage.ValidateExpiredRouteFilter(i.Route); err != nil {
 		errs = append(errs, fmt.Errorf("route: %w", err))
 	}
+
 	if i.Limit < 1 {
 		errs = append(errs, errors.New("limit must be greater than 0"))
 	}
@@ -175,12 +189,16 @@ type ListVoidedCreditImpactsResult struct {
 }
 
 type VoidImpact struct {
-	ID          models.NamespacedID
-	CreatedAt   time.Time
-	VoidedAt    time.Time
-	CustomerID  customer.CustomerID
-	Currency    currencyx.Code
-	Amount      alpacadecimal.Decimal
+	ID         models.NamespacedID
+	CreatedAt  time.Time
+	VoidedAt   time.Time
+	CustomerID customer.CustomerID
+	Currency   currencies.CurrencyReference
+	Amount     alpacadecimal.Decimal
+	// BalanceOffset removes later void siblings from the terminal balance at
+	// VoidedAt. It is scoped by currency identity and the requested feature filter.
+	BalanceOffset alpacadecimal.Decimal
+
 	Annotations models.Annotations
 }
 
@@ -247,9 +265,11 @@ func (s *service) planVoid(ctx context.Context, input VoidCreditPurchaseInput) (
 	buckets, err := s.deps.BalanceQuerier.GetBalanceBuckets(ctx, ledger.BalanceBucketQuery{
 		Namespace: input.CustomerID.Namespace,
 		Filters: ledger.Filters{
-			AccountID:      &fboAccountID.ID,
-			SourceChargeID: mo.Some(&input.ChargeID),
-			AsOf:           &voidedAt,
+			AccountID: &fboAccountID.ID,
+			Provenance: ledger.ProvenanceFilter{
+				SourceChargeID: mo.Some(&input.ChargeID),
+			},
+			AsOf: &voidedAt,
 			Route: ledger.RouteFilter{
 				Currency: currencies.NewCurrencyReference(input.Currency),
 			},
@@ -405,6 +425,7 @@ func (s *service) resolveVoidSlice(ctx context.Context, input VoidCreditPurchase
 	if err != nil {
 		return nil, pendingVoidRecord{}, fmt.Errorf("resolve issue correction: %w", err)
 	}
+
 	if len(inputs) != 1 {
 		return nil, pendingVoidRecord{}, fmt.Errorf("expected one issue correction transaction input, got %d", len(inputs))
 	}
@@ -413,6 +434,7 @@ func (s *service) resolveVoidSlice(ctx context.Context, input VoidCreditPurchase
 	if err != nil {
 		return nil, pendingVoidRecord{}, err
 	}
+
 	if correctedFBO != slice.fboAddress.SubAccountID() {
 		return nil, pendingVoidRecord{}, fmt.Errorf("issue correction FBO sub-account %s does not match voided FBO sub-account %s", correctedFBO, slice.fboAddress.SubAccountID())
 	}
@@ -436,11 +458,15 @@ func (s *service) originalIssueTransaction(ctx context.Context, input VoidCredit
 
 	for {
 		page, err := s.ledger.ListTransactions(ctx, ledger.ListTransactionsInput{
-			Namespace:      input.CustomerID.Namespace,
-			Cursor:         cursor,
-			Limit:          100,
-			AccountIDs:     []string{slice.fboAccount},
-			Currency:       &input.Currency,
+			Namespace: input.CustomerID.Namespace,
+			Cursor:    cursor,
+			Limit:     100,
+			EntryFilter: ledger.TransactionEntryFilter{
+				AccountIDs: []string{slice.fboAccount},
+				Currency:   &input.Currency,
+			},
+			ReturnOnlyMatchingEntries: true,
+
 			AsOf:           &voidedAt,
 			CreditMovement: ledger.ListTransactionsCreditMovementPositive,
 			AnnotationFilters: map[string]string{
@@ -482,6 +508,7 @@ func (s *service) transactionByID(ctx context.Context, id models.NamespacedID) (
 	if err != nil {
 		return nil, fmt.Errorf("get transaction %s: %w", id.ID, err)
 	}
+
 	if len(page.Items) != 1 {
 		return nil, fmt.Errorf("transaction %s not found", id.ID)
 	}
@@ -494,13 +521,16 @@ func transactionIssuedFBOForSource(tx ledger.Transaction, sourceChargeID string,
 		if entry.PostingAddress().AccountType() != ledger.AccountTypeCustomerFBO {
 			continue
 		}
+
 		if entry.PostingAddress().SubAccountID() != fboSubAccountID {
 			continue
 		}
+
 		if !entry.Amount().IsPositive() {
 			continue
 		}
-		if entry.SourceChargeID() == nil || *entry.SourceChargeID() != sourceChargeID {
+
+		if entry.Provenance().SourceChargeID == nil || *entry.Provenance().SourceChargeID != sourceChargeID {
 			continue
 		}
 
@@ -520,11 +550,13 @@ func correctionEntrySubAccounts(input ledger.TransactionInput) (string, string, 
 			if !entry.Amount().IsNegative() {
 				continue
 			}
+
 			fboSubAccountID = entry.PostingAddress().SubAccountID()
 		case ledger.AccountTypeCustomerReceivable:
 			if !entry.Amount().IsPositive() {
 				continue
 			}
+
 			receivableSubAccountID = entry.PostingAddress().SubAccountID()
 		}
 	}
@@ -532,6 +564,7 @@ func correctionEntrySubAccounts(input ledger.TransactionInput) (string, string, 
 	if fboSubAccountID == "" {
 		return "", "", errors.New("issue correction FBO entry is required")
 	}
+
 	if receivableSubAccountID == "" {
 		return "", "", errors.New("issue correction receivable entry is required")
 	}
@@ -543,6 +576,7 @@ func (s *service) persistCommittedVoidRecords(ctx context.Context, pending []pen
 	if len(pending) == 0 {
 		return nil
 	}
+
 	if group == nil {
 		return errors.New("transaction group is required")
 	}
@@ -592,17 +626,49 @@ func (s *service) ListVoidedCreditImpacts(ctx context.Context, input ListVoidedC
 	if err != nil {
 		return ListVoidedCreditImpactsResult{}, fmt.Errorf("list void records: %w", err)
 	}
+
 	if len(records) == 0 {
 		return ListVoidedCreditImpactsResult{
 			Items: []VoidImpact{},
 		}, nil
 	}
 
+	currencyReferences := make(map[string]currencies.CurrencyReference)
+	for _, record := range records {
+		if record.FBOSubAccountID == "" {
+			continue
+		}
+
+		if _, ok := currencyReferences[record.FBOSubAccountID]; ok {
+			continue
+		}
+
+		subAccount, err := s.deps.AccountCatalog.GetSubAccountByID(ctx, models.NamespacedID{
+			Namespace: record.ID.Namespace,
+			ID:        record.FBOSubAccountID,
+		})
+		if err != nil {
+			return ListVoidedCreditImpactsResult{}, fmt.Errorf("get void FBO sub-account %s: %w", record.FBOSubAccountID, err)
+		}
+
+		reference := subAccount.Route().Currency.Clone()
+		if reference.GetCode() != record.Currency {
+			return ListVoidedCreditImpactsResult{}, fmt.Errorf("void FBO sub-account %s currency %s does not match record currency %s", record.FBOSubAccountID, reference.GetCode(), record.Currency)
+		}
+
+		currencyReferences[record.FBOSubAccountID] = reference
+	}
+
 	groups := make(map[voidImpactGroupKey]*voidImpactGroup)
 	for _, record := range records {
+		currencyReference := currencies.NewCurrencyReference(record.Currency)
+		if record.FBOSubAccountID != "" {
+			currencyReference = currencyReferences[record.FBOSubAccountID].Clone()
+		}
+
 		key := voidImpactGroupKey{
 			voidedAt:           record.VoidedAt,
-			currency:           record.Currency,
+			currencyIdentity:   currencyReference.IdentityKey(),
 			sourceChargeID:     record.SourceChargeID,
 			transactionGroupID: record.VoidTransactionGroupID,
 		}
@@ -613,7 +679,7 @@ func (s *service) ListVoidedCreditImpacts(ctx context.Context, input ListVoidedC
 				id:          record.ID,
 				createdAt:   record.CreatedAt,
 				voidedAt:    record.VoidedAt,
-				currency:    record.Currency,
+				currency:    currencyReference,
 				annotations: models.Annotations{},
 			}
 			groups[key] = group
@@ -623,12 +689,15 @@ func (s *service) ListVoidedCreditImpacts(ctx context.Context, input ListVoidedC
 		if group.id.ID == "" || record.ID.ID < group.id.ID {
 			group.id = record.ID
 		}
+
 		if group.createdAt.IsZero() || record.CreatedAt.Before(group.createdAt) {
 			group.createdAt = record.CreatedAt
 		}
+
 		for k, v := range record.Annotations {
 			group.annotations[k] = v
 		}
+
 		group.annotations[ledger.AnnotationChargeID] = record.SourceChargeID
 	}
 
@@ -637,6 +706,7 @@ func (s *service) ListVoidedCreditImpacts(ctx context.Context, input ListVoidedC
 		if group.amount.IsZero() {
 			continue
 		}
+
 		if group.amount.IsNegative() {
 			return ListVoidedCreditImpactsResult{}, fmt.Errorf("void amount is negative for %s %s", group.voidedAt, group.currency)
 		}
@@ -646,12 +716,9 @@ func (s *service) ListVoidedCreditImpacts(ctx context.Context, input ListVoidedC
 			CreatedAt:   group.createdAt,
 			VoidedAt:    group.voidedAt,
 			CustomerID:  input.CustomerID,
-			Currency:    group.currency,
+			Currency:    group.currency.Clone(),
 			Amount:      group.amount.Neg(),
 			Annotations: group.annotations,
-		}
-		if !voidImpactMatchesCursorWindow(item, input.After, input.Before) {
-			continue
 		}
 
 		items = append(items, item)
@@ -661,9 +728,31 @@ func (s *service) ListVoidedCreditImpacts(ctx context.Context, input ListVoidedC
 		return -a.Cursor().Compare(b.Cursor())
 	})
 
+	// Apply offsets before cursor filtering so a page starting inside a shared
+	// timestamp retains the same balance as the complete projected history.
+	type boundaryKey struct {
+		at       time.Time
+		currency string
+	}
+	offsets := make(map[boundaryKey]alpacadecimal.Decimal)
+	selected := make([]VoidImpact, 0, len(items))
+	for _, item := range items {
+		key := boundaryKey{at: item.VoidedAt, currency: item.Currency.IdentityKey()}
+		item.BalanceOffset = offsets[key]
+		offsets[key] = offsets[key].Sub(item.Amount)
+		if voidImpactMatchesCursorWindow(item, input.After, input.Before) {
+			selected = append(selected, item)
+		}
+	}
+
+	items = selected
 	hasMore := len(items) > input.Limit
 	if hasMore {
-		items = items[:input.Limit]
+		if input.Before != nil {
+			items = items[len(items)-input.Limit:]
+		} else {
+			items = items[:input.Limit]
+		}
 	}
 
 	return ListVoidedCreditImpactsResult{
@@ -678,6 +767,7 @@ func voidImpactMatchesCursorWindow(item VoidImpact, after, before *ledger.Transa
 	if after != nil && cursor.Compare(*after) >= 0 {
 		return false
 	}
+
 	if before != nil && cursor.Compare(*before) <= 0 {
 		return false
 	}
@@ -687,7 +777,7 @@ func voidImpactMatchesCursorWindow(item VoidImpact, after, before *ledger.Transa
 
 type voidImpactGroupKey struct {
 	voidedAt           time.Time
-	currency           currencyx.Code
+	currencyIdentity   string
 	sourceChargeID     string
 	transactionGroupID string
 }
@@ -696,7 +786,7 @@ type voidImpactGroup struct {
 	id          models.NamespacedID
 	createdAt   time.Time
 	voidedAt    time.Time
-	currency    currencyx.Code
+	currency    currencies.CurrencyReference
 	amount      alpacadecimal.Decimal
 	annotations models.Annotations
 }

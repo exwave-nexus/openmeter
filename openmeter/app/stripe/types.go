@@ -24,12 +24,13 @@ const (
 type CreateAppStripeInput struct {
 	app.CreateAppInput
 
-	StripeAccountID string
-	Livemode        bool
-	APIKey          secretentity.SecretID
-	MaskedAPIKey    string
-	StripeWebhookID string
-	WebhookSecret   secretentity.SecretID
+	StripeAccountID      string
+	Livemode             bool
+	APIKey               secretentity.SecretID
+	MaskedAPIKey         string
+	StripeWebhookID      string
+	WebhookSecret        secretentity.SecretID
+	WebhookSchemaVersion int
 }
 
 func (i CreateAppStripeInput) Validate() error {
@@ -89,6 +90,10 @@ func (i CreateAppStripeInput) Validate() error {
 
 	if i.WebhookSecret.Key != WebhookSecretKey {
 		errs = append(errs, errors.New("webhookSecret has an invalid semantic key"))
+	}
+
+	if i.WebhookSchemaVersion < 1 {
+		errs = append(errs, errors.New("webhookSchemaVersion must be at least 1"))
 	}
 
 	return models.NewNillableGenericValidationError(errors.Join(errs...))
@@ -285,6 +290,25 @@ func (i UpdateAPIKeyInput) Validate() error {
 	return nil
 }
 
+type UpdateWebhookSchemaVersionInput struct {
+	AppID                app.AppID
+	WebhookSchemaVersion int
+}
+
+func (i UpdateWebhookSchemaVersionInput) Validate() error {
+	var errs []error
+
+	if err := i.AppID.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("error validating app id: %w", err))
+	}
+
+	if i.WebhookSchemaVersion < 1 || i.WebhookSchemaVersion > LatestWebhookSchemaVersion {
+		errs = append(errs, fmt.Errorf("webhook schema version must be between 1 and %d", LatestWebhookSchemaVersion))
+	}
+
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
 type UpdateAPIKeyAdapterInput struct {
 	UpdateAPIKeyInput
 
@@ -410,6 +434,15 @@ type AppBase struct {
 	AppData
 }
 
+const (
+	AppActionTypeReconcileWebhookEvents app.AppActionType = "reconcile_webhook_events"
+)
+
+// LatestWebhookSchemaVersion identifies the event set in stripeclient.WebhookEnabledEvents.
+// It is persisted on install and by the reconcile_webhook_events action; bump it whenever
+// that event list changes.
+const LatestWebhookSchemaVersion = 2
+
 // AppData represents the Stripe associated data for the app
 type AppData struct {
 	StripeAccountID string                `json:"stripeAccountId"`
@@ -418,6 +451,9 @@ type AppData struct {
 	MaskedAPIKey    string                `json:"maskedApiKey"`
 	StripeWebhookID string                `json:"stripeWebhookId"`
 	WebhookSecret   secretentity.SecretID `json:"-"`
+	// WebhookSchemaVersion records the event set the Stripe endpoint was registered with.
+	// Set at install time and advanced by the reconcile_webhook_events action.
+	WebhookSchemaVersion int `json:"webhookSchemaVersion"`
 }
 
 func (d AppData) Validate() error {

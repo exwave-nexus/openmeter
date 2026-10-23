@@ -46,9 +46,26 @@ union Currency {
  */
 @friendlyName("BillingCurrencyCode")
 @extension("x-go-type", "string")
+@oneOf
 union CurrencyCode {
   Shared.CurrencyCode,
   CurrencyCodeCustom,
+}
+
+/**
+ * Monetary amount in a fiat or custom currency.
+ */
+@friendlyName("BillingCurrencyAmount")
+model CurrencyAmount {
+  /**
+   * The amount as an arbitrary-precision decimal string.
+   */
+  amount: Shared.Numeric;
+
+  /**
+   * The fiat or custom currency code of the amount.
+   */
+  currency: Currencies.CurrencyCode;
 }
 
 /**

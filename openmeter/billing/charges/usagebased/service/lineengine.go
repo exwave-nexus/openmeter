@@ -2,8 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
 
 	"github.com/samber/lo"
 	"github.com/samber/mo"
@@ -13,12 +13,13 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	usagebasedrun "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/run"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
+	"github.com/openmeterio/openmeter/openmeter/billing/rating"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/openmeter/streaming"
 	"github.com/openmeterio/openmeter/pkg/clock"
+	"github.com/openmeterio/openmeter/pkg/framework/transaction"
 	"github.com/openmeterio/openmeter/pkg/models"
-	"github.com/openmeterio/openmeter/pkg/ref"
 	"github.com/openmeterio/openmeter/pkg/slicesx"
 )
 
@@ -32,12 +33,171 @@ func (e *LineEngine) GetLineEngineType() billing.LineEngineType {
 	return billing.LineEngineTypeChargeUsageBased
 }
 
-func (e *LineEngine) IsLineBillableAsOf(_ context.Context, input billing.IsLineBillableAsOfInput) (bool, error) {
+func (e *LineEngine) AreLinesBillableAsOf(ctx context.Context, input billing.AreLinesBillableAsOfInput) ([]billing.IsLineBillableAsOfResult, error) {
 	if err := input.Validate(); err != nil {
-		return false, fmt.Errorf("validating input: %w", err)
+		return nil, fmt.Errorf("validating input: %w", err)
 	}
 
-	return !input.AsOf.Before(input.ResolvedBillablePeriod.To), nil
+	chargeIDs, err := lo.MapErr(input.Lines, func(line billing.GatheringLine, _ int) (string, error) {
+		if line.ChargeID == nil || *line.ChargeID == "" {
+			return "", fmt.Errorf("usage based gathering line[%s]: charge id is required", line.ID)
+		}
+
+		return *line.ChargeID, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	charges, err := e.service.GetByIDs(ctx, usagebased.GetByIDsInput{
+		Namespace: input.Invoice.Namespace,
+		IDs:       chargeIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting usage based charges for billability: %w", err)
+	}
+
+	featureMeters, err := e.service.featureMeterResolver.Resolve(ctx, input.Invoice.Namespace, charges...)
+	if err != nil {
+		return nil, fmt.Errorf("resolving feature meters for usage based charges: %w", err)
+	}
+
+	return slicesx.MapWithErrPreservingResults(input.Lines, func(line billing.GatheringLine, index int) (billing.IsLineBillableAsOfResult, error) {
+		var errs []error
+		// TODO: Temporary regression - we need to exclude amount discounts from progressive billing,
+		// until we make sure that delta rating properly preserves the discount amount.
+		charge := charges[index]
+		price := charge.Intent.GetEffectivePrice()
+
+		hasAmountDiscounts := charge.Intent.GetEffectiveDiscounts().Percentage != nil ||
+			price.GetCommitments().MaximumAmount != nil
+
+		ratingInput := rating.ResolveBillablePeriodInput{
+			Line:               line,
+			ProgressiveBilling: input.ProgressiveBilling && !hasAmountDiscounts,
+			AsOf:               input.AsOf,
+		}
+		featureMeter, err := featureMeters.Get(charge)
+		if err != nil {
+			// This becomes a validation issue on the resulting standard invoice, but we still need to provide
+			// the result too.
+			//
+			// Rating engine will resolve these usagebased items as if progressive billing was disabled as we don't
+			// know the underlying meter.
+			errs = append(errs, err)
+		} else {
+			ratingInput.Feature = &featureMeter.Feature
+			ratingInput.Meter = featureMeter.Meter
+		}
+
+		result, err := e.service.ratingService.ResolveBillablePeriod(ratingInput)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("resolving billable period for line[%s]: %w", line.ID, err))
+		}
+
+		return result, errors.Join(errs...)
+	})
+}
+
+func (e *LineEngine) GateInvoiceAssignment(ctx context.Context, input billing.GateInvoiceAssignmentInput) (billing.GateInvoiceAssignmentResult, error) {
+	if err := input.Validate(); err != nil {
+		return nil, fmt.Errorf("validating input: %w", err)
+	}
+
+	namespace := input.Lines[0].Namespace
+	chargeIDs := make([]string, 0, len(input.Lines))
+	linesByChargeID := make(map[string]billing.GatheringLines)
+	for _, line := range input.Lines {
+		if line.Namespace != namespace {
+			return nil, fmt.Errorf("usage based gathering line[%s] namespace %s does not match namespace %s", line.ID, line.Namespace, namespace)
+		}
+
+		if line.ChargeID == nil || *line.ChargeID == "" {
+			return nil, fmt.Errorf("usage based gathering line[%s]: charge ID is required", line.ID)
+		}
+
+		if _, ok := linesByChargeID[*line.ChargeID]; !ok {
+			chargeIDs = append(chargeIDs, *line.ChargeID)
+		}
+
+		linesByChargeID[*line.ChargeID] = append(linesByChargeID[*line.ChargeID], line)
+	}
+
+	charges, err := e.service.GetByIDs(ctx, usagebased.GetByIDsInput{
+		Namespace: namespace,
+		IDs:       chargeIDs,
+		Expands:   meta.Expands{meta.ExpandRealizations},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting usage based charges for invoice assignment: %w", err)
+	}
+
+	chargesByID := lo.KeyBy(charges, func(charge usagebased.Charge) string {
+		return charge.ID
+	})
+	featureMeters, err := e.service.featureMeterResolver.Resolve(ctx, namespace, charges...)
+	if err != nil {
+		return nil, fmt.Errorf("resolving feature meters for usage based invoice assignment: %w", err)
+	}
+
+	result := make(billing.GateInvoiceAssignmentResult)
+	for _, chargeID := range chargeIDs {
+		charge, ok := chargesByID[chargeID]
+		if !ok {
+			return nil, fmt.Errorf("usage based charge[%s] not found for invoice assignment", chargeID)
+		}
+
+		validationIssues := charge.ValidationIssues
+		validationIssuesChanged := false
+
+		// A missing feature or required meter makes the charge impossible to rate,
+		// so its lines must remain in gathering until the dependency is repaired.
+		featureMeterCheck, err := checkFeatureMeterAvailability(featureMeters, charge)
+		if err != nil {
+			return nil, fmt.Errorf("checking feature meter availability for usage based charge[%s]: %w", charge.ID, err)
+		}
+
+		var changed bool
+		validationIssues, changed = replaceValidationIssueComponent(
+			validationIssues,
+			billing.ValidationComponentProductCatalog,
+			featureMeterCheck.ValidationIssues,
+		)
+		validationIssuesChanged = validationIssuesChanged || changed
+
+		// A charge can have only one invoice-backed realization in progress.
+		// Reassignment before it finishes would create parallel billing realities.
+		currentRunCheck, err := checkCurrentRealizationRun(charge)
+		if err != nil {
+			return nil, fmt.Errorf("checking current realization run for usage based charge[%s]: %w", charge.ID, err)
+		}
+
+		validationIssues, changed = replaceValidationIssueComponent(
+			validationIssues,
+			usagebased.ValidationIssueComponentLineEngine,
+			currentRunCheck.ValidationIssues,
+		)
+		validationIssuesChanged = validationIssuesChanged || changed
+
+		excludeFromInvoice := featureMeterCheck.ExcludeFromInvoice || currentRunCheck.ExcludeFromInvoice
+
+		if validationIssuesChanged {
+			if err := e.service.adapter.UpdateChargeValidationIssues(ctx, usagebased.UpdateChargeValidationIssuesInput{
+				ChargeID:         charge.GetChargeID(),
+				ValidationIssues: validationIssues,
+			}); err != nil {
+				return nil, err
+			}
+		}
+
+		if excludeFromInvoice {
+			for _, line := range linesByChargeID[chargeID] {
+				result[line.GetLineID()] = billing.InvoiceAssignmentGateResponse{ExcludeFromInvoice: true}
+			}
+		}
+	}
+
+	return result, nil
 }
 
 func (e *LineEngine) SplitGatheringLine(_ context.Context, input billing.SplitGatheringLineInput) (billing.SplitGatheringLineResult, error) {
@@ -163,14 +323,30 @@ func (e *LineEngine) BuildStandardLinesForGatheringPreview(ctx context.Context, 
 		return nil, err
 	}
 
+	featureMeters := e.service.featureMeterResolver.ResolveLazy(ctx, input.Invoice.Namespace, lo.Values(chargesByID)...)
+	recorder := billing.ValidationIssueRecorder{}
+
 	for _, stdLine := range stdLines {
 		charge, ok := chargesByID[*stdLine.ChargeID]
 		if !ok {
 			return nil, fmt.Errorf("usage based charge[%s] not found for gathering preview line[%s]", *stdLine.ChargeID, stdLine.ID)
 		}
 
-		previewResult, err := e.buildGatheringPreviewRun(ctx, charge, stdLine)
-		if err != nil {
+		// Custom-currency gathering lines are scheduling placeholders. A preview
+		// cannot allocate credits to calculate the post-allocation overage, so the
+		// zero-fiat placeholder is omitted from the returned invoice.
+		if charge.Intent.GetCurrency().IsCustom() {
+			stdLine.DeletedAt = lo.ToPtr(clock.Now())
+
+			if err := stdLine.Validate(); err != nil {
+				return nil, fmt.Errorf("validating custom currency gathering preview line[%s]: %w", stdLine.ID, err)
+			}
+
+			continue
+		}
+
+		previewResult, err := e.buildGatheringPreviewRun(ctx, charge, featureMeters, stdLine)
+		if err := recorder.RecordWarnings(err, billing.WithAttributes(models.Annotations{billing.AttributeKeyLineID: stdLine.ID})); err != nil {
 			return nil, fmt.Errorf("building gathering preview run for line[%s]: %w", stdLine.ID, err)
 		}
 
@@ -187,10 +363,10 @@ func (e *LineEngine) BuildStandardLinesForGatheringPreview(ctx context.Context, 
 		}
 	}
 
-	return stdLines, nil
+	return stdLines, recorder.ErrorsOrNil()
 }
 
-func (e *LineEngine) buildGatheringPreviewRun(ctx context.Context, charge usagebased.Charge, stdLine *billing.StandardLine) (usagebasedrun.BuildCreditThenInvoiceGatheringPreviewRunResult, error) {
+func (e *LineEngine) buildGatheringPreviewRun(ctx context.Context, charge usagebased.Charge, featureMeters billingfeaturemeter.FeatureMeters, stdLine *billing.StandardLine) (usagebasedrun.BuildCreditThenInvoiceGatheringPreviewRunResult, error) {
 	if charge.Intent.GetSettlementMode() != productcatalog.CreditThenInvoiceSettlementMode {
 		return usagebasedrun.BuildCreditThenInvoiceGatheringPreviewRunResult{}, fmt.Errorf(
 			"usage based standard line[%s]: unsupported settlement mode for gathering preview: %s",
@@ -213,10 +389,15 @@ func (e *LineEngine) buildGatheringPreviewRun(ctx context.Context, charge usageb
 		servicePeriodTo = meta.NormalizeTimestamp(charge.Intent.GetEffectiveServicePeriod().To)
 	}
 
+	featureMeter, err := featureMeters.Get(charge)
+	if err != nil {
+		return usagebasedrun.BuildCreditThenInvoiceGatheringPreviewRunResult{}, err
+	}
+
 	return e.service.runs.BuildCreditThenInvoiceGatheringPreviewRun(ctx, usagebasedrun.BuildCreditThenInvoiceGatheringPreviewRunInput{
 		Charge:             charge,
 		CustomerOverride:   stateMachineConfig.CustomerOverride,
-		FeatureMeter:       stateMachineConfig.FeatureMeter,
+		FeatureMeter:       featureMeter,
 		Type:               runType,
 		StoredAtLT:         storedAtLT,
 		ServicePeriodTo:    servicePeriodTo,
@@ -231,14 +412,14 @@ func (e *LineEngine) OnStandardInvoiceCreated(ctx context.Context, input billing
 		return nil, fmt.Errorf("validating input: %w", err)
 	}
 
-	stdLines, err := slicesx.MapWithErr(input.Lines, func(stdLine *billing.StandardLine) (*billing.StandardLine, error) {
+	return slicesx.MapWithErrPreservingResults(input.Lines, func(stdLine *billing.StandardLine, _ int) (*billing.StandardLine, error) {
 		stateMachine, err := e.newStateMachineForStandardLine(ctx, stdLine)
 		if err != nil {
-			return nil, err
+			return stdLine, err
 		}
 
 		if stateMachine.GetCharge().Intent.GetSettlementMode() != productcatalog.CreditThenInvoiceSettlementMode {
-			return nil, fmt.Errorf(
+			return stdLine, fmt.Errorf(
 				"usage based standard line[%s]: unsupported settlement mode for standard invoice creation: %s",
 				stdLine.ID,
 				stateMachine.GetCharge().Intent.GetSettlementMode(),
@@ -249,13 +430,13 @@ func (e *LineEngine) OnStandardInvoiceCreated(ctx context.Context, input billing
 		// still rely on the generic TriggerNext/AdvanceUntilStable flow before invoice-created
 		// lifecycle transitions take over.
 		if err := stateMachine.AdvanceUntilStable(ctx); err != nil {
-			return nil, fmt.Errorf("advancing usage based charge[%s]: %w", stateMachine.GetCharge().ID, err)
+			return stdLine, fmt.Errorf("advancing usage based charge[%s]: %w", stateMachine.GetCharge().ID, err)
 		}
 
 		if stateMachine.GetCharge().State.CurrentRealizationRunID != nil {
-			return nil, billing.ValidationError{
-				Err: fmt.Errorf("line[%s]: %w", stdLine.ID, usagebased.ErrActiveRealizationRunAlreadyExists),
-			}
+			return stdLine, usagebased.ErrActiveRealizationRunAlreadyExists.WithAttrs(models.Attributes{
+				billing.AttributeKeyLineID: stdLine.ID,
+			})
 		}
 
 		if err := stateMachine.FireAndAdvanceUntilStable(ctx, meta.TriggerInvoiceCreated, invoiceCreatedInput{
@@ -263,13 +444,13 @@ func (e *LineEngine) OnStandardInvoiceCreated(ctx context.Context, input billing
 			InvoiceID:     input.Invoice.ID,
 			ServicePeriod: stdLine.Period,
 		}); err != nil {
-			return nil, fmt.Errorf("triggering %s for charge[%s]: %w", meta.TriggerInvoiceCreated, stateMachine.GetCharge().ID, err)
+			return stdLine, fmt.Errorf("triggering %s for charge[%s]: %w", meta.TriggerInvoiceCreated, stateMachine.GetCharge().ID, err)
 		}
 
 		charge := stateMachine.GetCharge()
 		currentRun, err := charge.GetCurrentRealizationRun()
 		if err != nil {
-			return nil, fmt.Errorf("getting current realization run for charge[%s]: %w", charge.ID, err)
+			return stdLine, fmt.Errorf("getting current realization run for charge[%s]: %w", charge.ID, err)
 		}
 
 		if err := populateStandardLineFromRun(stdLine, populateStandardLineFromRunInput{
@@ -277,20 +458,15 @@ func (e *LineEngine) OnStandardInvoiceCreated(ctx context.Context, input billing
 			Run:    currentRun,
 			Stage:  standardLinePopulationStageInvoiceCreated,
 		}); err != nil {
-			return nil, fmt.Errorf("populating standard line from run for charge[%s]: %w", charge.ID, err)
+			return stdLine, fmt.Errorf("populating standard line from run for charge[%s]: %w", charge.ID, err)
 		}
 
 		if err := stdLine.Validate(); err != nil {
-			return nil, fmt.Errorf("validating standard line[%s]: %w", stdLine.ID, err)
+			return stdLine, fmt.Errorf("validating standard line[%s]: %w", stdLine.ID, err)
 		}
 
-		return stdLine, nil
+		return stdLine, ratingValidationIssues(charge).AsError()
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	return stdLines, nil
 }
 
 func (e *LineEngine) OnCollectionCompleted(ctx context.Context, input billing.OnCollectionCompletedInput) (billing.StandardLines, error) {
@@ -298,6 +474,7 @@ func (e *LineEngine) OnCollectionCompleted(ctx context.Context, input billing.On
 		return nil, fmt.Errorf("validating input: %w", err)
 	}
 
+	recorder := billing.ValidationIssueRecorder{}
 	for _, stdLine := range input.Lines {
 		stateMachine, err := e.newStateMachineForStandardLine(ctx, stdLine)
 		if err != nil {
@@ -337,9 +514,16 @@ func (e *LineEngine) OnCollectionCompleted(ctx context.Context, input billing.On
 		if err := stdLine.Validate(); err != nil {
 			return nil, fmt.Errorf("validating standard line[%s]: %w", stdLine.ID, err)
 		}
+
+		if err := recorder.RecordWarnings(
+			ratingValidationIssues(charge).AsError(),
+			billing.WithAttributes(models.Annotations{billing.AttributeKeyLineID: stdLine.ID}),
+		); err != nil {
+			return nil, fmt.Errorf("recording rating validation issues for line[%s]: %w", stdLine.ID, err)
+		}
 	}
 
-	return input.Lines, nil
+	return input.Lines, recorder.ErrorsOrNil()
 }
 
 func (e *LineEngine) OnMutableInvoiceLinesEditedViaAPI(ctx context.Context, input billing.OnMutableInvoiceUpdateInput) (billing.OnMutableInvoiceUpdateResult, error) {
@@ -357,7 +541,10 @@ func (e *LineEngine) OnMutableInvoiceLinesEditedViaAPI(ctx context.Context, inpu
 	}
 
 	for _, line := range input.Deleted {
-		if err := e.handleInvoiceLineDeleteViaAPI(ctx, input.Invoice, line); err != nil {
+		err = transaction.RunWithNoValue(ctx, e.service.adapter, func(ctx context.Context) error {
+			return e.handleInvoiceLineDeleteViaAPI(ctx, input.Invoice, line)
+		})
+		if err != nil {
 			return billing.OnMutableInvoiceUpdateResult{}, err
 		}
 	}
@@ -430,20 +617,9 @@ func (e *LineEngine) createManualInvoiceLines(ctx context.Context, input billing
 
 	namespace := input.Invoice.GetInvoiceID().Namespace
 	intents := lo.Map(created, func(line manualCreatedInvoiceLine, _ int) usagebased.Intent { return line.intent })
-	featureMeters, err := e.service.featureService.ResolveFeatureMeters(ctx, namespace, lo.Map(intents, func(intent usagebased.Intent, _ int) feature.FeatureMeterRef {
-		return feature.FeatureMeterRef{
-			IDOrKey:      ref.IDOrKey{Key: intent.FeatureKey},
-			RequireMeter: true,
-		}
-	})...)
-	if err != nil {
-		return nil, fmt.Errorf("resolving manually created usage-based charge feature meters: %w", err)
-	}
-
 	createdCharges, err := e.service.Create(ctx, usagebased.CreateInput{
-		Namespace:     namespace,
-		Intents:       intents,
-		FeatureMeters: featureMeters,
+		Namespace: namespace,
+		Intents:   usagebased.NewCreateIntents(intents...),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating manually managed usage-based charges: %w", err)
@@ -510,9 +686,12 @@ func (e *LineEngine) attachManualStandardLine(ctx context.Context, standardInvoi
 	}
 
 	if stateMachine.GetCharge().State.CurrentRealizationRunID != nil {
-		return nil, billing.ValidationError{
-			Err: fmt.Errorf("line[%s]: %w", sourceLine.GetID(), usagebased.ErrActiveRealizationRunAlreadyExists),
-		}
+		return nil, billing.WrapAsValidationIssue(billing.ValidationWithAttributes(
+			models.Annotations{
+				billing.AttributeKeyLineID: sourceLine.GetID(),
+			},
+			usagebased.ErrActiveRealizationRunAlreadyExists,
+		))
 	}
 
 	if err := stateMachine.FireAndAdvanceUntilStable(ctx, meta.TriggerInvoiceCreated, invoiceCreatedInput{
@@ -578,10 +757,13 @@ func (e *LineEngine) validateInvoiceLineDeleteViaAPI(ctx context.Context, invoic
 	}
 
 	if charge.Intent.GetSettlementMode() != productcatalog.CreditThenInvoiceSettlementMode {
-		return usagebased.Charge{}, fmt.Errorf(
-			"usage based line[%s]: unsupported settlement mode for API delete: %s",
-			line.GetID(),
-			charge.Intent.GetSettlementMode(),
+		return usagebased.Charge{}, billing.ValidationWithAttributes(
+			models.Annotations{
+				billing.AttributeKeyLineID:         line.GetID(),
+				billing.AttributeKeyOperation:      "delete",
+				billing.AttributeKeySettlementMode: charge.Intent.GetSettlementMode(),
+			},
+			billing.ErrInvoiceLineUnsupportedSettlementMode,
 		)
 	}
 
@@ -599,6 +781,17 @@ func (e *LineEngine) validateInvoiceLineDeleteViaAPI(ctx context.Context, invoic
 		if len(nonVoidedRuns) == 0 {
 			// This is an internal consistency error, we are not supposed to surface this to the user, so no typed error wrapping.
 			return usagebased.Charge{}, fmt.Errorf("usage based standard line[%s] cannot be deleted with no realization runs", line.GetID())
+		}
+
+		run, err := charge.Realizations.GetByLineID(line.GetID())
+		if err != nil {
+			return usagebased.Charge{}, fmt.Errorf("getting usage based realization run for line[%s]: %w", line.GetID(), err)
+		}
+
+		if charge.Intent.GetEffectiveIntent().Currency.IsCustom() {
+			if err := validateCustomCurrencyInvoiceLineDelete(invoice, line, run); err != nil {
+				return usagebased.Charge{}, err
+			}
 		}
 	default:
 		return usagebased.Charge{}, fmt.Errorf("usage based line[%s]: unexpected line type: %s", line.GetID(), line.AsInvoiceLine().Type())
@@ -665,7 +858,6 @@ func (e *LineEngine) handleInvoiceLineDeleteViaAPI(ctx context.Context, invoice 
 
 		return nil
 	case billing.InvoiceLineTypeStandard:
-
 		deletePatch, err := meta.NewPatchDelete(meta.NewPatchDeleteInput{
 			ChangeSource: billing.ChangeSourceAPIRequest,
 			Policy:       meta.RefundAsCreditsDeletePolicy,
@@ -674,7 +866,7 @@ func (e *LineEngine) handleInvoiceLineDeleteViaAPI(ctx context.Context, invoice 
 			return fmt.Errorf("creating usage based charge[%s] API delete patch: %w", charge.ID, err)
 		}
 
-		charge, patches, err := e.applyChargePatchForInvoiceLineEditViaAPI(ctx, charge, deletePatch)
+		_, patches, err := e.applyChargePatchForInvoiceLineEditViaAPI(ctx, charge, deletePatch)
 		if err != nil {
 			return fmt.Errorf("usage based line[%s]: applying charge delete patch for charge[%s]: %w", line.GetID(), charge.ID, err)
 		}
@@ -690,7 +882,7 @@ func (e *LineEngine) handleInvoiceLineDeleteViaAPI(ctx context.Context, invoice 
 		}
 
 		if len(stdInvoicePatches) != 1 {
-			return fmt.Errorf("received unexpected number of standard invoice patches for line[%s]: count=%d %v", line.GetID(), len(stdInvoicePatches), stdInvoicePatches)
+			return fmt.Errorf("usage based line[%s]: requires one standard invoice delete patch, got %d: %v", line.GetID(), len(stdInvoicePatches), stdInvoicePatches)
 		}
 
 		stdInvoicePatch, err := stdInvoicePatches.RequireSingularStandardInvoiceLineDeletePatch()
@@ -707,9 +899,11 @@ func (e *LineEngine) handleInvoiceLineDeleteViaAPI(ctx context.Context, invoice 
 			return fmt.Errorf("usage based line[%s]: getting standard line for charge[%s]: %w", line.GetID(), charge.ID, err)
 		}
 
-		_, err = e.deleteMutableStandardLineRealization(ctx, charge, standardInvoice, &standardLine)
-		if err != nil {
-			return fmt.Errorf("usage based line[%s]: deleting mutable standard line realization for charge[%s]: %w", line.GetID(), charge.ID, err)
+		if err := e.validateDeletedStandardLines(ctx, billing.StandardLineEventInput{
+			Invoice: standardInvoice,
+			Lines:   billing.StandardLines{&standardLine},
+		}); err != nil {
+			return fmt.Errorf("usage based line[%s]: validating API delete line patch result for charge[%s]: %w", line.GetID(), charge.ID, err)
 		}
 
 		// Handle the remaining gathering line patches
@@ -730,7 +924,34 @@ func (e *LineEngine) handleInvoiceLineDeleteViaAPI(ctx context.Context, invoice 
 	}
 }
 
-func (e *LineEngine) applyChargePatchForInvoiceLineEditViaAPI(ctx context.Context, charge usagebased.Charge, patch meta.Patch) (usagebased.Charge, invoiceupdater.Patches, error) {
+// validateCustomCurrencyInvoiceLineDelete verifies the invoice and run
+// association required to delete a custom-currency line.
+func validateCustomCurrencyInvoiceLineDelete(
+	invoice billing.GenericInvoiceReader,
+	line billing.GenericInvoiceLine,
+	run usagebased.RealizationRun,
+) error {
+	if err := line.AsInvoiceLine().Type().Require(billing.InvoiceLineTypeStandard); err != nil {
+		return fmt.Errorf("custom-currency usage based line[%s] must be a standard line: %w", line.GetID(), billing.ErrCannotUpdateChargeManagedLine)
+	}
+
+	standardInvoice, err := invoice.AsInvoice().AsStandardInvoice()
+	if err != nil {
+		return fmt.Errorf("usage based line[%s]: getting standard invoice: %w", line.GetID(), err)
+	}
+
+	if run.LineID == nil || *run.LineID != line.GetID() || run.InvoiceID == nil || *run.InvoiceID != standardInvoice.ID {
+		return fmt.Errorf("custom-currency usage based line[%s] does not match realization run[%s]: %w", line.GetID(), run.ID.ID, billing.ErrCannotUpdateChargeManagedLine)
+	}
+
+	return nil
+}
+
+func (e *LineEngine) applyChargePatchForInvoiceLineEditViaAPI(
+	ctx context.Context,
+	charge usagebased.Charge,
+	patch meta.Patch,
+) (usagebased.Charge, invoiceupdater.Patches, error) {
 	if err := patch.Validate(); err != nil {
 		return usagebased.Charge{}, nil, fmt.Errorf("validating usage based charge[%s] API line edit patch: %w", charge.ID, err)
 	}
@@ -753,20 +974,122 @@ func (e *LineEngine) OnMutableStandardLinesDeletedBySystem(ctx context.Context, 
 		return fmt.Errorf("validating input: %w", err)
 	}
 
+	gatheringLinePatches, err := e.reconcileDeletedStandardLines(ctx, input)
+	if err != nil {
+		return err
+	}
+
+	if err := e.validateDeletedStandardLines(ctx, input); err != nil {
+		return err
+	}
+
+	if len(gatheringLinePatches) > 0 {
+		if err := e.service.invoiceUpdater.ApplyPatches(ctx, input.Invoice.GetCustomerID(), gatheringLinePatches); err != nil {
+			return fmt.Errorf("applying gathering line delete patches for deleted usage based standard lines: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// reconcileDeletedStandardLines routes system-owned invoice deletions through
+// the charge state machine when the originating charge operation has not
+// already canceled the run. It consumes the matching line patch because
+// billing is already applying that deletion and returns any gathering-line
+// effects for the invoice updater.
+func (e *LineEngine) reconcileDeletedStandardLines(ctx context.Context, input billing.StandardLineEventInput) (invoiceupdater.Patches, error) {
 	chargesByID, err := e.getChargesForStandardLineEvent(ctx, input, meta.Expands{
 		meta.ExpandRealizations,
-		meta.ExpandDetailedLines,
+		meta.ExpandDeletedRealizations,
+	}, "reconciling deleted standard lines")
+	if err != nil {
+		return nil, err
+	}
+
+	gatheringLinePatches := make(invoiceupdater.Patches, 0, len(input.Lines))
+	for _, stdLine := range input.Lines {
+		charge, ok := chargesByID[*stdLine.ChargeID]
+		if !ok {
+			return nil, fmt.Errorf("usage based charge[%s] not found for deleted standard line[%s]", *stdLine.ChargeID, stdLine.ID)
+		}
+
+		run, err := charge.Realizations.GetByLineID(stdLine.ID)
+		if err != nil {
+			return nil, fmt.Errorf("getting realization run for deleted usage based standard line[%s]: %w", stdLine.ID, err)
+		}
+
+		if run.InvoiceID == nil || *run.InvoiceID != input.Invoice.ID {
+			return nil, fmt.Errorf("usage based standard line[%s] cannot be deleted because realization run[%s] is not associated with invoice[%s]", stdLine.ID, run.ID.ID, input.Invoice.ID)
+		}
+
+		if run.DeletedAt != nil || run.Immutable {
+			continue
+		}
+
+		fiatOverage, err := calculateFiatOverageForRun(charge, run)
+		if err != nil {
+			return nil, fmt.Errorf("calculating fiat overage for usage based realization run[%s]: %w", run.ID.ID, err)
+		}
+
+		if fiatOverage.ShouldOmitInvoiceLine {
+			continue
+		}
+
+		stateMachine, err := e.service.newStateMachineForCharge(ctx, charge)
+		if err != nil {
+			return nil, fmt.Errorf("new state machine for usage based charge[%s]: %w", charge.ID, err)
+		}
+
+		patches, err := stateMachine.FireAndAdvanceUntilInvoicePatchesOrStable(ctx, triggerSystemInvoiceLineDeleted, billing.StandardLineWithInvoiceHeader{
+			Line:    stdLine,
+			Invoice: input.Invoice,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("reconciling deleted usage based standard line[%s] through charge[%s]: %w", stdLine.ID, charge.ID, err)
+		}
+
+		standardInvoicePatches, remainingPatches, err := patches.BisectByStandardInvoiceID(input.Invoice.ID)
+		if err != nil {
+			return nil, fmt.Errorf("bisecting reconciled patches for deleted usage based standard line[%s]: %w", stdLine.ID, err)
+		}
+
+		deletePatch, err := standardInvoicePatches.RequireSingularStandardInvoiceLineDeletePatch()
+		if err != nil {
+			return nil, fmt.Errorf("requiring singular delete patch for reconciled usage based standard line[%s]: %w", stdLine.ID, err)
+		}
+
+		if err := deletePatch.RequireTarget(stdLine.AsGenericLine()); err != nil {
+			return nil, fmt.Errorf("validating reconciled delete patch target for usage based standard line[%s]: %w", stdLine.ID, err)
+		}
+
+		if err := remainingPatches.RequireType(invoiceupdater.PatchOpDeleteGatheringLineByChargeID, invoiceupdater.CountLessThanOrEqualTo(1)); err != nil {
+			return nil, fmt.Errorf("validating gathering patches for deleted usage based standard line[%s]: %w", stdLine.ID, err)
+		}
+
+		if len(remainingPatches) > 0 {
+			if _, err := remainingPatches.RequireSingularGatheringLinePatchForCharge(charge.ID); err != nil {
+				return nil, fmt.Errorf("validating gathering patch target for deleted usage based standard line[%s]: %w", stdLine.ID, err)
+			}
+
+			gatheringLinePatches = append(gatheringLinePatches, remainingPatches...)
+		}
+	}
+
+	return gatheringLinePatches, nil
+}
+
+// validateDeletedStandardLines confirms that charge lifecycle handling ran
+// before billing persisted a standard-line deletion. It never changes charge
+// accounting or realization state.
+func (e *LineEngine) validateDeletedStandardLines(ctx context.Context, input billing.StandardLineEventInput) error {
+	chargesByID, err := e.getChargesForStandardLineEvent(ctx, input, meta.Expands{
+		meta.ExpandRealizations,
+		meta.ExpandDeletedRealizations,
 	}, "deleted standard lines")
 	if err != nil {
 		return err
 	}
 
-	// Whole-invoice deletion needs to remove the leftover gathering line for the
-	// same charge. Charge patch updates can delete a mutable standard line while
-	// also emitting replacement gathering-line patches, so this hook must not
-	// apply an extra delete for ordinary system line updates.
-	isInvoiceDelete := input.Invoice.DeletionSource != ""
-	gatheringLineDeletePatches := make(invoiceupdater.Patches, 0, len(input.Lines))
 	for _, stdLine := range input.Lines {
 		charge, ok := chargesByID[*stdLine.ChargeID]
 		if !ok {
@@ -778,6 +1101,22 @@ func (e *LineEngine) OnMutableStandardLinesDeletedBySystem(ctx context.Context, 
 			return fmt.Errorf("getting realization run for deleted usage based standard line[%s]: %w", stdLine.ID, err)
 		}
 
+		if run.InvoiceID == nil || *run.InvoiceID != input.Invoice.ID {
+			return fmt.Errorf("usage based standard line[%s] cannot be deleted because realization run[%s] is not associated with invoice[%s]", stdLine.ID, run.ID.ID, input.Invoice.ID)
+		}
+
+		// A deleted run proves that its state machine completed reversible
+		// cleanup before handing the invoice effect to billing.
+		if run.DeletedAt != nil {
+			continue
+		}
+
+		// Immutable runs retain their accounting when billing can only record
+		// unsupported invoice drift.
+		if run.Immutable {
+			continue
+		}
+
 		// Collection deletes only the presentation line for a zero-fiat-amount
 		// overage. Its run, credits, and line reference remain durable billing
 		// history and must not enter mutable-line cleanup.
@@ -785,76 +1124,15 @@ func (e *LineEngine) OnMutableStandardLinesDeletedBySystem(ctx context.Context, 
 		if err != nil {
 			return fmt.Errorf("calculating fiat overage for usage based realization run[%s]: %w", run.ID.ID, err)
 		}
+
 		if fiatOverage.ShouldOmitInvoiceLine {
 			continue
 		}
 
-		charge, err = e.deleteMutableStandardLineRealization(ctx, charge, input.Invoice, stdLine)
-		if err != nil {
-			return err
-		}
-
-		chargesByID[*stdLine.ChargeID] = charge
-		if isInvoiceDelete {
-			gatheringLineDeletePatches = append(gatheringLineDeletePatches, invoiceupdater.NewDeleteGatheringLineByChargeIDPatch(*stdLine.ChargeID))
-		}
-	}
-
-	if len(gatheringLineDeletePatches) > 0 {
-		if err := e.service.invoiceUpdater.ApplyPatches(ctx, input.Invoice.GetCustomerID(), gatheringLineDeletePatches); err != nil {
-			return fmt.Errorf("applying gathering line delete patches for deleted usage based standard lines: %w", err)
-		}
+		return fmt.Errorf("usage based standard line[%s] cannot be deleted because mutable realization run[%s] was not canceled by the charge state machine", stdLine.ID, run.ID.ID)
 	}
 
 	return nil
-}
-
-// deleteMutableStandardLineRealization removes the usage-based realization
-// backing a mutable deleted standard invoice line, including credit correction
-// and current-run detachment.
-func (e *LineEngine) deleteMutableStandardLineRealization(
-	ctx context.Context,
-	charge usagebased.Charge,
-	invoice billing.StandardInvoice,
-	stdLine *billing.StandardLine,
-) (usagebased.Charge, error) {
-	run, err := charge.Realizations.GetByLineID(stdLine.ID)
-	if err != nil {
-		return usagebased.Charge{}, err
-	}
-	// Deleted realizations have already been cleaned up through a prior line deletion,
-	// so billing must not run the cleanup path for them again.
-	if run.DeletedAt != nil {
-		return usagebased.Charge{}, fmt.Errorf("usage based standard line[%s] cannot be deleted because realization run[%s] is already deleted", stdLine.ID, run.ID.ID)
-	}
-
-	if run.InvoiceID == nil || *run.InvoiceID != invoice.ID {
-		return usagebased.Charge{}, fmt.Errorf("usage based standard line[%s] cannot be deleted because realization run[%s] is not associated with invoice[%s]", stdLine.ID, run.ID.ID, invoice.ID)
-	}
-
-	if run.Payment != nil {
-		return usagebased.Charge{}, fmt.Errorf("usage based standard line[%s] cannot be deleted because realization run[%s] has payment allocation", stdLine.ID, run.ID.ID)
-	}
-
-	if run.InvoiceUsage != nil {
-		return usagebased.Charge{}, fmt.Errorf("usage based standard line[%s] cannot be deleted because realization run[%s] has invoice accrued allocation", stdLine.ID, run.ID.ID)
-	}
-
-	now := clock.Now()
-	if err := e.service.runs.CorrectAllCreditRealizations(ctx, usagebasedrun.CreditReconciliationHandlerInput{
-		Charge:     charge,
-		Run:        run,
-		AllocateAt: run.ServicePeriodTo,
-	}); err != nil {
-		return usagebased.Charge{}, fmt.Errorf("correcting credits for deleted usage based standard line[%s] run[%s]: %w", stdLine.ID, run.ID.ID, err)
-	}
-
-	charge, err = e.markMutableStandardLineRunDeleted(ctx, charge, run, now)
-	if err != nil {
-		return usagebased.Charge{}, fmt.Errorf("marking realization run[%s] deleted for usage based standard line[%s]: %w", run.ID.ID, stdLine.ID, err)
-	}
-
-	return charge, nil
 }
 
 func (e *LineEngine) OnUnsupportedCreditNote(ctx context.Context, input billing.OnUnsupportedCreditNoteInput) error {
@@ -864,6 +1142,7 @@ func (e *LineEngine) OnUnsupportedCreditNote(ctx context.Context, input billing.
 
 	chargesByID, err := e.getChargesForStandardLineEvent(ctx, input, meta.Expands{
 		meta.ExpandRealizations,
+		meta.ExpandDeletedRealizations,
 	}, "unsupported credit note")
 	if err != nil {
 		return err
@@ -888,7 +1167,7 @@ func (e *LineEngine) OnUnsupportedCreditNote(ctx context.Context, input billing.
 		}
 
 		if run.DeletedAt != nil {
-			return fmt.Errorf("usage based standard line[%s] cannot be marked unsupported credit note because realization run[%s] is already deleted", stdLine.ID, run.ID.ID)
+			continue
 		}
 
 		if run.Type == usagebased.RealizationRunTypeInvalidDueToUnsupportedCreditNote {
@@ -905,40 +1184,6 @@ func (e *LineEngine) OnUnsupportedCreditNote(ctx context.Context, input billing.
 	}
 
 	return nil
-}
-
-func (e *LineEngine) markMutableStandardLineRunDeleted(
-	ctx context.Context,
-	charge usagebased.Charge,
-	run usagebased.RealizationRun,
-	deletedAt time.Time,
-) (usagebased.Charge, error) {
-	if _, err := e.service.adapter.UpdateRealizationRun(ctx, usagebased.UpdateRealizationRunInput{
-		ID:        run.ID,
-		DeletedAt: mo.Some(lo.ToPtr(deletedAt)),
-	}); err != nil {
-		return usagebased.Charge{}, err
-	}
-
-	charge.Realizations = charge.Realizations.Without(run.ID)
-
-	currentRunDeleted := charge.State.CurrentRealizationRunID != nil && *charge.State.CurrentRealizationRunID == run.ID.ID
-	if currentRunDeleted {
-		charge.State.CurrentRealizationRunID = nil
-		if charge.Status != usagebased.StatusDeleted {
-			charge.Status = usagebased.StatusActive
-			charge.State.AdvanceAfter = lo.ToPtr(meta.NormalizeTimestamp(charge.Intent.GetEffectiveServicePeriod().To))
-		}
-
-		updatedChargeBase, err := e.service.adapter.UpdateCharge(ctx, charge.ChargeBase)
-		if err != nil {
-			return usagebased.Charge{}, err
-		}
-
-		charge.ChargeBase = updatedChargeBase
-	}
-
-	return charge, nil
 }
 
 func (e *LineEngine) getChargesForStandardLineEvent(ctx context.Context, input billing.StandardLineEventInput, expands meta.Expands, operation string) (map[string]usagebased.Charge, error) {
@@ -981,62 +1226,35 @@ func (e *LineEngine) OnInvoiceFinalizing(ctx context.Context, input billing.OnIn
 		return nil, fmt.Errorf("validating input: %w", err)
 	}
 
-	chargesByID, err := e.getChargesForStandardLineEvent(ctx, input, meta.Expands{
-		meta.ExpandRealizations,
-	}, "invoice finalization")
-	if err != nil {
-		return nil, err
-	}
-
 	return slicesx.MapWithErr(input.Lines, func(stdLine *billing.StandardLine) (*billing.StandardLine, error) {
-		charge, ok := chargesByID[*stdLine.ChargeID]
-		if !ok {
-			return nil, fmt.Errorf("usage based charge[%s] not found for finalizing line[%s]", *stdLine.ChargeID, stdLine.ID)
-		}
-
-		if stdLine.IsDeleted() ||
-			charge.Intent.GetSettlementMode() != productcatalog.CreditThenInvoiceSettlementMode ||
-			!charge.Intent.GetCurrency().IsCustom() {
+		if stdLine.IsDeleted() {
 			return stdLine, nil
 		}
 
-		run, err := charge.Realizations.GetByLineID(stdLine.ID)
+		stateMachine, err := e.newStateMachineForStandardLine(ctx, stdLine)
 		if err != nil {
-			return nil, fmt.Errorf("getting realization run for finalizing line[%s]: %w", stdLine.ID, err)
+			return nil, err
 		}
 
-		if run.InvoiceID == nil || *run.InvoiceID != input.Invoice.ID {
-			return nil, fmt.Errorf(
-				"realization run[%s] for finalizing line[%s] is not associated with invoice[%s]",
-				run.ID.ID,
-				stdLine.ID,
-				input.Invoice.ID,
-			)
+		if stateMachine.GetCharge().Intent.GetSettlementMode() != productcatalog.CreditThenInvoiceSettlementMode {
+			return stdLine, nil
 		}
 
-		allocated, err := e.service.runs.AllocateFiatOverageCredits(ctx, usagebasedrun.AllocateFiatOverageCreditsInput{
-			Charge: charge,
-			Run:    run,
+		patches, err := stateMachine.FireAndAdvanceUntilInvoicePatchesOrStable(ctx, meta.TriggerInvoiceFinalizing, billing.StandardLineWithInvoiceHeader{
+			Line:    stdLine,
+			Invoice: input.Invoice,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("allocating fiat overage credits for finalizing line[%s]: %w", stdLine.ID, err)
+			return nil, fmt.Errorf("finalizing invoice line for charge[%s]: %w", stateMachine.GetCharge().ID, err)
 		}
 
-		updatedLine, err := stdLine.Clone()
+		updatedLine, err := patches.RequireSingularStandardLineUpdateOrEmpty(stdLine.GetLineID(), input.Invoice.ID)
 		if err != nil {
-			return nil, fmt.Errorf("cloning finalizing line[%s]: %w", stdLine.ID, err)
+			return nil, fmt.Errorf("validating finalizing update for line[%s]: %w", stdLine.ID, err)
 		}
 
-		if err := populateStandardLineFromRun(updatedLine, populateStandardLineFromRunInput{
-			Charge: allocated.Charge,
-			Run:    allocated.Run,
-			Stage:  standardLinePopulationStageInvoiceFinalizing,
-		}); err != nil {
-			return nil, fmt.Errorf("populating finalizing line[%s] from run[%s]: %w", stdLine.ID, run.ID.ID, err)
-		}
-
-		if err := updatedLine.Validate(); err != nil {
-			return nil, fmt.Errorf("validating finalizing line[%s]: %w", stdLine.ID, err)
+		if updatedLine == nil {
+			return stdLine, nil
 		}
 
 		return updatedLine, nil
@@ -1056,6 +1274,23 @@ func (e *LineEngine) OnInvoiceIssued(ctx context.Context, input billing.OnInvoic
 				Line:    stdLine,
 				Invoice: input.Invoice,
 			}
+		},
+		ShouldSkipFn: func(charge usagebased.Charge, stdLine *billing.StandardLine) (bool, error) {
+			// Billing retries invoice_issued for every line when any line callback fails.
+			// A preceding line can therefore have committed its charge and ledger updates.
+			// Immutable is persisted only after that work succeeds, so a matching run is
+			// already complete and must not receive invoice_issued again.
+			// See TestCreditThenInvoiceTestSuite/TestUsageBasedIssuingRetryPreservesCompletedChargeBooking.
+			run, err := charge.Realizations.GetByLineID(stdLine.ID)
+			if err != nil || !run.Immutable {
+				return false, nil
+			}
+
+			if run.InvoiceID == nil || *run.InvoiceID != input.Invoice.ID {
+				return false, fmt.Errorf("issued realization run[%s] invoice does not match invoice[%s]", run.ID.ID, input.Invoice.ID)
+			}
+
+			return true, nil
 		},
 	})
 }
@@ -1085,9 +1320,10 @@ func (e *LineEngine) OnPaymentSettled(ctx context.Context, input billing.OnPayme
 }
 
 type fireLineTriggerInput struct {
-	Lines   billing.StandardLines
-	Trigger meta.Trigger
-	InputFn func(*billing.StandardLine) models.Validator
+	Lines        billing.StandardLines
+	Trigger      meta.Trigger
+	InputFn      func(*billing.StandardLine) models.Validator
+	ShouldSkipFn func(usagebased.Charge, *billing.StandardLine) (bool, error)
 }
 
 func (i fireLineTriggerInput) Validate() error {
@@ -1117,23 +1353,36 @@ func (e *LineEngine) fireLineTrigger(ctx context.Context, input fireLineTriggerI
 			return err
 		}
 
+		charge := stateMachine.GetCharge()
+
+		if input.ShouldSkipFn != nil {
+			shouldSkip, err := input.ShouldSkipFn(charge, stdLine)
+			if err != nil {
+				return fmt.Errorf("checking whether to skip %s for charge[%s]: %w", input.Trigger, charge.ID, err)
+			}
+
+			if shouldSkip {
+				continue
+			}
+		}
+
 		canFire, err := stateMachine.CanFire(ctx, input.Trigger)
 		if err != nil {
-			return fmt.Errorf("checking %s for charge[%s]: %w", input.Trigger, stateMachine.GetCharge().ID, err)
+			return fmt.Errorf("checking %s for charge[%s]: %w", input.Trigger, charge.ID, err)
 		}
 
 		if !canFire {
 			return fmt.Errorf(
 				"charge[%s] in status %s cannot handle %s for standard line[%s]",
-				stateMachine.GetCharge().ID,
-				stateMachine.GetCharge().Status,
+				charge.ID,
+				charge.Status,
 				input.Trigger,
 				stdLine.ID,
 			)
 		}
 
 		if err := stateMachine.FireAndAdvanceUntilStable(ctx, input.Trigger, input.InputFn(stdLine)); err != nil {
-			return fmt.Errorf("triggering %s for charge[%s]: %w", input.Trigger, stateMachine.GetCharge().ID, err)
+			return fmt.Errorf("triggering %s for charge[%s]: %w", input.Trigger, charge.ID, err)
 		}
 	}
 

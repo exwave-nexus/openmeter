@@ -64,6 +64,10 @@ func (h *handler) GetSubscription() GetSubscriptionHandler {
 				return def, productcatalog.ErrUnitConfigNotRepresentable
 			}
 
+			if view.Spec.HasCustomCurrencyBillables() {
+				return def, productcatalog.ErrCurrencyNotRepresentable
+			}
+
 			return MapSubscriptionViewToAPI(view)
 		},
 		commonhttp.JSONResponseEncoderWithStatus[GetSubscriptionResponse](http.StatusOK),
@@ -150,6 +154,7 @@ func (h *handler) ListCustomerSubscriptions() ListCustomerSubscriptionsHandler {
 					if len(statusFilter) == 0 {
 						return nil
 					}
+
 					return statusFilter
 				}(),
 			}, nil
@@ -158,12 +163,13 @@ func (h *handler) ListCustomerSubscriptions() ListCustomerSubscriptionsHandler {
 			var def ListCustomerSubscriptionsResponse
 
 			subs, err := h.SubscriptionService.List(ctx, subscription.ListSubscriptionsInput{
-				Page:       req.Page,
-				Namespaces: []string{req.CustomerID.Namespace},
-				CustomerID: &filter.FilterULID{FilterString: filter.FilterString{Eq: &req.CustomerID.ID}},
-				Status:     req.Status,
-				OrderBy:    req.OrderBy,
-				Order:      req.Order,
+				ExcludeCustomCurrency: true,
+				Page:                  req.Page,
+				Namespaces:            []string{req.CustomerID.Namespace},
+				CustomerID:            &filter.FilterULID{FilterString: filter.FilterString{Eq: &req.CustomerID.ID}},
+				Status:                req.Status,
+				OrderBy:               req.OrderBy,
+				Order:                 req.Order,
 			})
 			if err != nil {
 				return def, err

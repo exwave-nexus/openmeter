@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/openmeterio/openmeter/openmeter/app"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	currencytestutils "github.com/openmeterio/openmeter/openmeter/currencies/testutils"
 	entdb "github.com/openmeterio/openmeter/openmeter/ent/db"
@@ -20,6 +21,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/addon/adapter"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	pctestutils "github.com/openmeterio/openmeter/openmeter/productcatalog/testutils"
+	"github.com/openmeterio/openmeter/openmeter/taxcode"
 	"github.com/openmeterio/openmeter/openmeter/testutils"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/datetime"
@@ -43,9 +45,18 @@ func TestPostgresAdapter(t *testing.T) {
 		t.Run("Create", func(t *testing.T) {
 			// Get new namespace ID
 			namespace := pctestutils.NewTestNamespace(t)
+			taxCode, err := env.TaxCode.CreateTaxCode(ctx, taxcode.CreateTaxCodeInput{
+				Namespace: namespace,
+				Key:       "stripe_txcd_10000000",
+				Name:      "Stripe txcd_10000000",
+				AppMappings: taxcode.TaxCodeAppMappings{
+					{AppType: app.AppTypeStripe, TaxCode: "txcd_10000000"},
+				},
+			})
+			require.NoError(t, err)
 
 			// Setup meter repository
-			err := env.Meter.ReplaceMeters(ctx, pctestutils.NewTestMeters(t, namespace))
+			err = env.Meter.ReplaceMeters(ctx, pctestutils.NewTestMeters(t, namespace))
 			require.NoError(t, err, "replacing meters must not fail")
 
 			result, err := env.Meter.ListMeters(ctx, meter.ListMetersParams{
@@ -79,13 +90,13 @@ func TestPostgresAdapter(t *testing.T) {
 						Name:                features[0].Name,
 						Description:         lo.ToPtr(features[0].Name),
 						Metadata:            models.Metadata{"name": features[0].Name},
-						FeatureKey:          lo.ToPtr(features[0].Key),
-						FeatureID:           lo.ToPtr(features[0].ID),
+						Feature:             productcatalog.NewFeatureReference(lo.ToPtr(features[0].ID), lo.ToPtr(features[0].Key)),
 						EntitlementTemplate: productcatalog.NewEntitlementTemplateFrom(productcatalog.BooleanEntitlementTemplate{}),
 						TaxConfig: &productcatalog.TaxConfig{
 							Stripe: &productcatalog.StripeTaxConfig{
 								Code: "txcd_10000000",
 							},
+							TaxCodeID: lo.ToPtr(taxCode.ID),
 						},
 						Price: productcatalog.NewPriceFrom(productcatalog.TieredPrice{
 							Mode: productcatalog.VolumeTieredPrice,
@@ -277,13 +288,13 @@ func TestPostgresAdapter(t *testing.T) {
 								Name:                "RateCard 2",
 								Description:         lo.ToPtr("RateCard 2"),
 								Metadata:            models.Metadata{"name": "ratecard-2"},
-								FeatureKey:          nil,
-								FeatureID:           nil,
+								Feature:             productcatalog.NewFeatureReference(nil, nil),
 								EntitlementTemplate: nil,
 								TaxConfig: &productcatalog.TaxConfig{
 									Stripe: &productcatalog.StripeTaxConfig{
 										Code: "txcd_10000000",
 									},
+									TaxCodeID: lo.ToPtr(taxCode.ID),
 								},
 								Price: productcatalog.NewPriceFrom(productcatalog.FlatPrice{
 									Amount:      decimal.NewFromInt(0),
@@ -482,11 +493,10 @@ func TestListAddonsExcludeUnitConfig(t *testing.T) {
 	// unit_config add-on: usage-based rate card carrying a unit_config → not v1-representable.
 	ucInput := pctestutils.NewTestAddon(t, namespace, &productcatalog.UsageBasedRateCard{
 		RateCardMeta: productcatalog.RateCardMeta{
-			Key:        feat.Key,
-			Name:       "UC RateCard",
-			FeatureKey: lo.ToPtr(feat.Key),
-			FeatureID:  lo.ToPtr(feat.ID),
-			Price:      productcatalog.NewPriceFrom(productcatalog.UnitPrice{Amount: decimal.NewFromInt(1)}),
+			Key:     feat.Key,
+			Name:    "UC RateCard",
+			Feature: productcatalog.NewFeatureReference(lo.ToPtr(feat.ID), lo.ToPtr(feat.Key)),
+			Price:   productcatalog.NewPriceFrom(productcatalog.UnitPrice{Amount: decimal.NewFromInt(1)}),
 			UnitConfig: &productcatalog.UnitConfig{
 				Operation:        productcatalog.UnitConfigOperationDivide,
 				ConversionFactor: decimal.NewFromInt(1000),

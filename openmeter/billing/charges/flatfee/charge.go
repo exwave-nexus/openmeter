@@ -12,9 +12,11 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
+	"github.com/openmeterio/openmeter/openmeter/ledger"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -22,11 +24,19 @@ import (
 	"github.com/openmeterio/openmeter/pkg/timeutil"
 )
 
+var (
+	_ billingfeaturemeter.FeatureReferenceGetter = Charge{}
+	_ billingfeaturemeter.FeatureReferenceOwner  = Charge{}
+	_ billingfeaturemeter.FeatureReferenceGetter = Intent{}
+	_ models.Equaler[Intent]                     = Intent{}
+)
+
 type ChargeBase struct {
 	meta.ManagedResource
 
-	Intent OverridableIntent `json:"intent"`
-	Status Status            `json:"status"`
+	Intent           OverridableIntent        `json:"intent"`
+	Status           Status                   `json:"status"`
+	ValidationIssues billing.ValidationIssues `json:"validationIssues,omitempty"`
 
 	State State `json:"state"`
 }
@@ -84,6 +94,13 @@ func (c ChargeBase) GetCurrency() currencies.Currency {
 	return c.Intent.GetCurrency()
 }
 
+// GetResolvedCostBasis returns the charge's persisted cost-basis snapshot, or
+// nil if the charge's currency is fiat or the dynamic cost basis has not been
+// resolved yet.
+func (c ChargeBase) GetResolvedCostBasis() *costbasis.State {
+	return c.State.ResolvedCostBasis
+}
+
 func (c ChargeBase) GetInvoiceCurrency() (currencyx.FiatCode, error) {
 	currency := c.GetCurrency()
 	if currency.IsFiat() {
@@ -117,6 +134,38 @@ type Charge struct {
 	ChargeBase
 
 	Realizations Realizations `json:"realizations"`
+}
+
+// GetFeatureRef returns the charge's feature reference, or nil for the
+// feature-less flat fees. Charges with a persisted resolved feature snapshot
+// use it; the rest fall back to the immutable feature key from the base
+// intent.
+func (c Charge) GetFeatureRef() *ref.IDOrKey {
+	if c.State.FeatureID != nil && *c.State.FeatureID != "" {
+		return &ref.IDOrKey{ID: *c.State.FeatureID}
+	}
+
+	if key := c.Intent.GetFeatureKey(); key != "" {
+		return &ref.IDOrKey{Key: key}
+	}
+
+	return nil
+}
+
+func (c Charge) GetFeatureMeterRef() *billingfeaturemeter.FeatureMeterRef {
+	featureRef := c.GetFeatureRef()
+	if featureRef == nil {
+		return nil
+	}
+
+	return &billingfeaturemeter.FeatureMeterRef{IDOrKey: *featureRef}
+}
+
+func (c Charge) GetFeatureMeterOwner() billingfeaturemeter.FeatureReferenceIdentity {
+	return billingfeaturemeter.FeatureReferenceIdentity{
+		Kind: billingfeaturemeter.FeatureReferenceKindCharges,
+		ID:   c.ID,
+	}
 }
 
 func (c Charge) GetStatus() Status {
@@ -169,6 +218,10 @@ type Intent struct {
 	CostBasis           *costbasis.Intent             `json:"costBasis,omitempty"`
 }
 
+func (i Intent) Equal(other Intent) bool {
+	return deriveEqualIntent(&i, &other)
+}
+
 func (i Intent) Normalized() Intent {
 	i.IntentMutableFields = i.IntentMutableFields.Normalized(i.Intent.Currency)
 
@@ -219,6 +272,23 @@ func (i Intent) GetFeatureRef() (*ref.IDOrKey, error) {
 	default:
 		return nil, nil
 	}
+}
+
+func (i Intent) GetFeatureMeterRef() *billingfeaturemeter.FeatureMeterRef {
+	featureRef := ref.IDOrKey{}
+	if i.FeatureID != nil {
+		featureRef.ID = *i.FeatureID
+	}
+
+	if i.FeatureKey != nil {
+		featureRef.Key = *i.FeatureKey
+	}
+
+	if lo.IsEmpty(featureRef) {
+		return nil
+	}
+
+	return &billingfeaturemeter.FeatureMeterRef{IDOrKey: featureRef}
 }
 
 func validateCostBasis(currency currencies.Currency, settlementMode productcatalog.SettlementMode, intent *costbasis.Intent) error {
@@ -724,4 +794,8 @@ func (r Realizations) Validate() error {
 	}
 
 	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
+func (i OverridableIntent) GetCreditFilters() ledger.CreditFilters {
+	return i.intent.GetCreditFilters(i.GetFeatureKey())
 }

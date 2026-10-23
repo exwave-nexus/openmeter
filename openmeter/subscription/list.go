@@ -25,6 +25,7 @@ func (o OrderBy) Validate() error {
 	case OrderByID, OrderByActiveFrom, OrderByActiveTo:
 		return nil
 	}
+
 	return fmt.Errorf("invalid order by: %s", o)
 }
 
@@ -39,6 +40,10 @@ type ListSubscriptionsInput struct {
 	ActiveInPeriod *timeutil.StartBoundedPeriod
 	Status         []SubscriptionStatus
 	IncludeDeleted bool
+
+	// ExcludeCustomCurrency limits legacy API reads to subscriptions whose
+	// non-deleted schedule contains no custom-currency priced items.
+	ExcludeCustomCurrency bool
 
 	ID        *filter.FilterULID
 	PlanID    *filter.FilterULID

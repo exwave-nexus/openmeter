@@ -10,8 +10,8 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	usagebasedrating "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/rating"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/models"
 )
@@ -19,7 +19,7 @@ import (
 type CreateRatedRunInput struct {
 	Charge             usagebased.Charge
 	CustomerOverride   billing.CustomerOverrideWithDetails
-	FeatureMeter       feature.FeatureMeter
+	FeatureMeter       billingfeaturemeter.FeatureMeter
 	Type               usagebased.RealizationRunType
 	StoredAtLT         time.Time
 	ServicePeriodTo    time.Time
@@ -102,7 +102,10 @@ func (s *Service) createNewRealizationRun(ctx context.Context, charge usagebased
 		return usagebased.Charge{}, fmt.Errorf("current realization run already exists [charge_id=%s]", charge.GetChargeID())
 	}
 
-	run, err := s.adapter.CreateRealizationRun(ctx, charge.GetChargeID(), in)
+	run, err := s.adapter.CreateRealizationRun(ctx, charge.GetChargeID(), usagebased.CreateRealizationRunAdapterInput{
+		CreateRealizationRunInput: in,
+		PriorRunID:                charge.Realizations.PriorRunIDForNextRun(),
+	})
 	if err != nil {
 		return usagebased.Charge{}, fmt.Errorf("create realization run: %w", err)
 	}
@@ -128,6 +131,7 @@ func (s *Service) CreateRatedRun(ctx context.Context, in CreateRatedRunInput) (C
 		return CreateRatedRunResult{}, err
 	}
 
+	recorder := billing.ValidationIssueRecorder{}
 	ratingResult, err := s.rater.GetDetailedRatingForUsage(ctx, usagebasedrating.GetDetailedRatingForUsageInput{
 		Charge:          in.Charge,
 		StoredAtLT:      in.StoredAtLT,
@@ -135,7 +139,7 @@ func (s *Service) CreateRatedRun(ctx context.Context, in CreateRatedRunInput) (C
 		Customer:        in.CustomerOverride,
 		FeatureMeter:    in.FeatureMeter,
 	})
-	if err != nil {
+	if err := recorder.RecordWarnings(err); err != nil {
 		return CreateRatedRunResult{}, fmt.Errorf("get detailed rating for usage: %w", err)
 	}
 
@@ -185,5 +189,5 @@ func (s *Service) CreateRatedRun(ctx context.Context, in CreateRatedRunInput) (C
 		Charge: reconciled.Charge,
 		Run:    reconciled.Run,
 		Rating: ratingResult,
-	}, nil
+	}, recorder.ErrorsOrNil()
 }

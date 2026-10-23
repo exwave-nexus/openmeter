@@ -39,6 +39,7 @@ type Config struct {
 	CustomerService       customer.Service
 	CreditVoidService     creditvoid.Service
 	TransactionManager    transaction.Creator
+	CurrencyResolver      currencies.CurrencyResolver
 }
 
 func (c Config) Validate() error {
@@ -68,6 +69,10 @@ func (c Config) Validate() error {
 		errs = append(errs, errors.New("transaction manager is required"))
 	}
 
+	if c.CurrencyResolver == nil {
+		errs = append(errs, errors.New("currency resolver is required"))
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -83,6 +88,7 @@ func New(config Config) (creditgrant.Service, error) {
 		customerService:       config.CustomerService,
 		creditVoidService:     config.CreditVoidService,
 		transactionManager:    config.TransactionManager,
+		currencyResolver:      config.CurrencyResolver,
 	}, nil
 }
 
@@ -93,6 +99,7 @@ type service struct {
 	customerService       customer.Service
 	creditVoidService     creditvoid.Service
 	transactionManager    transaction.Creator
+	currencyResolver      currencies.CurrencyResolver
 }
 
 func (s *service) Create(ctx context.Context, input creditgrant.CreateInput) (creditpurchase.Charge, error) {
@@ -109,6 +116,13 @@ func (s *service) Create(ctx context.Context, input creditgrant.CreateInput) (cr
 	})
 	if err != nil {
 		return creditpurchase.Charge{}, fmt.Errorf("get customer: %w", err)
+	}
+
+	currency, err := s.currencyResolver.ResolveCurrency(ctx, input.Namespace, currencies.CurrencyRef{
+		Code: input.Currency,
+	})
+	if err != nil {
+		return creditpurchase.Charge{}, fmt.Errorf("resolving currency: %w", err)
 	}
 
 	if input.FundingMethod == creditgrant.FundingMethodInvoice {
@@ -129,15 +143,14 @@ func (s *service) Create(ctx context.Context, input creditgrant.CreateInput) (cr
 		}
 	}
 
-	// Build the credit purchase intent
-	intent, err := toIntent(input)
+	intent, err := toIntent(input, *currency)
 	if err != nil {
 		return creditpurchase.Charge{}, fmt.Errorf("build credit grant intent: %w", err)
 	}
 
 	result, err := s.chargesService.Create(ctx, charges.CreateInput{
 		Namespace: input.Namespace,
-		Intents:   charges.ChargeIntents{charges.NewChargeIntent(intent)},
+		Intents:   charges.NewCreateChargeIntents(intent),
 	})
 	if err != nil {
 		return creditpurchase.Charge{}, fmt.Errorf("create credit grant charge: %w", err)
@@ -289,10 +302,6 @@ func (s *service) Void(ctx context.Context, input creditgrant.VoidInput) (credit
 		return creditpurchase.Charge{}, err
 	}
 
-	if charge.Intent.Currency.IsCustom() {
-		return creditpurchase.Charge{}, fmt.Errorf("credit grant with custom currency: %w", meta.ErrCustomCurrencyNotSupported)
-	}
-
 	if charge.State.VoidedAt != nil {
 		return charge, nil
 	}
@@ -359,28 +368,23 @@ func validateChargeVoidable(charge creditpurchase.Charge) error {
 	return nil
 }
 
-func toIntent(input creditgrant.CreateInput) (creditpurchase.Intent, error) {
+func toIntent(input creditgrant.CreateInput, currency currencies.Currency) (creditpurchase.Intent, error) {
 	effectiveAt := lo.FromPtrOr(input.EffectiveAt, clock.Now()).UTC()
 	period := timeutil.ClosedPeriod{From: effectiveAt, To: effectiveAt}
-	currency, err := currencyx.NewCurrencyBuilder(currencyx.CurrencyTypeFiat).
-		WithCode(input.Currency).
-		Build()
-	if err != nil {
-		return creditpurchase.Intent{}, fmt.Errorf("build fiat currency: %w", err)
-	}
 
 	var costBasis creditpurchase.CostBasis
 	if input.FundingMethod != creditgrant.FundingMethodNone {
-		// TODO: map custom-currency grants to the shared custom-currency cost-basis intent.
-		costBasis = creditpurchase.NewCostBasis(creditpurchase.FiatCostBasis{
-			Rate: lo.FromPtrOr(input.Purchase.PerUnitCostBasis, alpacadecimal.NewFromInt(1)),
-		})
+		var err error
+		costBasis, err = toCostBasis(input.Purchase, currency)
+		if err != nil {
+			return creditpurchase.Intent{}, fmt.Errorf("build cost basis: %w", err)
+		}
 	}
 
 	intent := creditpurchase.Intent{
 		Intent: meta.Intent{
 			CustomerID: input.CustomerID,
-			Currency:   currencies.Currency{Currency: currency},
+			Currency:   currency,
 			ManagedBy:  billing.ManuallyManagedLine,
 			TaxConfig:  productcatalog.TaxCodeConfigFrom(input.TaxConfig),
 		},
@@ -404,7 +408,7 @@ func toIntent(input creditgrant.CreateInput) (creditpurchase.Intent, error) {
 	}
 
 	if input.Filters != nil {
-		intent.FeatureFilters = creditpurchase.FeatureFilters(input.Filters.Features).Normalize()
+		intent.Filters = input.Filters.Normalize()
 	}
 
 	if input.Priority != nil {
@@ -413,6 +417,16 @@ func toIntent(input creditgrant.CreateInput) (creditpurchase.Intent, error) {
 	}
 
 	return intent, nil
+}
+
+func toCostBasis(purchase *creditgrant.PurchaseTerms, currency currencies.Currency) (creditpurchase.CostBasis, error) {
+	if purchase.CostBasis != nil {
+		return *purchase.CostBasis, nil
+	}
+
+	return creditpurchase.NewCostBasis(creditpurchase.FiatCostBasis{
+		Rate: lo.FromPtrOr(purchase.PerUnitCostBasis, alpacadecimal.NewFromInt(1)),
+	}), nil
 }
 
 func calculateExpiresAt(from time.Time, expiresAfter *datetime.ISODuration) *time.Time {
@@ -439,6 +453,7 @@ func toSettlement(input creditgrant.CreateInput) creditpurchase.Settlement {
 		settlement := creditpurchase.ExternalSettlement{
 			InitialStatus: initialStatus,
 		}
+
 		return creditpurchase.NewSettlement(settlement)
 
 	default: // FundingMethodNone → promotional

@@ -15,9 +15,9 @@ type Pricer interface {
 	// GenerateDetailedLines generates the detailed lines for a line.
 	GenerateDetailedLines(line PricerCalculateInput) (rating.DetailedLines, error)
 
-	// ResolveBillablePeriod checks if the line can be invoiced as of the given time and returns the service
-	// period that can be invoiced.
-	ResolveBillablePeriod(rating.ResolveBillablePeriodInput) (*timeutil.ClosedPeriod, error)
+	// ResolveBillablePeriod determines whether the line can be invoiced as of the given time and, when billable,
+	// returns the service period that can be invoiced.
+	ResolveBillablePeriod(rating.ResolveBillablePeriodInput) (billing.IsLineBillableAsOfResult, error)
 }
 
 type PricerCalculateInput struct {
@@ -60,6 +60,7 @@ func (i PricerCalculateInput) IsLastInPeriod() bool {
 	}
 
 	servicePeriod := i.GetServicePeriod()
+
 	return servicePeriod.To.Equal(i.FullProgressivelyBilledServicePeriod.To)
 }
 
@@ -70,5 +71,6 @@ func (i PricerCalculateInput) IsFirstInPeriod() bool {
 	}
 
 	servicePeriod := i.GetServicePeriod()
+
 	return servicePeriod.From.Equal(i.FullProgressivelyBilledServicePeriod.From)
 }

@@ -29,6 +29,7 @@ import (
 	billinghttpdriver "github.com/openmeterio/openmeter/openmeter/billing/httpdriver"
 	"github.com/openmeterio/openmeter/openmeter/customer"
 	enttx "github.com/openmeterio/openmeter/openmeter/ent/tx"
+	advancetestutils "github.com/openmeterio/openmeter/openmeter/ledger/advance/testutils"
 	ledgerbreakage "github.com/openmeterio/openmeter/openmeter/ledger/breakage"
 	ledgerchargeadapter "github.com/openmeterio/openmeter/openmeter/ledger/chargeadapter"
 	ledgercollector "github.com/openmeterio/openmeter/openmeter/ledger/collector"
@@ -44,6 +45,7 @@ import (
 	secretservice "github.com/openmeterio/openmeter/openmeter/secret/service"
 	"github.com/openmeterio/openmeter/openmeter/streaming"
 	"github.com/openmeterio/openmeter/openmeter/taxcode"
+	omtestutils "github.com/openmeterio/openmeter/openmeter/testutils"
 	"github.com/openmeterio/openmeter/openmeter/watermill/eventbus"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
@@ -128,28 +130,44 @@ func (s *StripeInvoiceTestSuite) SetupSuite() {
 
 	s.LedgerResolver = ledgerDeps.ResolversService
 
+	breakageService := ledgerbreakage.NewNoopService()
+
+	advanceService := advancetestutils.NewService(s.T(), ledgerDeps, breakageService)
+
 	collectorService, err := ledgercollector.NewService(ledgercollector.Config{
-		Ledger: ledgerDeps.HistoricalLedger,
+		Logger:  omtestutils.NewDiscardLogger(s.T()),
+		Advance: advanceService,
+		Ledger:  ledgerDeps.HistoricalLedger,
 		Dependencies: transactions.ResolverDependencies{
 			AccountService: ledgerDeps.ResolversService,
 			AccountCatalog: ledgerDeps.AccountService,
 			BalanceQuerier: ledgerDeps.HistoricalLedger,
 		},
+		Breakage:           breakageService,
 		AccountLocker:      ledgerDeps.AccountService,
 		TransactionManager: enttx.NewCreator(s.DBClient),
 	})
 	s.Require().NoError(err)
 
-	creditPurchaseHandler, err := ledgerchargeadapter.NewCreditPurchaseHandler(ledgerDeps.HistoricalLedger, ledgerDeps.HistoricalLedger, ledgerDeps.ResolversService, ledgerDeps.AccountService, ledgerbreakage.NewNoopService(), enttx.NewCreator(s.DBClient))
+	creditPurchaseHandler, err := ledgerchargeadapter.NewCreditPurchaseHandler(ledgerchargeadapter.CreditPurchaseHandlerConfig{
+		Ledger:             ledgerDeps.HistoricalLedger,
+		BalanceQuerier:     ledgerDeps.HistoricalLedger,
+		AccountResolver:    ledgerDeps.ResolversService,
+		AccountCatalog:     ledgerDeps.AccountService,
+		AdvanceService:     advanceService,
+		BreakageService:    breakageService,
+		TransactionManager: enttx.NewCreator(s.DBClient),
+	})
 	s.Require().NoError(err)
 
 	chargeStack, err := chargestestutils.NewServices(s.T(), chargestestutils.Config{
 		Client:                s.DBClient,
 		Logger:                slog.Default(),
 		BillingService:        s.BillingService,
-		FeatureService:        s.FeatureService,
+		FeatureMeterResolver:  s.FeatureMeterResolver,
 		StreamingConnector:    s.MockStreamingConnector,
 		TaxCodeService:        s.TaxCodeService,
+		CustomerService:       s.CustomerService,
 		FlatFeeHandler:        ledgerchargeadapter.NewFlatFeeHandler(ledgerDeps.HistoricalLedger, transactions.ResolverDependencies{AccountService: ledgerDeps.ResolversService, AccountCatalog: ledgerDeps.AccountService, BalanceQuerier: ledgerDeps.HistoricalLedger}, collectorService),
 		CreditPurchaseHandler: creditPurchaseHandler,
 		UsageBasedHandler:     ledgerchargeadapter.NewUsageBasedHandler(ledgerDeps.HistoricalLedger, transactions.ResolverDependencies{AccountService: ledgerDeps.ResolversService, AccountCatalog: ledgerDeps.AccountService, BalanceQuerier: ledgerDeps.HistoricalLedger}, collectorService),
@@ -164,6 +182,7 @@ func (s *StripeInvoiceTestSuite) SetupSuite() {
 		CustomerService:       s.CustomerService,
 		CreditVoidService:     creditvoid.NewNoopService(),
 		TransactionManager:    enttx.NewCreator(s.DBClient),
+		CurrencyResolver:      chargeStack.CurrencyResolver,
 	})
 	s.Require().NoError(err, "failed to initialize credit grant service")
 	s.CreditGrant = creditGrantService
@@ -396,7 +415,7 @@ func (s *StripeInvoiceTestSuite) TestComplexInvoice() {
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					{
 						// Covered case: Discount caused by maximum amount
 						GatheringLineBase: billing.GatheringLineBase{
@@ -528,7 +547,7 @@ func (s *StripeInvoiceTestSuite) TestComplexInvoice() {
 							})),
 						},
 					},
-				},
+				}),
 			},
 		)
 		s.NoError(err)
@@ -1131,7 +1150,6 @@ func (s *StripeInvoiceTestSuite) TestEmptyInvoiceGenerationZeroUsage() {
 	// Given we have a test customer and an UBP line without usage priced at 0
 	// we can create the invoice and even if there are no detailed lines the validation
 	// errors should be empty
-
 	namespace := "ns-empty-invoice-generation"
 	ctx := context.Background()
 	periodStart := lo.Must(time.Parse(time.RFC3339, "2024-09-02T12:13:14Z"))
@@ -1244,7 +1262,7 @@ func (s *StripeInvoiceTestSuite) TestEmptyInvoiceGenerationZeroUsage() {
 		billing.CreatePendingInvoiceLinesInput{
 			Customer: customerEntity.GetID(),
 			Currency: currencyx.FiatCode(currency.USD),
-			Lines: []billing.GatheringLine{
+			Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 				{
 					GatheringLineBase: billing.GatheringLineBase{
 						ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -1259,7 +1277,7 @@ func (s *StripeInvoiceTestSuite) TestEmptyInvoiceGenerationZeroUsage() {
 						})),
 					},
 				},
-			},
+			}),
 		},
 	)
 	s.NoError(err)
@@ -1395,7 +1413,7 @@ func (s *StripeInvoiceTestSuite) TestDeletedAppFailsAdvancementButAllowsInvoiceD
 		_, err = s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 			Customer: customerEntity.GetID(),
 			Currency: currencyx.FiatCode(currency.USD),
-			Lines: []billing.GatheringLine{
+			Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 				billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 					Namespace:     namespace,
 					Period:        timeutil.ClosedPeriod{From: now.Add(-2 * time.Hour), To: now.Add(-time.Hour)},
@@ -1406,7 +1424,7 @@ func (s *StripeInvoiceTestSuite) TestDeletedAppFailsAdvancementButAllowsInvoiceD
 					Currency:      currencyx.FiatCode(currency.USD),
 					PaymentTerm:   productcatalog.InArrearsPaymentTerm,
 				}),
-			},
+			}),
 		})
 		s.Require().NoError(err)
 
@@ -1509,7 +1527,6 @@ func (s *StripeInvoiceTestSuite) TestSendInvoice() {
 	// Given we have a test customer and a billing profile with send_invoice collection method
 	// we can create an invoice that will be sent to the customer instead of charged automatically.
 	// In this test we should see due date set and collection method set to send_invoice.
-
 	namespace := "ns-send-invoice"
 	ctx := context.Background()
 	periodStart := lo.Must(time.Parse(time.RFC3339, "2024-09-02T12:13:14Z"))
@@ -1586,7 +1603,7 @@ func (s *StripeInvoiceTestSuite) TestSendInvoice() {
 		billing.CreatePendingInvoiceLinesInput{
 			Customer: customerEntity.GetID(),
 			Currency: currencyx.FiatCode(currency.USD),
-			Lines: []billing.GatheringLine{
+			Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 				billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 					Period:        timeutil.ClosedPeriod{From: periodStart, To: periodEnd},
 					InvoiceAt:     periodStart,
@@ -1594,7 +1611,7 @@ func (s *StripeInvoiceTestSuite) TestSendInvoice() {
 					PerUnitAmount: alpacadecimal.NewFromFloat(10),
 					PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 				}),
-			},
+			}),
 		},
 	)
 	s.NoError(err)

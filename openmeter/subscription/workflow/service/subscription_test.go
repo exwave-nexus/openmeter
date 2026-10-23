@@ -18,6 +18,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog/featureresolver"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/plan"
 	"github.com/openmeterio/openmeter/openmeter/registry"
 	"github.com/openmeterio/openmeter/openmeter/subscription"
@@ -161,6 +162,82 @@ func TestCreateFromPlan(t *testing.T) {
 		require.NotNil(t, boolItem)
 		require.Equal(t, 1, subscription.AnnotationParser.GetBooleanEntitlementCount(boolItem.SubscriptionItem.Annotations))
 	})
+
+	t.Run("Should allow a free plan with a different customer currency", func(t *testing.T) {
+		// given:
+		// - a USD customer and a EUR plan without priced rate cards
+		// when:
+		// - the subscription is started and later revalidated by an update
+		// then:
+		// - both operations succeed because the plan has no billable contents
+		now := testutils.GetRFC3339Time(t, "2021-01-01T00:00:00Z")
+		clock.FreezeTime(now)
+		defer clock.UnFreeze()
+
+		dbDeps := subscriptiontestutils.SetupDBDeps(t)
+		defer dbDeps.Cleanup(t)
+
+		deps := subscriptiontestutils.NewService(t, dbDeps)
+		planInput := subscriptiontestutils.BuildTestPlanInput(t).
+			AddPhase(nil, subscriptiontestutils.ExampleAddonRateCard2.Clone()).
+			Build()
+		planInput.Plan.Currency = currencies.NewCurrencyReference(currencyx.Code(currency.EUR))
+		freePlan := deps.PlanHelper.CreatePlan(t, planInput)
+		cust := deps.CustomerAdapter.CreateExampleCustomer(t)
+
+		created, err := deps.WorkflowService.CreateFromPlan(t.Context(), subscriptionworkflow.CreateSubscriptionWorkflowInput{
+			ChangeSubscriptionWorkflowInput: subscriptionworkflow.ChangeSubscriptionWorkflowInput{
+				Timing: subscription.Timing{Custom: &now},
+			},
+			CustomerID: cust.ID,
+			Namespace:  subscriptiontestutils.ExampleNamespace,
+		}, freePlan)
+		require.NoError(t, err)
+		require.False(t, created.Spec.HasBillables())
+		require.Equal(t, currencyx.Code(currency.EUR), created.Subscription.InvoiceCurrency)
+
+		updated, err := deps.SubscriptionService.Update(t.Context(), created.Subscription.NamespacedID, created.AsSpec())
+		require.NoError(t, err)
+		require.Equal(t, currencyx.Code(currency.EUR), updated.InvoiceCurrency)
+	})
+
+	t.Run("Should reject a priced plan with a different customer currency", func(t *testing.T) {
+		// given:
+		// - a USD customer and a EUR plan with a priced rate card
+		// when:
+		// - subscription creation reaches the service validation boundary
+		// then:
+		// - the customer and subscription invoice currency mismatch is rejected
+		now := testutils.GetRFC3339Time(t, "2021-01-01T00:00:00Z")
+		clock.FreezeTime(now)
+		defer clock.UnFreeze()
+
+		dbDeps := subscriptiontestutils.SetupDBDeps(t)
+		defer dbDeps.Cleanup(t)
+
+		deps := subscriptiontestutils.NewService(t, dbDeps)
+		pricedRateCard := subscriptiontestutils.ExampleAddonRateCard2.Clone()
+		require.NoError(t, pricedRateCard.ChangeMeta(func(meta productcatalog.RateCardMeta) (productcatalog.RateCardMeta, error) {
+			meta.Price = productcatalog.NewPriceFrom(productcatalog.FlatPrice{Amount: alpacadecimal.NewFromInt(1)})
+			return meta, nil
+		}))
+		planInput := subscriptiontestutils.BuildTestPlanInput(t).
+			AddPhase(nil, pricedRateCard).
+			Build()
+		planInput.Plan.Currency = currencies.NewCurrencyReference(currencyx.Code(currency.EUR))
+		pricedPlan := deps.PlanHelper.CreatePlan(t, planInput)
+		cust := deps.CustomerAdapter.CreateExampleCustomer(t)
+
+		_, err := deps.WorkflowService.CreateFromPlan(t.Context(), subscriptionworkflow.CreateSubscriptionWorkflowInput{
+			ChangeSubscriptionWorkflowInput: subscriptionworkflow.ChangeSubscriptionWorkflowInput{
+				Timing: subscription.Timing{Custom: &now},
+			},
+			CustomerID: cust.ID,
+			Namespace:  subscriptiontestutils.ExampleNamespace,
+		}, pricedPlan)
+		require.True(t, models.IsGenericValidationError(err))
+		require.ErrorContains(t, err, "currency mismatch: customer currency is USD, but subscription invoice currency is EUR")
+	})
 }
 
 func TestEditRunning(t *testing.T) {
@@ -168,6 +245,7 @@ func TestEditRunning(t *testing.T) {
 		CurrentTime     time.Time
 		SubView         subscription.SubscriptionView
 		Customer        customer.Customer
+		FeatureIDsByKey map[string]string
 		WorkflowService subscriptionworkflow.Service
 		Service         subscription.Service
 		DBDeps          *subscriptiontestutils.DBDeps
@@ -259,6 +337,102 @@ func TestEditRunning(t *testing.T) {
 			},
 		},
 		{
+			Name: "Should resolve feature references on a newly authored item",
+			Handler: func(t *testing.T, deps testCaseDeps) {
+				// given:
+				// - an unpriced add-item patch identifying an existing feature by key
+				// when:
+				// - it is added through the running-subscription edit workflow
+				// then:
+				// - the persisted rate card carries the canonical feature ID and key
+				const phaseKey = "test_phase_1"
+				itemKey := subscriptiontestutils.ExampleFeatureKey2
+
+				rateCard := &productcatalog.FlatFeeRateCard{
+					RateCardMeta: productcatalog.RateCardMeta{
+						Key:     itemKey,
+						Name:    itemKey,
+						Feature: productcatalog.NewFeatureReference(nil, &itemKey),
+					},
+				}
+
+				subView, err := deps.WorkflowService.EditRunning(t.Context(), deps.SubView.Subscription.NamespacedID, []subscription.Patch{
+					patch.PatchAddItem{
+						PhaseKey: phaseKey,
+						ItemKey:  itemKey,
+						CreateInput: subscription.SubscriptionItemSpec{
+							CreateSubscriptionItemInput: subscription.CreateSubscriptionItemInput{
+								CreateSubscriptionItemPlanInput: subscription.CreateSubscriptionItemPlanInput{
+									PhaseKey: phaseKey,
+									ItemKey:  itemKey,
+									RateCard: rateCard,
+								},
+							},
+						},
+					},
+				}, immediate)
+				require.NoError(t, err)
+
+				phase, ok := subView.GetPhaseByKey(phaseKey)
+				require.True(t, ok)
+				require.Len(t, phase.ItemsByKey[itemKey], 1)
+
+				featureReference := phase.ItemsByKey[itemKey][0].Spec.RateCard.AsMeta().Feature
+				require.NotNil(t, featureReference)
+				require.NotNil(t, featureReference.ID)
+				require.NotNil(t, featureReference.Key)
+				require.Equal(t, itemKey, *featureReference.Key)
+
+				expectedFeatureID, ok := deps.FeatureIDsByKey[itemKey]
+				require.True(t, ok)
+				require.Equal(t, expectedFeatureID, *featureReference.ID)
+			},
+		},
+		{
+			Name: "Should reject a newly authored item with a missing feature",
+			Handler: func(t *testing.T, deps testCaseDeps) {
+				// given:
+				// - an unpriced add-item patch referencing a feature that does not exist
+				// when:
+				// - it is submitted through the running-subscription edit workflow
+				// then:
+				// - the edit fails with the product catalog's missing-feature validation error
+				const (
+					phaseKey = "test_phase_1"
+					itemKey  = "missing-edit-feature"
+				)
+
+				rateCard := &productcatalog.FlatFeeRateCard{
+					RateCardMeta: productcatalog.RateCardMeta{
+						Key:     itemKey,
+						Name:    itemKey,
+						Feature: productcatalog.NewFeatureReference(nil, lo.ToPtr(itemKey)),
+					},
+				}
+
+				_, err := deps.WorkflowService.EditRunning(t.Context(), deps.SubView.Subscription.NamespacedID, []subscription.Patch{
+					patch.PatchAddItem{
+						PhaseKey: phaseKey,
+						ItemKey:  itemKey,
+						CreateInput: subscription.SubscriptionItemSpec{
+							CreateSubscriptionItemInput: subscription.CreateSubscriptionItemInput{
+								CreateSubscriptionItemPlanInput: subscription.CreateSubscriptionItemPlanInput{
+									PhaseKey: phaseKey,
+									ItemKey:  itemKey,
+									RateCard: rateCard,
+								},
+							},
+						},
+					},
+				}, immediate)
+				require.ErrorIs(t, err, productcatalog.ErrRateCardFeatureNotFound)
+				require.ErrorContains(t, err, itemKey)
+				issues, systemErr := models.AsValidationIssues(err)
+				require.NoError(t, systemErr)
+				require.NotEmpty(t, issues)
+			},
+		},
+		{
 			Name: "Should preserve patch field paths when a priced item is invalid",
 			Handler: func(t *testing.T, deps testCaseDeps) {
 				// given:
@@ -274,9 +448,9 @@ func TestEditRunning(t *testing.T) {
 
 				rateCard := &productcatalog.FlatFeeRateCard{
 					RateCardMeta: productcatalog.RateCardMeta{
-						Key:        itemKey,
-						Name:       itemKey,
-						FeatureKey: lo.ToPtr(itemKey),
+						Key:     itemKey,
+						Name:    itemKey,
+						Feature: productcatalog.NewFeatureReference(nil, lo.ToPtr(itemKey)),
 						Price: productcatalog.NewPriceFrom(productcatalog.FlatPrice{
 							Amount: alpacadecimal.NewFromInt(10),
 						}),
@@ -398,7 +572,6 @@ func TestEditRunning(t *testing.T) {
 				patch1 := subscriptiontestutils.TestPatch{
 					ApplyToFn: func(spec *subscription.SubscriptionSpec, c subscription.ApplyContext) error {
 						// Let's set the new values
-
 						spec.CreateSubscriptionPlanInput = returnedSpec.CreateSubscriptionPlanInput
 						spec.CreateSubscriptionCustomerInput = returnedSpec.CreateSubscriptionCustomerInput
 						spec.Phases = returnedSpec.Phases
@@ -424,6 +597,8 @@ func TestEditRunning(t *testing.T) {
 				}
 
 				tuDeps := subscriptiontestutils.NewService(t, deps.DBDeps)
+				featureResolver, err := featureresolver.New(tuDeps.FeatureConnector)
+				require.NoError(t, err)
 
 				lockr, err := lockr.NewLocker(&lockr.LockerConfig{Logger: slog.Default()})
 				require.NoError(t, err)
@@ -431,8 +606,10 @@ func TestEditRunning(t *testing.T) {
 					Service:            &mSvc,
 					CustomerService:    tuDeps.CustomerService,
 					CurrencyResolver:   tuDeps.CurrencyResolver,
+					FeatureResolver:    featureResolver,
 					TransactionManager: tuDeps.CustomerAdapter,
 					AddonService:       tuDeps.SubscriptionAddonService,
+					PlanAddonService:   tuDeps.PlanAddonService,
 					Logger:             slog.Default(),
 					Lockr:              lockr,
 					FeatureFlags: ffx.NewTestContextService(ffx.AccessConfig{
@@ -462,10 +639,15 @@ func TestEditRunning(t *testing.T) {
 			defer dbDeps.Cleanup(t)
 
 			deps := subscriptiontestutils.NewService(t, dbDeps)
-			deps.FeatureConnector.CreateExampleFeatures(t, deps.ExampleMeterID)
+			features := deps.FeatureConnector.CreateExampleFeatures(t, deps.ExampleMeterID)
 			plan := deps.PlanHelper.CreatePlan(t, subscriptiontestutils.GetExamplePlanInput(t))
 			cust := deps.CustomerAdapter.CreateExampleCustomer(t)
 			require.NotNil(t, cust)
+
+			featureIDsByKey := make(map[string]string, len(features))
+			for _, feature := range features {
+				featureIDsByKey[feature.Key] = feature.ID
+			}
 
 			// Let's create an example subscription
 			sub, err := deps.WorkflowService.CreateFromPlan(context.Background(), subscriptionworkflow.CreateSubscriptionWorkflowInput{
@@ -482,6 +664,7 @@ func TestEditRunning(t *testing.T) {
 
 			tcDeps.SubView = sub
 			tcDeps.Customer = *cust
+			tcDeps.FeatureIDsByKey = featureIDsByKey
 			tcDeps.DBDeps = dbDeps
 			tcDeps.Service = deps.SubscriptionService
 			tcDeps.WorkflowService = deps.WorkflowService
@@ -952,8 +1135,7 @@ func TestChangeToPlan(t *testing.T) {
 					Key:         subscriptiontestutils.ExampleFeatureKey,
 					Name:        "Rate Card 1",
 					Description: lo.ToPtr("Rate Card 1 Description"),
-					FeatureKey:  lo.ToPtr(subscriptiontestutils.ExampleFeatureKey),
-					FeatureID:   nil,
+					Feature:     productcatalog.NewFeatureReference(nil, lo.ToPtr(subscriptiontestutils.ExampleFeatureKey)),
 					EntitlementTemplate: productcatalog.NewEntitlementTemplateFrom(productcatalog.MeteredEntitlementTemplate{
 						IssueAfterReset: lo.ToPtr(111.0),
 						UsagePeriod:     subscriptiontestutils.ISOMonth,
@@ -1837,10 +2019,9 @@ func TestMultiSubscription(t *testing.T) {
 			plan1 := deps.SubsDeps.PlanHelper.CreatePlan(t, subscriptiontestutils.BuildTestPlanInput(t).
 				AddPhase(nil, &productcatalog.FlatFeeRateCard{
 					RateCardMeta: productcatalog.RateCardMeta{
-						Name:       "feature1",
-						Key:        subscriptiontestutils.ExampleFeatureKey,
-						FeatureKey: lo.ToPtr(subscriptiontestutils.ExampleFeatureKey),
-						FeatureID:  nil,
+						Name:    "feature1",
+						Key:     subscriptiontestutils.ExampleFeatureKey,
+						Feature: productcatalog.NewFeatureReference(nil, lo.ToPtr(subscriptiontestutils.ExampleFeatureKey)),
 						Price: productcatalog.NewPriceFrom(productcatalog.FlatPrice{
 							Amount: alpacadecimal.NewFromInt(int64(100)),
 						}),

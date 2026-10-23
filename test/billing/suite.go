@@ -30,6 +30,7 @@ import (
 	appservice "github.com/openmeterio/openmeter/openmeter/app/service"
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	billingadapter "github.com/openmeterio/openmeter/openmeter/billing/adapter"
+	featuremeterservice "github.com/openmeterio/openmeter/openmeter/billing/featuremeter/service"
 	billinglineengine "github.com/openmeterio/openmeter/openmeter/billing/lineengine"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
 	billingratingservice "github.com/openmeterio/openmeter/openmeter/billing/rating/service"
@@ -74,6 +75,7 @@ type BaseSuite struct {
 
 	BillingAdapter          billing.Adapter
 	BillingService          billing.Service
+	FeatureMeterResolver    *featuremeterservice.Resolver
 	LegacyBillingLineEngine *billinglineengine.Engine
 	SequenceService         billingsequence.Service
 	InvoiceCalculator       *invoicecalc.MockableInvoiceCalculator
@@ -92,6 +94,14 @@ type BaseSuite struct {
 	SandboxApp *appsandbox.MockableFactory
 
 	TaxCodeService taxcode.Service
+}
+
+func (s *BaseSuite) RequireRun(name string, subtest func()) {
+	t := s.T()
+	t.Helper()
+	if !s.Run(name, subtest) {
+		t.Fatalf("test failed")
+	}
 }
 
 func (s *BaseSuite) TearDownTest() {
@@ -239,10 +249,18 @@ func (s *BaseSuite) setupSuite() {
 	s.SequenceService = billingSequenceService
 
 	billingRatingService := billingratingservice.New(billingratingservice.Config{UnitConfigEnabled: true})
+	featureMeterResolver, err := featuremeterservice.New(featuremeterservice.Config{
+		FeatureService: s.FeatureService,
+		MeterService:   s.MeterAdapter,
+		Logger:         slog.Default(),
+	})
+	require.NoError(t, err)
+	s.FeatureMeterResolver = featureMeterResolver
+
 	legacyBillingLineEngine, err := billinglineengine.New(billinglineengine.Config{
 		SplitLineGroupAdapter:        billingAdapter,
 		RatingService:                billingRatingService,
-		FeatureService:               s.FeatureService,
+		FeatureMeterResolver:         featureMeterResolver,
 		StreamingConnector:           s.MockStreamingConnector,
 		MaxParallelQuantitySnapshots: 2,
 	})
@@ -252,13 +270,11 @@ func (s *BaseSuite) setupSuite() {
 	billingService, err := billingservice.New(billingservice.Config{
 		Adapter:                 billingAdapter,
 		SequenceService:         billingSequenceService,
-		RatingService:           billingRatingService,
 		LegacyBillingLineEngine: legacyBillingLineEngine,
 		CustomerService:         s.CustomerService,
 		AppService:              s.AppService,
 		Logger:                  slog.Default(),
-		FeatureService:          s.FeatureService,
-		MeterService:            s.MeterAdapter,
+		FeatureMeterResolver:    featureMeterResolver,
 		Publisher:               publisher,
 		AdvancementStrategy:     billing.ForegroundAdvancementStrategy,
 		TaxCodeService:          taxCodeService,
@@ -352,6 +368,7 @@ func (s *BaseSuite) CreateTestCustomer(ns string, subjectKey string) *customer.C
 	})
 
 	s.NoError(err)
+
 	return customer
 }
 
@@ -388,6 +405,7 @@ func (s *BaseSuite) DebugDumpStandardInvoice(h string, i billing.StandardInvoice
 		} else if l1.Period.From.After(l2.Period.From) {
 			return 1
 		}
+
 		return 0
 	})
 
@@ -421,6 +439,7 @@ func (s *BaseSuite) DebugDumpGatheringInvoice(h string, i billing.GatheringInvoi
 		} else if l1.ServicePeriod.From.After(l2.ServicePeriod.From) {
 			return 1
 		}
+
 		return 0
 	})
 
@@ -479,7 +498,7 @@ func (s *BaseSuite) CreateGatheringInvoice(t *testing.T, ctx context.Context, in
 		billing.CreatePendingInvoiceLinesInput{
 			Customer: in.Customer.GetID(),
 			Currency: currencyx.FiatCode(currency.USD),
-			Lines: []billing.GatheringLine{
+			Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 				billing.NewFlatFeeGatheringLine(
 					billing.NewFlatFeeLineInput{
 						Namespace:     namespace,
@@ -510,7 +529,7 @@ func (s *BaseSuite) CreateGatheringInvoice(t *testing.T, ctx context.Context, in
 						PaymentTerm: productcatalog.InArrearsPaymentTerm,
 					},
 				),
-			},
+			}),
 		})
 
 	require.NoError(s.T(), err)
@@ -699,6 +718,7 @@ func (s *BaseSuite) ProvisionDefaultTaxCodes(ctx context.Context, ns string) tax
 		CreditGrantTaxCodeID: creditGrant.ID,
 	})
 	s.Require().NoError(err, "upserting organization default tax codes")
+
 	return defaults
 }
 

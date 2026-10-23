@@ -10,9 +10,11 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	chargesflatfee "github.com/openmeterio/openmeter/openmeter/billing/charges/flatfee"
 	chargesmeta "github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
 	chargesusagebased "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	"github.com/openmeterio/openmeter/openmeter/billing/worker/subscriptionsync/service/persistedstate"
 	"github.com/openmeterio/openmeter/openmeter/billing/worker/subscriptionsync/service/targetstate"
+	"github.com/openmeterio/openmeter/openmeter/currencies"
 	currenciestestutils "github.com/openmeterio/openmeter/openmeter/currencies/testutils"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/openmeter/subscription"
@@ -21,6 +23,113 @@ import (
 	"github.com/openmeterio/openmeter/pkg/models"
 	"github.com/openmeterio/openmeter/pkg/timeutil"
 )
+
+func TestNewChargeCostBasisIntent(t *testing.T) {
+	customCurrency := currenciestestutils.NewManagedCurrency(t, "namespace", "custom-currency-id", "CREDITS")
+
+	t.Run("credit only custom currency has no cost basis", func(t *testing.T) {
+		target := newChargePatchTestTarget(t, productcatalog.CreditOnlySettlementMode, newChargePatchTestFlatRateCard())
+		target.Currency = customCurrency
+
+		intent, err := newChargeCostBasisIntent(target)
+
+		require.NoError(t, err)
+		require.Nil(t, intent)
+	})
+
+	t.Run("dynamic subscription maps to dynamic charge cost basis", func(t *testing.T) {
+		target := newChargePatchTestTarget(t, productcatalog.CreditThenInvoiceSettlementMode, newChargePatchTestFlatRateCard())
+		target.Currency = customCurrency
+		target.Subscription.CostBasisMode = subscription.CostBasisModeDynamic
+
+		intent, err := newChargeCostBasisIntent(target)
+
+		require.NoError(t, err)
+		require.NotNil(t, intent)
+		require.Equal(t, costbasis.ModeDynamic, intent.Kind())
+		fiatCurrency, err := intent.GetFiatCurrency()
+		require.NoError(t, err)
+		require.Equal(t, currencyx.FiatCode("USD"), fiatCurrency.GetFiatCode())
+
+		chargeIntent, err := newFlatFeeChargeIntent(target)
+		require.NoError(t, err)
+		flatFeeIntent, err := chargeIntent.AsFlatFeeIntent()
+		require.NoError(t, err)
+		require.NotNil(t, flatFeeIntent.CostBasis)
+		require.Equal(t, costbasis.ModeDynamic, flatFeeIntent.CostBasis.Kind())
+	})
+
+	t.Run("pinned subscription maps its selected resource", func(t *testing.T) {
+		target := newChargePatchTestTarget(t, productcatalog.CreditThenInvoiceSettlementMode, newChargePatchTestUsageRateCard())
+		target.Currency = customCurrency
+		target.Subscription.CostBasisMode = subscription.CostBasisModePinned
+		target.Subscription.CostBasisPins = []subscription.CostBasisPin{{
+			CustomCurrencyID: customCurrency.ID,
+			InvoiceCurrency:  "USD",
+			CostBasis: currencies.CostBasis{
+				NamespacedID: models.NamespacedID{Namespace: "namespace", ID: "currency-cost-basis-id"},
+			},
+		}}
+
+		intent, err := newChargeCostBasisIntent(target)
+
+		require.NoError(t, err)
+		require.NotNil(t, intent)
+		require.Equal(t, costbasis.ModePinned, intent.Kind())
+		pinned, err := intent.AsPinned()
+		require.NoError(t, err)
+		require.Equal(t, "currency-cost-basis-id", pinned.CurrencyCostBasisID)
+
+		chargeIntent, err := newUsageBasedChargeIntent(target)
+		require.NoError(t, err)
+		usageBasedIntent, err := chargeIntent.AsUsageBasedIntent()
+		require.NoError(t, err)
+		require.NotNil(t, usageBasedIntent.CostBasis)
+		require.Equal(t, costbasis.ModePinned, usageBasedIntent.CostBasis.Kind())
+	})
+
+	t.Run("missing subscription pin is rejected", func(t *testing.T) {
+		target := newChargePatchTestTarget(t, productcatalog.CreditThenInvoiceSettlementMode, newChargePatchTestFlatRateCard())
+		target.Currency = customCurrency
+		target.Subscription.CostBasisMode = subscription.CostBasisModePinned
+
+		_, err := newChargeCostBasisIntent(target)
+
+		require.ErrorContains(t, err, "pinned cost basis not found")
+	})
+}
+
+func TestChargeCreatePatchFeatureMeterValidationOptions(t *testing.T) {
+	t.Run("credit then invoice usage bypasses feature meter validation", func(t *testing.T) {
+		collection := newUsageBasedChargeCollection(1)
+		target := newChargePatchTestTarget(t, productcatalog.CreditThenInvoiceSettlementMode, newChargePatchTestUsageRateCard())
+
+		require.NoError(t, collection.AddCreate(target))
+		patches := collection.Patches()
+		require.Len(t, patches.Creates, 1)
+		require.True(t, patches.Creates[0].Options.BypassFeatureMeterValidation)
+	})
+
+	t.Run("credit only usage remains strict", func(t *testing.T) {
+		collection := newUsageBasedChargeCollection(1)
+		target := newChargePatchTestTarget(t, productcatalog.CreditOnlySettlementMode, newChargePatchTestUsageRateCard())
+
+		require.NoError(t, collection.AddCreate(target))
+		patches := collection.Patches()
+		require.Len(t, patches.Creates, 1)
+		require.False(t, patches.Creates[0].Options.BypassFeatureMeterValidation)
+	})
+
+	t.Run("flat fee remains strict", func(t *testing.T) {
+		collection := newFlatFeeChargeCollection(1)
+		target := newChargePatchTestTarget(t, productcatalog.CreditThenInvoiceSettlementMode, newChargePatchTestFlatRateCard())
+
+		require.NoError(t, collection.AddCreate(target))
+		patches := collection.Patches()
+		require.Len(t, patches.Creates, 1)
+		require.False(t, patches.Creates[0].Options.BypassFeatureMeterValidation)
+	})
+}
 
 func TestFlatFeeCreditOnlyChargeCollectionShrinkEmitsNativePatch(t *testing.T) {
 	collection := newFlatFeeChargeCollection(1)
@@ -172,6 +281,7 @@ func newChargePatchTestFlatFeeItem(t *testing.T, target targetstate.StateItem, i
 	t.Helper()
 
 	existingIntent := newChargePatchTestExistingFlatFeeIntent(target)
+
 	return newChargePatchTestFlatFeeItemWithIntent(t, target, id, existingIntent)
 }
 
@@ -388,9 +498,9 @@ func newChargePatchTestTarget(t *testing.T, settlementMode productcatalog.Settle
 func newChargePatchTestUsageRateCard() productcatalog.RateCard {
 	return &productcatalog.UsageBasedRateCard{
 		RateCardMeta: productcatalog.RateCardMeta{
-			Key:        "usage-rate-card",
-			Name:       "Usage Rate Card",
-			FeatureKey: ptr("feature-key"),
+			Key:     "usage-rate-card",
+			Name:    "Usage Rate Card",
+			Feature: productcatalog.NewFeatureReference(nil, ptr("feature-key")),
 			TaxConfig: &productcatalog.TaxConfig{
 				TaxCodeID: ptr("tax-code-id"),
 			},
@@ -404,6 +514,7 @@ func newChargePatchTestUsageRateCard() productcatalog.RateCard {
 
 func newChargePatchTestFlatRateCard() productcatalog.RateCard {
 	billingCadence := datetime.NewISODuration(0, 1, 0, 0, 0, 0, 0)
+
 	return &productcatalog.FlatFeeRateCard{
 		RateCardMeta: productcatalog.RateCardMeta{
 			Key:  "flat-rate-card",

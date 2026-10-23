@@ -24,10 +24,13 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
 	"github.com/openmeterio/openmeter/openmeter/billing/worker/subscriptionsync"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
+	currencyadapter "github.com/openmeterio/openmeter/openmeter/currencies/adapter"
+	currencyservice "github.com/openmeterio/openmeter/openmeter/currencies/service"
 	currenciestestutils "github.com/openmeterio/openmeter/openmeter/currencies/testutils"
 	"github.com/openmeterio/openmeter/openmeter/customer"
 	enttx "github.com/openmeterio/openmeter/openmeter/ent/tx"
 	"github.com/openmeterio/openmeter/openmeter/ledger"
+	advancetestutils "github.com/openmeterio/openmeter/openmeter/ledger/advance/testutils"
 	ledgerbreakage "github.com/openmeterio/openmeter/openmeter/ledger/breakage"
 	ledgerchargeadapter "github.com/openmeterio/openmeter/openmeter/ledger/chargeadapter"
 	ledgercollector "github.com/openmeterio/openmeter/openmeter/ledger/collector"
@@ -35,6 +38,7 @@ import (
 	ledgertestutils "github.com/openmeterio/openmeter/openmeter/ledger/testutils"
 	"github.com/openmeterio/openmeter/openmeter/ledger/transactions"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/plan"
 	productcatalogsubscription "github.com/openmeterio/openmeter/openmeter/productcatalog/subscription"
 	"github.com/openmeterio/openmeter/openmeter/streaming"
@@ -77,35 +81,45 @@ func (s *CreditThenInvoiceTestSuite) SetupSuite() {
 
 	transactionManager := enttx.NewCreator(s.DBClient)
 
+	breakageService := ledgerbreakage.NewNoopService()
+
+	advanceService := advancetestutils.NewService(s.T(), ledgerDeps, breakageService)
+
 	collectorService, err := ledgercollector.NewService(ledgercollector.Config{
-		Ledger: ledgerDeps.HistoricalLedger,
+		Logger:  logger,
+		Advance: advanceService,
+		Ledger:  ledgerDeps.HistoricalLedger,
 		Dependencies: transactions.ResolverDependencies{
 			AccountService: ledgerDeps.ResolversService,
 			AccountCatalog: ledgerDeps.AccountService,
 			BalanceQuerier: ledgerDeps.HistoricalLedger,
 		},
+		Breakage:           breakageService,
 		AccountLocker:      ledgerDeps.AccountService,
 		TransactionManager: transactionManager,
 	})
 	s.NoError(err)
 
-	creditPurchaseHandler, err := ledgerchargeadapter.NewCreditPurchaseHandler(
-		ledgerDeps.HistoricalLedger,
-		ledgerDeps.HistoricalLedger,
-		ledgerDeps.ResolversService,
-		ledgerDeps.AccountService,
-		ledgerbreakage.NewNoopService(),
-		transactionManager,
-	)
+	creditPurchaseHandler, err := ledgerchargeadapter.NewCreditPurchaseHandler(ledgerchargeadapter.CreditPurchaseHandlerConfig{
+		Ledger:             ledgerDeps.HistoricalLedger,
+		BalanceQuerier:     ledgerDeps.HistoricalLedger,
+		AccountResolver:    ledgerDeps.ResolversService,
+		AccountCatalog:     ledgerDeps.AccountService,
+		AdvanceService:     advanceService,
+		BreakageService:    breakageService,
+		TransactionManager: transactionManager,
+	})
 	s.NoError(err)
 
 	stack, err := chargestestutils.NewServices(s.T(), chargestestutils.Config{
-		Client:             s.DBClient,
-		Logger:             logger,
-		BillingService:     s.BillingService,
-		FeatureService:     s.FeatureService,
-		StreamingConnector: s.MockStreamingConnector,
-		TaxCodeService:     s.TaxCodeService,
+		Client:               s.DBClient,
+		Logger:               logger,
+		BillingService:       s.BillingService,
+		FeatureMeterResolver: s.FeatureMeterResolver,
+		StreamingConnector:   s.MockStreamingConnector,
+		TaxCodeService:       s.TaxCodeService,
+		CustomerService:      s.CustomerService,
+		SubscriptionService:  s.SubscriptionService,
 		FlatFeeHandler: ledgerchargeadapter.NewFlatFeeHandler(
 			ledgerDeps.HistoricalLedger,
 			transactions.ResolverDependencies{
@@ -160,6 +174,464 @@ func (s *CreditThenInvoiceTestSuite) BeforeTest(suiteName, testName string) {
 	s.NoError(err)
 }
 
+func (s *CreditThenInvoiceTestSuite) TestSubscriptionSyncPersistsMeterlessUsageChargeWithValidationIssue() {
+	// given:
+	// - a credit-then-invoice subscription references a usage feature without a meter
+	// when:
+	// - subscription sync provisions the charge, collection is attempted, and the dependency is later repaired
+	// then:
+	// - sync preserves the unresolved charge and gathering line, invoice assignment gates it, and a later collection succeeds
+	ctx := s.testContext()
+	start := s.mustParseTime("2024-01-01T00:00:00Z")
+	clock.FreezeTime(start)
+	defer clock.UnFreeze()
+
+	meterlessFeature, err := s.FeatureService.CreateFeature(ctx, feature.CreateFeatureInputs{
+		Namespace: s.Namespace,
+		Name:      "Meterless usage feature",
+		Key:       "meterless-usage-feature",
+	})
+	s.Require().NoError(err)
+
+	// Given a credit-then-invoice subscription whose usage feature exists but has no meter.
+	subsView := s.createSubscriptionFromPlan(plan.CreatePlanInput{
+		NamespacedModel: models.NamespacedModel{
+			Namespace: s.Namespace,
+		},
+		Plan: productcatalog.Plan{
+			PlanMeta: productcatalog.PlanMeta{
+				Name:           "Meterless usage plan",
+				Key:            "meterless-usage-plan",
+				Version:        1,
+				Currency:       currencies.NewCurrencyReference(currencyx.Code(currency.USD)),
+				SettlementMode: productcatalog.CreditThenInvoiceSettlementMode,
+				BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
+			},
+			Phases: []productcatalog.Phase{
+				{
+					PhaseMeta: s.phaseMeta("first-phase", ""),
+					RateCards: productcatalog.RateCards{
+						&productcatalog.UsageBasedRateCard{
+							RateCardMeta: productcatalog.RateCardMeta{
+								Key:     meterlessFeature.Key,
+								Name:    "Meterless usage",
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(meterlessFeature.ID), lo.ToPtr(meterlessFeature.Key)),
+								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+									Amount: alpacadecimal.NewFromInt(1),
+								}),
+							},
+							BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
+						},
+					},
+				},
+			},
+		},
+	})
+
+	var chargeID chargesmeta.ChargeID
+	s.Run("subscription sync persists the unresolved charge", func() {
+		// when:
+		// - subscription sync provisions its first usage charge
+		err := s.Service.SyncByView(ctx, subsView, start.Add(time.Minute))
+
+		// then:
+		// - the invalid dependency does not block reconciliation
+		s.Require().NoError(err)
+		chargePage, err := s.Charges.ListCharges(ctx, charges.ListChargesInput{
+			Namespace:       s.Namespace,
+			SubscriptionIDs: []string{subsView.Subscription.ID},
+			ChargeTypes:     []chargesmeta.ChargeType{chargesmeta.ChargeTypeUsageBased},
+		})
+		s.Require().NoError(err)
+		s.Require().Len(chargePage.Items, 1)
+
+		issues, err := chargePage.Items[0].GetValidationIssues()
+		s.Require().NoError(err)
+		s.Require().Len(issues, 1)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Code, issues[0].Code)
+		s.Equal(billing.ValidationIssueSeverityCritical, issues[0].Severity)
+		s.Equal(billing.ValidationComponentProductCatalog, issues[0].Component)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Message, issues[0].Message)
+		s.Equal(meterlessFeature.ID, issues[0].Attributes["feature_id"])
+		s.Equal(meterlessFeature.Key, issues[0].Attributes["feature_key"])
+
+		gatheringInvoice := s.gatheringInvoice(ctx, s.Namespace, s.Customer.ID)
+		lines := gatheringInvoice.Lines.OrEmpty()
+		s.Require().Len(lines, 1)
+		s.Equal(billing.LineEngineTypeChargeUsageBased, lines[0].Engine)
+		s.Equal(meterlessFeature.Key, lines[0].FeatureKey)
+		chargeID, err = chargePage.Items[0].GetChargeID()
+		s.Require().NoError(err)
+		s.Equal(lo.ToPtr(chargeID.ID), lines[0].ChargeID)
+	})
+
+	s.Run("charge advancement accepts the persisted validation issue", func() {
+		// when:
+		// - the charge worker tries to activate the unresolved charge
+		advancedCharges, err := s.Charges.AdvanceCharges(ctx, charges.AdvanceChargesInput{
+			Customer: s.Customer.GetID(),
+		})
+
+		// then:
+		// - the persisted issue represents the blocked state without failing the worker
+		s.Require().NoError(err)
+		s.Empty(advancedCharges)
+
+		chargeAfterAdvance := s.mustGetUsageBasedChargeByIDWithExpands(ctx, chargeID, chargesmeta.Expands{
+			chargesmeta.ExpandRealizations,
+		})
+		s.Equal(usagebased.StatusCreated, chargeAfterAdvance.Status)
+		s.Empty(chargeAfterAdvance.State.FeatureID)
+		s.Empty(chargeAfterAdvance.Realizations)
+		s.Require().Len(chargeAfterAdvance.ValidationIssues, 1)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Code, chargeAfterAdvance.ValidationIssues[0].Code)
+		s.Equal(billing.ValidationComponentProductCatalog, chargeAfterAdvance.ValidationIssues[0].Component)
+	})
+
+	collectionAt := start.AddDate(0, 1, 0).Add(time.Hour)
+	s.Run("invoice assignment gates the unresolved charge", func() {
+		// when:
+		// - billing attempts to collect the pending line
+		clock.FreezeTime(collectionAt)
+		invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+			Customer: s.Customer.GetID(),
+		}, billing.WithBypassCollectionAlignment())
+
+		// then:
+		// - the gathering line remains pending and no financial processing starts
+		s.Require().NoError(err)
+		s.Empty(invoices)
+		s.Require().Len(s.gatheringInvoice(ctx, s.Namespace, s.Customer.ID).Lines.OrEmpty(), 1)
+
+		chargeAfterCollection := s.mustGetUsageBasedChargeByIDWithExpands(ctx, chargeID, chargesmeta.Expands{
+			chargesmeta.ExpandRealizations,
+		})
+		s.Equal(usagebased.StatusCreated, chargeAfterCollection.Status)
+		s.Nil(chargeAfterCollection.State.CurrentRealizationRunID)
+		s.Empty(chargeAfterCollection.State.FeatureID)
+		s.Empty(chargeAfterCollection.Realizations)
+		s.Require().Len(chargeAfterCollection.ValidationIssues, 1)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Code, chargeAfterCollection.ValidationIssues[0].Code)
+		s.Equal(billing.ValidationComponentProductCatalog, chargeAfterCollection.ValidationIssues[0].Component)
+	})
+
+	s.Run("repair allows invoice assignment", func() {
+		// when:
+		// - the feature is replaced with a metered feature and pending lines are collected again
+		s.Require().NotNil(s.APIRequestsTotalFeature.MeterID)
+		_, err := s.SubscriptionService.Cancel(ctx, subsView.Subscription.NamespacedID, subscription.Timing{
+			Custom: lo.ToPtr(start.AddDate(0, 1, 0)),
+		})
+		s.Require().NoError(err)
+		s.Require().NoError(s.FeatureService.ArchiveFeature(ctx, models.NamespacedID{
+			Namespace: s.Namespace,
+			ID:        meterlessFeature.ID,
+		}))
+		repairedFeature, err := s.FeatureService.CreateFeature(ctx, feature.CreateFeatureInputs{
+			Namespace: s.Namespace,
+			Name:      meterlessFeature.Name,
+			Key:       meterlessFeature.Key,
+			MeterID:   s.APIRequestsTotalFeature.MeterID,
+		})
+		s.Require().NoError(err)
+		s.Require().NotNil(repairedFeature.MeterSlug)
+		s.MockStreamingConnector.AddSimpleEvent(*repairedFeature.MeterSlug, 0, start)
+
+		clock.FreezeTime(collectionAt.Add(time.Minute))
+		invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+			Customer: s.Customer.GetID(),
+		}, billing.WithBypassCollectionAlignment())
+
+		// then:
+		// - collection creates one invoice-backed run, pins the repaired feature, and clears its issue
+		s.Require().NoError(err)
+		s.Require().Len(invoices, 1)
+		s.False(invoices[0].ValidationIssues.HasComponent(billing.ValidationComponentProductCatalog))
+
+		chargeAfterRepair := s.mustGetUsageBasedChargeByIDWithExpands(ctx, chargeID, chargesmeta.Expands{
+			chargesmeta.ExpandRealizations,
+		})
+		s.Equal(repairedFeature.ID, chargeAfterRepair.State.FeatureID)
+		s.False(chargeAfterRepair.ValidationIssues.HasComponent(billing.ValidationComponentProductCatalog))
+		s.Require().Len(chargeAfterRepair.Realizations, 1)
+		s.Require().NotNil(chargeAfterRepair.Realizations[0].InvoiceID)
+		s.Equal(invoices[0].ID, *chargeAfterRepair.Realizations[0].InvoiceID)
+		s.Require().NotNil(chargeAfterRepair.Realizations[0].LineID)
+		s.Require().Len(invoices[0].Lines.OrEmpty(), 1)
+		s.Equal(invoices[0].Lines.OrEmpty()[0].ID, *chargeAfterRepair.Realizations[0].LineID)
+	})
+}
+
+func (s *CreditThenInvoiceTestSuite) TestSubscriptionSyncPersistsMissingFeatureUsageChargeWithValidationIssue() {
+	// given:
+	// - a stale credit-then-invoice subscription view references a usage feature that no longer exists
+	// when:
+	// - subscription sync provisions the charge, collection is attempted, and the dependency is later created
+	// then:
+	// - sync preserves the unresolved charge and gathering line, invoice assignment gates it, and a later collection succeeds
+	ctx := s.testContext()
+	start := s.mustParseTime("2024-01-01T00:00:00Z")
+	clock.FreezeTime(start)
+	defer clock.UnFreeze()
+
+	const missingFeatureKey = "missing-usage-feature"
+	itemKey := s.APIRequestsTotalFeature.Key
+	subsView := s.createSubscriptionFromPlan(plan.CreatePlanInput{
+		NamespacedModel: models.NamespacedModel{
+			Namespace: s.Namespace,
+		},
+		Plan: productcatalog.Plan{
+			PlanMeta: productcatalog.PlanMeta{
+				Name:           "Missing usage feature plan",
+				Key:            "missing-usage-feature-plan",
+				Version:        1,
+				Currency:       currencies.NewCurrencyReference(currencyx.Code(currency.USD)),
+				SettlementMode: productcatalog.CreditThenInvoiceSettlementMode,
+				BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
+			},
+			Phases: []productcatalog.Phase{
+				{
+					PhaseMeta: s.phaseMeta("first-phase", ""),
+					RateCards: productcatalog.RateCards{
+						&productcatalog.UsageBasedRateCard{
+							RateCardMeta: productcatalog.RateCardMeta{
+								Key:     itemKey,
+								Name:    "Missing usage feature",
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
+								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+									Amount: alpacadecimal.NewFromInt(1),
+								}),
+							},
+							BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
+						},
+					},
+				},
+			},
+		},
+	})
+
+	item := subsView.Phases[0].ItemsByKey[itemKey][0]
+	for _, rateCard := range []productcatalog.RateCard{item.Spec.RateCard, item.SubscriptionItem.RateCard} {
+		s.Require().NoError(rateCard.ChangeMeta(func(meta productcatalog.RateCardMeta) (productcatalog.RateCardMeta, error) {
+			meta.Key = missingFeatureKey
+			meta.Feature = productcatalog.NewFeatureReference(nil, lo.ToPtr(missingFeatureKey))
+
+			return meta, nil
+		}))
+	}
+
+	item.Feature = nil
+	subsView.Phases[0].ItemsByKey[itemKey][0] = item
+
+	var chargeID chargesmeta.ChargeID
+	s.Run("subscription sync persists the unresolved charge", func() {
+		// when:
+		// - subscription sync provisions its first usage charge from the stale view
+		err := s.Service.SyncByView(ctx, subsView, start.Add(time.Minute))
+
+		// then:
+		// - the missing feature does not block reconciliation
+		s.Require().NoError(err)
+		chargePage, err := s.Charges.ListCharges(ctx, charges.ListChargesInput{
+			Namespace:       s.Namespace,
+			SubscriptionIDs: []string{subsView.Subscription.ID},
+			ChargeTypes:     []chargesmeta.ChargeType{chargesmeta.ChargeTypeUsageBased},
+		})
+		s.Require().NoError(err)
+		s.Require().Len(chargePage.Items, 1)
+
+		issues, err := chargePage.Items[0].GetValidationIssues()
+		s.Require().NoError(err)
+		s.Require().Len(issues, 1)
+		s.Equal(billing.ErrInvoiceLineFeatureNotFound.Code, issues[0].Code)
+		s.Equal(billing.ValidationIssueSeverityCritical, issues[0].Severity)
+		s.Equal(billing.ValidationComponentProductCatalog, issues[0].Component)
+		s.Equal(billing.ErrInvoiceLineFeatureNotFound.Message, issues[0].Message)
+		s.Equal(missingFeatureKey, issues[0].Attributes["feature_key"])
+
+		gatheringInvoice := s.gatheringInvoice(ctx, s.Namespace, s.Customer.ID)
+		lines := gatheringInvoice.Lines.OrEmpty()
+		s.Require().Len(lines, 1)
+		s.Equal(billing.LineEngineTypeChargeUsageBased, lines[0].Engine)
+		s.Equal(missingFeatureKey, lines[0].FeatureKey)
+		chargeID, err = chargePage.Items[0].GetChargeID()
+		s.Require().NoError(err)
+		s.Equal(lo.ToPtr(chargeID.ID), lines[0].ChargeID)
+	})
+
+	collectionAt := start.AddDate(0, 1, 0).Add(time.Hour)
+	s.Run("invoice assignment gates the unresolved charge", func() {
+		// when:
+		// - billing attempts to collect the pending line
+		clock.FreezeTime(collectionAt)
+		invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+			Customer: s.Customer.GetID(),
+		}, billing.WithBypassCollectionAlignment())
+
+		// then:
+		// - the gathering line remains pending and no financial processing starts
+		s.Require().NoError(err)
+		s.Empty(invoices)
+		s.Require().Len(s.gatheringInvoice(ctx, s.Namespace, s.Customer.ID).Lines.OrEmpty(), 1)
+
+		chargeAfterCollection := s.mustGetUsageBasedChargeByIDWithExpands(ctx, chargeID, chargesmeta.Expands{
+			chargesmeta.ExpandRealizations,
+		})
+		s.Equal(usagebased.StatusCreated, chargeAfterCollection.Status)
+		s.Nil(chargeAfterCollection.State.CurrentRealizationRunID)
+		s.Empty(chargeAfterCollection.State.FeatureID)
+		s.Empty(chargeAfterCollection.Realizations)
+		s.Require().Len(chargeAfterCollection.ValidationIssues, 1)
+		s.Equal(billing.ErrInvoiceLineFeatureNotFound.Code, chargeAfterCollection.ValidationIssues[0].Code)
+		s.Equal(billing.ValidationComponentProductCatalog, chargeAfterCollection.ValidationIssues[0].Component)
+	})
+
+	s.Run("repair allows invoice assignment", func() {
+		// when:
+		// - the missing feature is created with a meter and pending lines are collected again
+		s.Require().NotNil(s.APIRequestsTotalFeature.MeterID)
+		repairedFeature, err := s.FeatureService.CreateFeature(ctx, feature.CreateFeatureInputs{
+			Namespace: s.Namespace,
+			Name:      "Repaired usage feature",
+			Key:       missingFeatureKey,
+			MeterID:   s.APIRequestsTotalFeature.MeterID,
+		})
+		s.Require().NoError(err)
+		s.Require().NotNil(repairedFeature.MeterSlug)
+		s.MockStreamingConnector.AddSimpleEvent(*repairedFeature.MeterSlug, 0, start)
+
+		clock.FreezeTime(collectionAt.Add(time.Minute))
+		invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+			Customer: s.Customer.GetID(),
+		}, billing.WithBypassCollectionAlignment())
+
+		// then:
+		// - collection creates one invoice-backed run, pins the repaired feature, and clears its issue
+		s.Require().NoError(err)
+		s.Require().Len(invoices, 1)
+		s.False(invoices[0].ValidationIssues.HasComponent(billing.ValidationComponentProductCatalog))
+
+		chargeAfterRepair := s.mustGetUsageBasedChargeByIDWithExpands(ctx, chargeID, chargesmeta.Expands{
+			chargesmeta.ExpandRealizations,
+		})
+		s.Equal(repairedFeature.ID, chargeAfterRepair.State.FeatureID)
+		s.False(chargeAfterRepair.ValidationIssues.HasComponent(billing.ValidationComponentProductCatalog))
+		s.Require().Len(chargeAfterRepair.Realizations, 1)
+		s.Require().NotNil(chargeAfterRepair.Realizations[0].InvoiceID)
+		s.Equal(invoices[0].ID, *chargeAfterRepair.Realizations[0].InvoiceID)
+		s.Require().NotNil(chargeAfterRepair.Realizations[0].LineID)
+		s.Require().Len(invoices[0].Lines.OrEmpty(), 1)
+		s.Equal(invoices[0].Lines.OrEmpty()[0].ID, *chargeAfterRepair.Realizations[0].LineID)
+	})
+}
+
+func (s *CreditThenInvoiceTestSuite) TestCustomCurrencyPinnedCostBasisProvisioning() {
+	// given:
+	// - a custom-currency flat fee settled through credit then invoice
+	// - a subscription that pins the effective custom-to-USD cost basis
+	// when:
+	// - subscription sync provisions future billing periods
+	// then:
+	// - every charge keeps the custom currency and the subscription's pinned cost-basis resource
+	ctx := s.testContext()
+	setupAt := s.mustParseTime("2024-01-01T00:00:00Z")
+	startAt := s.mustParseTime("2024-02-01T00:00:00Z")
+	syncUntil := s.mustParseTime("2024-02-15T00:00:00Z")
+
+	clock.SetTime(setupAt)
+	defer clock.ResetTime()
+
+	currencyAdapter, err := currencyadapter.New(currencyadapter.Config{Client: s.DBClient})
+	s.NoError(err)
+	currencyService, err := currencyservice.New(currencyAdapter)
+	s.NoError(err)
+	customCurrency, err := currencyService.CreateCurrency(ctx, currenciestestutils.NewCreateCurrencyInput(
+		s.Namespace,
+		"CREDITS",
+		"Credits",
+		"CR",
+	))
+	s.NoError(err)
+	pinnedCostBasis, err := currencyService.CreateCostBasis(ctx, currencies.CreateCostBasisInput{
+		Namespace:  s.Namespace,
+		CurrencyID: customCurrency.ID,
+		FiatCode:   "USD",
+		Rate:       alpacadecimal.NewFromInt(2),
+	})
+	s.NoError(err)
+
+	createdPlan, err := s.PlanService.CreatePlan(ctx, plan.CreatePlanInput{
+		NamespacedModel: models.NamespacedModel{Namespace: s.Namespace},
+		Plan: productcatalog.Plan{
+			PlanMeta: productcatalog.PlanMeta{
+				Name:           "Custom Currency Credit Then Invoice",
+				Key:            "custom-currency-credit-then-invoice",
+				Version:        1,
+				Currency:       customCurrency.Reference(),
+				SettlementMode: productcatalog.CreditThenInvoiceSettlementMode,
+				BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
+			},
+			Phases: []productcatalog.Phase{{
+				PhaseMeta: s.phaseMeta("first-phase", ""),
+				RateCards: productcatalog.RateCards{
+					&productcatalog.FlatFeeRateCard{
+						RateCardMeta: productcatalog.RateCardMeta{
+							Name: "flat-fee",
+							Key:  "flat-fee",
+							Price: productcatalog.NewPriceFrom(productcatalog.FlatPrice{
+								Amount:      alpacadecimal.NewFromInt(25),
+								PaymentTerm: productcatalog.InAdvancePaymentTerm,
+							}),
+						},
+						BillingCadence: lo.ToPtr(datetime.MustParseDuration(s.T(), "P1M")),
+					},
+				},
+			}},
+		},
+	})
+	s.NoError(err)
+
+	subscriptionPlan, err := s.SubscriptionPlanAdapter.GetVersion(ctx, s.Namespace, productcatalogsubscription.PlanRefInput{
+		Key:     createdPlan.Key,
+		Version: lo.ToPtr(1),
+	})
+	s.NoError(err)
+	subscriptionView, err := s.SubscriptionWorkflowService.CreateFromPlan(ctx, subscriptionworkflow.CreateSubscriptionWorkflowInput{
+		ChangeSubscriptionWorkflowInput: subscriptionworkflow.ChangeSubscriptionWorkflowInput{
+			Timing:        subscription.Timing{Custom: lo.ToPtr(startAt)},
+			Name:          "custom-currency-pinned",
+			CostBasisMode: subscription.CostBasisModePinned,
+		},
+		Namespace:  s.Namespace,
+		CustomerID: s.Customer.ID,
+	}, subscriptionPlan)
+	s.NoError(err)
+	s.Len(subscriptionView.Subscription.CostBasisPins, 1)
+	s.Equal(pinnedCostBasis.ID, subscriptionView.Subscription.CostBasisPins[0].CostBasis.ID)
+
+	s.NoError(s.Service.SyncByView(ctx, subscriptionView, syncUntil))
+
+	result, err := s.Charges.ListCharges(ctx, charges.ListChargesInput{
+		Namespace:       s.Namespace,
+		SubscriptionIDs: []string{subscriptionView.Subscription.ID},
+		ChargeTypes:     []chargesmeta.ChargeType{chargesmeta.ChargeTypeFlatFee},
+	})
+	s.NoError(err)
+	s.Len(result.Items, 2)
+	for _, item := range result.Items {
+		charge, err := item.AsFlatFeeCharge()
+		s.NoError(err)
+		s.True(charge.Intent.GetCurrency().IsCustom())
+		s.Equal(customCurrency.ID, charge.Intent.GetCurrency().ID)
+
+		costBasisIntent := charge.Intent.GetCostBasisIntent()
+		s.NotNil(costBasisIntent)
+		pinned, err := costBasisIntent.AsPinned()
+		s.NoError(err)
+		s.Equal(pinnedCostBasis.ID, pinned.CurrencyCostBasisID)
+	}
+}
+
 func (s *CreditThenInvoiceTestSuite) TestSubscriptionHappyPath() {
 	ctx := s.testContext()
 	namespace := s.Namespace
@@ -200,10 +672,9 @@ func (s *CreditThenInvoiceTestSuite) TestSubscriptionHappyPath() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 							},
 							BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
 						},
@@ -218,10 +689,9 @@ func (s *CreditThenInvoiceTestSuite) TestSubscriptionHappyPath() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(5),
 								}),
@@ -239,10 +709,9 @@ func (s *CreditThenInvoiceTestSuite) TestSubscriptionHappyPath() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(10),
 								}),
@@ -439,6 +908,7 @@ func (s *CreditThenInvoiceTestSuite) TestSubscriptionHappyPath() {
 		if err != nil {
 			fmt.Printf("current time: %s\n", clock.Now().Format(time.RFC3339))
 		}
+
 		s.NoError(err)
 		s.Len(invoices, 1)
 		invoice := invoices[0]
@@ -557,6 +1027,7 @@ func (s *CreditThenInvoiceTestSuite) TestSubscriptionHappyPath() {
 			ID:        subs.ID,
 		})
 		s.NoError(err)
+		discountedPhase = s.getPhaseByKey(s.T(), subsView, "discounted-phase")
 
 		// Subscription has set the cancellation date, and the view's subscription items are updated to have the cadence
 		// set properly up to the cancellation date.
@@ -612,6 +1083,7 @@ func (s *CreditThenInvoiceTestSuite) TestSubscriptionHappyPath() {
 			ID:        subs.ID,
 		})
 		s.NoError(err)
+		discountedPhase = s.getPhaseByKey(s.T(), subsView, "discounted-phase")
 
 		// If we are now resyncing the subscription, the gathering invoice should be updated to reflect the original cadence
 
@@ -3093,10 +3565,9 @@ func (s *CreditThenInvoiceTestSuite) TestAlignedSubscriptionCancellation() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 							},
 							BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
 						},
@@ -3111,10 +3582,9 @@ func (s *CreditThenInvoiceTestSuite) TestAlignedSubscriptionCancellation() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(5),
 								}),
@@ -3291,11 +3761,10 @@ func (s *CreditThenInvoiceTestSuite) TestAlignedSubscriptionProgressiveBillingCa
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
-								Price:      testPrice,
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
+								Price:   testPrice,
 							},
 							BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
 						},
@@ -3625,6 +4094,7 @@ func (s *CreditThenInvoiceTestSuite) TestGatheringManualEditSync() {
 
 				updatedLine, err = line.Clone()
 				s.NoError(err)
+
 				return nil
 			},
 		})
@@ -3717,6 +4187,9 @@ func (s *CreditThenInvoiceTestSuite) TestGatheringManualEditSync() {
 		s.True(found, "line should be found")
 		expectedLine := updatedLine
 		expectedLine.ManagedBy = billing.ManuallyManagedLine
+		expectedLine.Subscription.ItemID = s.getPhaseByKey(s.T(), canceledSubsView, "first-phase").ItemsByKey["in-arrears"][0].SubscriptionItem.ID
+		expectedLine.UpdatedAt = invoiceLine.UpdatedAt
+		s.Equal(expectedLine.Subscription.ItemID, invoiceLine.Subscription.ItemID)
 		s.True(invoiceLine.GatheringLineBase.Equal(expectedLine.GatheringLineBase), "line should keep the API-edited override values")
 
 		s.assertFlatFeeChargeIntentsForInvoiceLine(ctx, "after cancellation sync", updatedLine, expectedFlatFeeIntent{
@@ -3834,10 +4307,9 @@ func (s *CreditThenInvoiceTestSuite) TestGatheringManualCreateSync() {
 						},
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(10),
 								}),
@@ -4062,10 +4534,9 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedGatheringManualCreateSync() {
 						RateCards: productcatalog.RateCards{
 							&productcatalog.UsageBasedRateCard{
 								RateCardMeta: productcatalog.RateCardMeta{
-									Key:        s.APIRequestsTotalFeature.Key,
-									Name:       s.APIRequestsTotalFeature.Key,
-									FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-									FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+									Key:     s.APIRequestsTotalFeature.Key,
+									Name:    s.APIRequestsTotalFeature.Key,
+									Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 									Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 										Amount: alpacadecimal.NewFromFloat(10),
 									}),
@@ -4238,6 +4709,7 @@ func (s *CreditThenInvoiceTestSuite) TestGatheringManualDeleteSync() {
 
 				deletedLine, err = line.Clone()
 				s.NoError(err)
+
 				return nil
 			},
 			IncludeDeletedLines: true,
@@ -4357,10 +4829,9 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedGatheringManualDeleteWithoutR
 						RateCards: productcatalog.RateCards{
 							&productcatalog.UsageBasedRateCard{
 								RateCardMeta: productcatalog.RateCardMeta{
-									Key:        s.APIRequestsTotalFeature.Key,
-									Name:       s.APIRequestsTotalFeature.Key,
-									FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-									FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+									Key:     s.APIRequestsTotalFeature.Key,
+									Name:    s.APIRequestsTotalFeature.Key,
+									Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 									Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 										Amount: alpacadecimal.NewFromFloat(5),
 									}),
@@ -4395,6 +4866,7 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedGatheringManualDeleteWithoutR
 				clonedLine, err := line.Clone()
 				s.NoError(err)
 				deletedLine = clonedLine
+
 				return nil
 			},
 			IncludeDeletedLines: true,
@@ -4642,6 +5114,7 @@ func (s *CreditThenInvoiceTestSuite) TestStandardInvoiceManualEditSync() {
 
 			updatedLine, err = line.Clone()
 			s.NoError(err)
+
 			return nil
 		},
 	})
@@ -4825,6 +5298,7 @@ func (s *CreditThenInvoiceTestSuite) TestStandardInvoiceManualDiscountEditSync()
 
 			updatedLine, err = line.Clone()
 			s.NoError(err)
+
 			return nil
 		},
 	})
@@ -5511,6 +5985,7 @@ func (s *CreditThenInvoiceTestSuite) TestStandardInvoiceManualDeleteSync() {
 
 			deletedLine, err = line.Clone()
 			s.NoError(err)
+
 			return nil
 		},
 		IncludeDeletedLines: true,
@@ -5599,10 +6074,9 @@ func (s *CreditThenInvoiceTestSuite) TestDeleteStandardInvoiceWithSingleUsageBas
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(5),
 								}),
@@ -5732,10 +6206,9 @@ func (s *CreditThenInvoiceTestSuite) TestDeleteStandardInvoiceWithMultipleUsageB
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(5),
 								}),
@@ -6163,10 +6636,9 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedGatheringUpdate() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(10),
 								}),
@@ -6371,10 +6843,9 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedGatheringUpdateDraftInvoice()
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(10),
 								}),
@@ -6780,10 +7251,9 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedGatheringUpdateIssuedInvoice(
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(10),
 								}),
@@ -7124,10 +7594,9 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedUpdateWithLineSplits() {
 					RateCards: productcatalog.RateCards{
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(10),
 								}),
@@ -7673,10 +8142,9 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedProgressiveStandardInvoiceDel
 						RateCards: productcatalog.RateCards{
 							&productcatalog.UsageBasedRateCard{
 								RateCardMeta: productcatalog.RateCardMeta{
-									Key:        s.APIRequestsTotalFeature.Key,
-									Name:       s.APIRequestsTotalFeature.Key,
-									FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-									FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+									Key:     s.APIRequestsTotalFeature.Key,
+									Name:    s.APIRequestsTotalFeature.Key,
+									Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 									Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 										Amount: alpacadecimal.NewFromFloat(10),
 									}),
@@ -7827,10 +8295,9 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedProgressiveGatheringLineManua
 						RateCards: productcatalog.RateCards{
 							&productcatalog.UsageBasedRateCard{
 								RateCardMeta: productcatalog.RateCardMeta{
-									Key:        s.APIRequestsTotalFeature.Key,
-									Name:       s.APIRequestsTotalFeature.Key,
-									FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-									FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+									Key:     s.APIRequestsTotalFeature.Key,
+									Name:    s.APIRequestsTotalFeature.Key,
+									Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 									Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 										Amount: alpacadecimal.NewFromFloat(10),
 									}),
@@ -8018,10 +8485,9 @@ func (s *CreditThenInvoiceTestSuite) TestUsageBasedProgressiveGatheringInvoiceMa
 						RateCards: productcatalog.RateCards{
 							&productcatalog.UsageBasedRateCard{
 								RateCardMeta: productcatalog.RateCardMeta{
-									Key:        s.APIRequestsTotalFeature.Key,
-									Name:       s.APIRequestsTotalFeature.Key,
-									FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-									FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+									Key:     s.APIRequestsTotalFeature.Key,
+									Name:    s.APIRequestsTotalFeature.Key,
+									Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 									Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 										Amount: alpacadecimal.NewFromFloat(10),
 									}),
@@ -8237,7 +8703,6 @@ func (s *CreditThenInvoiceTestSuite) TestRateCardTaxSyncFlatFee() {
 
 	s.Run("gathering invoice after edit", func() {
 		// Given we edit the subscription the tax config is carried over to the lines
-
 		clock.FreezeTime(s.mustParseTime("2024-01-02T00:00:00Z"))
 		var err error
 		updatedSubsView, err = s.SubscriptionWorkflowService.EditRunning(ctx, subsView.Subscription.NamespacedID, []subscription.Patch{
@@ -8283,6 +8748,7 @@ func (s *CreditThenInvoiceTestSuite) TestRateCardTaxSyncFlatFee() {
 			})
 			s.NoError(err)
 		}
+
 		clock.FreezeTime(draftAt)
 
 		draftInvoices, err = s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
@@ -8308,6 +8774,7 @@ func (s *CreditThenInvoiceTestSuite) TestRateCardTaxSyncFlatFee() {
 			s.DebugDumpInvoice(fmt.Sprintf("issued invoice %d", idx), issuedInvoice)
 			s.assertStandardLineTaxConfigs(issuedInvoice.Lines.OrEmpty(), taxConfig)
 		}
+
 		s.assertCreditThenInvoiceBalances(expectedCreditThenInvoiceBalances{
 			AccruedAll:     24.68,
 			AccruedInvoice: 24.68,
@@ -8370,10 +8837,9 @@ func (s *CreditThenInvoiceTestSuite) TestRateCardTaxSyncUsageBased() {
 						RateCards: productcatalog.RateCards{
 							&productcatalog.UsageBasedRateCard{
 								RateCardMeta: productcatalog.RateCardMeta{
-									Key:        s.APIRequestsTotalFeature.Key,
-									Name:       s.APIRequestsTotalFeature.Key,
-									FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-									FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+									Key:     s.APIRequestsTotalFeature.Key,
+									Name:    s.APIRequestsTotalFeature.Key,
+									Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 									Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 										Amount: alpacadecimal.NewFromFloat(5),
 									}),
@@ -8404,7 +8870,6 @@ func (s *CreditThenInvoiceTestSuite) TestRateCardTaxSyncUsageBased() {
 
 	s.Run("gathering invoice after edit", func() {
 		// Given we edit the subscription the tax config is carried over to the lines
-
 		clock.FreezeTime(s.mustParseTime("2024-01-02T00:00:00Z"))
 		var err error
 		updatedSubsView, err = s.SubscriptionWorkflowService.EditRunning(ctx, subsView.Subscription.NamespacedID, []subscription.Patch{
@@ -8473,6 +8938,7 @@ func (s *CreditThenInvoiceTestSuite) TestRateCardTaxSyncUsageBased() {
 			s.DebugDumpInvoice(fmt.Sprintf("issued invoice %d", idx), issuedInvoice)
 			s.assertStandardLineTaxConfigs(issuedInvoice.Lines.OrEmpty(), taxConfig)
 		}
+
 		s.assertCreditThenInvoiceBalances(expectedCreditThenInvoiceBalances{
 			AccruedAll:     60,
 			AccruedInvoice: 60,
@@ -8544,10 +9010,9 @@ func (s *CreditThenInvoiceTestSuite) TestInAdvanceInstantBillingOnSubscriptionCr
 						},
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(10),
 								}),
@@ -8682,10 +9147,9 @@ func (s *CreditThenInvoiceTestSuite) TestInAdvanceInstantBillingOnSubscriptionCr
 						},
 						&productcatalog.UsageBasedRateCard{
 							RateCardMeta: productcatalog.RateCardMeta{
-								Key:        s.APIRequestsTotalFeature.Key,
-								Name:       s.APIRequestsTotalFeature.Key,
-								FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-								FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+								Key:     s.APIRequestsTotalFeature.Key,
+								Name:    s.APIRequestsTotalFeature.Key,
+								Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 								Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 									Amount: alpacadecimal.NewFromFloat(10),
 								}),
@@ -8825,10 +9289,9 @@ func (s *CreditThenInvoiceTestSuite) TestDiscountSynchronization() {
 							},
 							&productcatalog.UsageBasedRateCard{
 								RateCardMeta: productcatalog.RateCardMeta{
-									Key:        s.APIRequestsTotalFeature.Key,
-									Name:       s.APIRequestsTotalFeature.Key,
-									FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-									FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+									Key:     s.APIRequestsTotalFeature.Key,
+									Name:    s.APIRequestsTotalFeature.Key,
+									Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 									Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 										Amount: alpacadecimal.NewFromFloat(10),
 									}),
@@ -8869,6 +9332,7 @@ func (s *CreditThenInvoiceTestSuite) TestDiscountSynchronization() {
 				invoiceAsGathering, err := invoice.AsGatheringInvoice()
 				s.NoError(err)
 				gatheringInvoice = &invoiceAsGathering
+
 				continue
 			}
 
@@ -9068,10 +9532,9 @@ func (s *CreditThenInvoiceTestSuite) TestDiscountSynchronizationWithPartialDisco
 							},
 							&productcatalog.UsageBasedRateCard{
 								RateCardMeta: productcatalog.RateCardMeta{
-									Key:        s.APIRequestsTotalFeature.Key,
-									Name:       s.APIRequestsTotalFeature.Key,
-									FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-									FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+									Key:     s.APIRequestsTotalFeature.Key,
+									Name:    s.APIRequestsTotalFeature.Key,
+									Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 									Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 										Amount: alpacadecimal.NewFromFloat(10),
 									}),
@@ -9114,6 +9577,7 @@ func (s *CreditThenInvoiceTestSuite) TestDiscountSynchronizationWithPartialDisco
 				invoiceAsGathering, err := invoice.AsGatheringInvoice()
 				s.NoError(err)
 				gatheringInvoice = &invoiceAsGathering
+
 				continue
 			}
 
@@ -9300,10 +9764,9 @@ func (s *CreditThenInvoiceTestSuite) TestAlignedSubscriptionProratingBehavior() 
 			},
 			&productcatalog.UsageBasedRateCard{
 				RateCardMeta: productcatalog.RateCardMeta{
-					Key:        s.APIRequestsTotalFeature.Key,
-					Name:       s.APIRequestsTotalFeature.Key,
-					FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-					FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+					Key:     s.APIRequestsTotalFeature.Key,
+					Name:    s.APIRequestsTotalFeature.Key,
+					Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 					Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 						Amount: alpacadecimal.NewFromFloat(10),
 					}),
@@ -9689,6 +10152,7 @@ func (s *CreditThenInvoiceTestSuite) TestSynchronizeSubscriptionPeriodAlgorithmC
 			invoice.Lines = billing.NewGatheringInvoiceLines([]billing.GatheringLine{
 				line,
 			})
+
 			return nil
 		},
 	})
@@ -9791,7 +10255,6 @@ func (s *CreditThenInvoiceTestSuite) TestDeletedCustomerHandling() {
 	// Then
 	//  we can still sync the subscription
 	//  and the deleted customer is billed for the outstanding amount
-
 	ctx := s.T().Context()
 	clock.FreezeTime(s.mustParseTime("2025-01-01T00:00:00Z"))
 	defer clock.UnFreeze()
@@ -9809,8 +10272,7 @@ func (s *CreditThenInvoiceTestSuite) TestDeletedCustomerHandling() {
 						Price: productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 							Amount: alpacadecimal.NewFromFloat(5),
 						}),
-						FeatureKey: lo.ToPtr(s.APIRequestsTotalFeature.Key),
-						FeatureID:  lo.ToPtr(s.APIRequestsTotalFeature.ID),
+						Feature: productcatalog.NewFeatureReference(lo.ToPtr(s.APIRequestsTotalFeature.ID), lo.ToPtr(s.APIRequestsTotalFeature.Key)),
 					},
 					BillingCadence: datetime.MustParseDuration(s.T(), "P1M"),
 				},
@@ -10605,6 +11067,7 @@ func (s *CreditThenInvoiceTestSuite) assertFlatFeeIntent(label string, actual fl
 		s.Equal(expected.PercentageDiscounts.Percentage, actual.PercentageDiscounts.Percentage, "%s: percentage discount", label)
 		s.Equal(expected.PercentageDiscounts.CorrelationID, actual.PercentageDiscounts.CorrelationID, "%s: percentage discount correlation id", label)
 	}
+
 	s.assertTaxCodeConfigEqual(expected.TaxConfig, actual.TaxConfig, label)
 }
 
@@ -10754,25 +11217,23 @@ func (s *CreditThenInvoiceTestSuite) createPromotionalCreditFunding(ctx context.
 
 	res, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: input.Namespace,
-		Intents: charges.ChargeIntents{
-			charges.NewChargeIntent(creditpurchase.Intent{
-				Intent: chargesmeta.Intent{
-					ManagedBy:  billing.SystemManagedLine,
-					CustomerID: input.Customer.ID,
-					Currency:   currenciestestutils.NewFiatCurrency(s.T(), input.Currency),
+		Intents: charges.NewCreateChargeIntents(creditpurchase.Intent{
+			Intent: chargesmeta.Intent{
+				ManagedBy:  billing.SystemManagedLine,
+				CustomerID: input.Customer.ID,
+				Currency:   currenciestestutils.NewFiatCurrency(s.T(), input.Currency),
+			},
+			IntentMutableFields: creditpurchase.IntentMutableFields{
+				IntentMutableFields: chargesmeta.IntentMutableFields{
+					Name:              "Promotional Credit Purchase",
+					ServicePeriod:     timeutil.ClosedPeriod{From: input.At, To: input.At},
+					FullServicePeriod: timeutil.ClosedPeriod{From: input.At, To: input.At},
+					BillingPeriod:     timeutil.ClosedPeriod{From: input.At, To: input.At},
 				},
-				IntentMutableFields: creditpurchase.IntentMutableFields{
-					IntentMutableFields: chargesmeta.IntentMutableFields{
-						Name:              "Promotional Credit Purchase",
-						ServicePeriod:     timeutil.ClosedPeriod{From: input.At, To: input.At},
-						FullServicePeriod: timeutil.ClosedPeriod{From: input.At, To: input.At},
-						BillingPeriod:     timeutil.ClosedPeriod{From: input.At, To: input.At},
-					},
-					CreditAmount: input.Amount,
-					Settlement:   creditpurchase.NewSettlement(creditpurchase.PromotionalSettlement{}),
-				},
-			}),
-		},
+				CreditAmount: input.Amount,
+				Settlement:   creditpurchase.NewSettlement(creditpurchase.PromotionalSettlement{}),
+			},
+		}),
 	})
 	s.NoError(err)
 	s.Require().Len(res, 1)

@@ -70,13 +70,16 @@ func (h *handler) GetCustomerCreditBalance() GetCustomerCreditBalanceHandler {
 						}},
 					)
 				}
+
 				codes := make([]currencyx.Code, 0, 1+len(f.Oeq))
 				if f.Eq != nil {
 					codes = append(codes, currencyx.Code(*f.Eq))
 				}
+
 				for _, v := range f.Oeq {
 					codes = append(codes, currencyx.Code(v))
 				}
+
 				if len(codes) > 0 {
 					request.Currencies = customerbalance.CurrencyFilter{Codes: codes}
 				}
@@ -113,7 +116,7 @@ func (h *handler) GetCustomerCreditBalance() GetCustomerCreditBalanceHandler {
 
 			balances := make([]api.CreditBalance, 0, len(balancesByCurrency))
 			for _, item := range balancesByCurrency {
-				balances = append(balances, toAPICreditBalance(item.Currency, item.Balance))
+				balances = append(balances, toAPICreditBalance(item.CurrencyReference(), item.Balance))
 			}
 
 			return GetCustomerCreditBalanceResponse{

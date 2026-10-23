@@ -42,11 +42,12 @@ func TestToAPIBillingCreditTransaction(t *testing.T) {
 			Namespace: "ns",
 			ID:        "tx-1",
 		},
-		CreatedAt: createdAt,
-		BookedAt:  bookedAt,
-		Type:      customerbalance.CreditTransactionTypeConsumed,
-		Currency:  currencyx.Code("USD"),
-		Amount:    alpacadecimal.NewFromInt(-10),
+		CreatedAt:   createdAt,
+		BookedAt:    bookedAt,
+		Type:        customerbalance.CreditTransactionTypeConsumed,
+		GrantVoided: true,
+		Currency:    currencyx.Code("USD"),
+		Amount:      alpacadecimal.NewFromInt(-10),
 		Balance: customerbalance.CreditTransactionBalance{
 			Before: alpacadecimal.NewFromInt(52),
 			After:  alpacadecimal.NewFromInt(42),
@@ -64,10 +65,30 @@ func TestToAPIBillingCreditTransaction(t *testing.T) {
 	require.Equal(t, api.Numeric("-10"), tx.Amount)
 	require.Equal(t, api.Numeric("52"), tx.AvailableBalance.Before)
 	require.Equal(t, api.Numeric("42"), tx.AvailableBalance.After)
+	require.Nil(t, tx.CustomCurrency)
 	require.NotNil(t, tx.Description)
 	require.Equal(t, description, *tx.Description)
 	require.NotNil(t, tx.Labels)
 	require.Equal(t, "charge-1", (*tx.Labels)["charge_id"])
+	require.NotContains(t, *tx.Labels, "voided")
+}
+
+func TestToAPIBillingCreditTransaction_VoidedFundedLabel(t *testing.T) {
+	tx := toAPIBillingCreditTransaction(customerbalance.CreditTransaction{
+		ID: models.NamespacedID{
+			Namespace: "ns",
+			ID:        "tx-1",
+		},
+		CreatedAt:   time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC),
+		BookedAt:    time.Date(2026, 4, 10, 9, 0, 1, 0, time.UTC),
+		Type:        customerbalance.CreditTransactionTypeFunded,
+		GrantVoided: true,
+		Currency:    currencyx.Code("USD"),
+		Amount:      alpacadecimal.NewFromInt(10),
+	})
+
+	require.NotNil(t, tx.Labels)
+	require.Equal(t, "true", (*tx.Labels)["voided"])
 }
 
 func TestToAPIBillingCreditTransaction_Expired(t *testing.T) {
@@ -84,6 +105,26 @@ func TestToAPIBillingCreditTransaction_Expired(t *testing.T) {
 	})
 
 	require.Equal(t, api.BillingCreditTransactionTypeExpired, tx.Type)
+}
+
+func TestToAPIBillingCreditTransactionCustomCurrencyIdentity(t *testing.T) {
+	currencyID := "01JTEST00000000000000000001"
+
+	tx := toAPIBillingCreditTransaction(customerbalance.CreditTransaction{
+		ID: models.NamespacedID{
+			Namespace: "ns",
+			ID:        "tx-1",
+		},
+		CreatedAt:        time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC),
+		BookedAt:         time.Date(2026, 4, 10, 9, 0, 1, 0, time.UTC),
+		Type:             customerbalance.CreditTransactionTypeFunded,
+		Currency:         currencyx.Code("CREDITS"),
+		CustomCurrencyID: &currencyID,
+		Amount:           alpacadecimal.NewFromInt(10),
+	})
+
+	require.Equal(t, api.BillingCurrencyCode("CREDITS"), tx.Currency)
+	require.Equal(t, &api.CurrencyCustomReference{Id: currencyID}, tx.CustomCurrency)
 }
 
 func TestCreditTransactionCursorConversion(t *testing.T) {

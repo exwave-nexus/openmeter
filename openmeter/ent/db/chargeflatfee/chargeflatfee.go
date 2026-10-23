@@ -44,6 +44,8 @@ const (
 	FieldCustomCurrencyID = "custom_currency_id"
 	// FieldManagedBy holds the string denoting the managed_by field in the database.
 	FieldManagedBy = "managed_by"
+	// FieldSubscriptionPlan holds the string denoting the subscription_plan field in the database.
+	FieldSubscriptionPlan = "subscription_plan"
 	// FieldSubscriptionID holds the string denoting the subscription_id field in the database.
 	FieldSubscriptionID = "subscription_id"
 	// FieldSubscriptionPhaseID holds the string denoting the subscription_phase_id field in the database.
@@ -72,6 +74,8 @@ const (
 	FieldName = "name"
 	// FieldDescription holds the string denoting the description field in the database.
 	FieldDescription = "description"
+	// FieldValidationIssues holds the string denoting the validation_issues field in the database.
+	FieldValidationIssues = "validation_issues"
 	// FieldPaymentTerm holds the string denoting the payment_term field in the database.
 	FieldPaymentTerm = "payment_term"
 	// FieldInvoiceAt holds the string denoting the invoice_at field in the database.
@@ -225,6 +229,7 @@ var Columns = []string{
 	FieldFiatCurrencyCode,
 	FieldCustomCurrencyID,
 	FieldManagedBy,
+	FieldSubscriptionPlan,
 	FieldSubscriptionID,
 	FieldSubscriptionPhaseID,
 	FieldSubscriptionItemID,
@@ -239,6 +244,7 @@ var Columns = []string{
 	FieldDeletedAt,
 	FieldName,
 	FieldDescription,
+	FieldValidationIssues,
 	FieldPaymentTerm,
 	FieldInvoiceAt,
 	FieldSettlementMode,
@@ -289,7 +295,8 @@ var (
 	DefaultID func() string
 	// ValueScanner of all ChargeFlatFee fields.
 	ValueScanner struct {
-		Discounts field.TypeValueScanner[*billing.Discounts]
+		SubscriptionPlan field.TypeValueScanner[*meta.SubscriptionPlan]
+		Discounts        field.TypeValueScanner[*billing.Discounts]
 	}
 )
 
@@ -419,6 +426,11 @@ func ByCustomCurrencyID(opts ...sql.OrderTermOption) OrderOption {
 // ByManagedBy orders the results by the managed_by field.
 func ByManagedBy(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldManagedBy, opts...).ToFunc()
+}
+
+// BySubscriptionPlan orders the results by the subscription_plan field.
+func BySubscriptionPlan(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSubscriptionPlan, opts...).ToFunc()
 }
 
 // BySubscriptionID orders the results by the subscription_id field.

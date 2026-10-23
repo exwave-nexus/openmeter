@@ -25,6 +25,13 @@ Its complete desired shape is a `SubscriptionSpec`:
 `ItemsByKey[key]` is a time-ordered version history. Its slice index identifies
 a logical revision of the item; it is not quantity. Removing or inserting an
 element changes the identity used by downstream subscription reconciliation.
+Views order revisions by intended start, then put zero-length revisions before
+nonempty ones at the same start. Tied zero-length edits use the existing patch
+ULID order, with an unmarked plan-origin revision first. Item row IDs and
+creation timestamps can change during materialization and do not define this
+order.
+Patch ULIDs use wall-clock creation time; same-millisecond IDs from different
+processes do not guarantee action order.
 
 A `SubscriptionView` is the hydrated read model: the subscription, its current
 spec, customer, phases, items, features, and entitlements. The spec is the
@@ -47,8 +54,9 @@ subscriptions leave the normal read path but remain available to cleanup
 consumers that explicitly include deleted records.
 
 Updating a subscription reconciles its current view with a new spec. Customer,
-plan reference, subscription start, and settlement mode are not mutable through
-this path. Changed phases or items may be deleted and recreated, including
+subscription start, and settlement mode are not mutable through this path.
+The plan reference can advance to a later version of the same plan through
+[migration](workflow/README.md). Changed phases or items may be deleted and recreated, including
 their entitlements. Consumers must not treat a persisted phase, item, or
 entitlement ID as the durable identity of a logical spec path.
 
@@ -81,6 +89,8 @@ patches produced that target.
 are clipped to phase and subscription boundaries. The plan workflow defaults
 the anchor to `ActiveFrom`, but the stored anchor is an explicit subscription
 fact and must be carried through replacements and plan changes.
+
+Subscription specs enforce the [product catalog rate-card minimum](../productcatalog/README.md), including for existing items. Cancellation permits legacy short cadences when the spec has no other validation errors; unrelated updates remain blocked until the cadences are changed.
 
 `Timing` describes when a command should take effect. It contains exactly one
 of a custom timestamp or a supported enum. `immediate` resolves from the
@@ -123,7 +133,9 @@ and phase; do not persist a derived absolute end as independent source truth.
   subscription item. Recreating an item may recreate its entitlement.
 - Subscription commands publish lifecycle events. Successful subscription
   mutation means the desired schedule was committed; it does not mean billing
-  artifacts have already been reconciled.
+  artifacts have already been reconciled. Application wiring persists system
+  events through the [shared outbox](../watermill/outbox/README.md), with delivery
+  triggered after commit and retries driven by subsequent publishing activity.
 - Billing behavior such as line generation, invoice collection, charge
   realization, proration materialization, and immutable-invoice handling
   belongs outside this package.
@@ -134,9 +146,22 @@ and phase; do not persist a derived absolute end as independent source truth.
   you its end
 - item slice position is version identity, not quantity
 - subscription, spec, and expanded view must agree on shared top-level facts
+- structural item references are validated as a namespace-scoped
+  subscription-to-phase-to-item chain; archived materializations remain valid
+  references because lifecycle visibility is a separate concern
 - newly materialized priced items snapshot their effective currency code; custom
   currencies also retain their managed currency ID, while legacy items may lack
   this snapshot
+- V1 subscription reads reject custom-currency priced items; customer subscription
+  lists and customer expansions omit those subscriptions before pagination.
+  Visibility follows the non-deleted subscription schedule, including past and
+  future items, rather than its fiat invoice currency or source plan.
+- customer and subscription invoice currencies must match whenever the spec has
+  priced items; unpriced items have no materialized currency
+- customer-authored rate cards in inline custom plans and add-item edits must
+  resolve every feature in the subscription namespace before building the
+  target spec; they enforce the same feature existence and archival rules as
+  persisted plans
 - item and entitlement cadences cannot escape their phase or subscription
 - downstream work must be derived from the committed view and tolerate event
   retries

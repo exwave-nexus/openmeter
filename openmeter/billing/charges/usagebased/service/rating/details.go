@@ -14,8 +14,8 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/rating/delta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service/rating/periodpreserving"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/pkg/timeutil"
 )
 
@@ -35,7 +35,7 @@ type GetDetailedRatingForUsageInput struct {
 	// Metering values
 
 	Customer     billing.CustomerOverrideWithDetails
-	FeatureMeter feature.FeatureMeter
+	FeatureMeter billingfeaturemeter.FeatureMeter
 }
 
 func (i GetDetailedRatingForUsageInput) Validate() error {
@@ -130,7 +130,8 @@ func (s *service) GetDetailedRatingForUsage(ctx context.Context, in GetDetailedR
 			},
 			AlreadyBilledDetailedLines: alreadyBilledDetailedLines,
 		})
-		if err != nil {
+		recorder := billing.ValidationIssueRecorder{}
+		if err := recorder.Record(err); err != nil {
 			return GetDetailedRatingForUsageResult{}, err
 		}
 
@@ -138,7 +139,7 @@ func (s *service) GetDetailedRatingForUsage(ctx context.Context, in GetDetailedR
 			Totals:        out.DetailedLines.SumTotals(),
 			DetailedLines: out.DetailedLines,
 			Quantity:      currentQuantity,
-		}, nil
+		}, recorder.ErrorsOrNil()
 	case usagebased.RatingEnginePeriodPreserving:
 		return s.ratePeriodPreservingDetails(ctx, ratePeriodPreservingDetailsInput{
 			Input:                   in,
@@ -283,7 +284,8 @@ func (s *service) ratePeriodPreservingDetails(ctx context.Context, in ratePeriod
 		},
 		PriorPeriods: priorPeriods,
 	})
-	if err != nil {
+	recorder := billing.ValidationIssueRecorder{}
+	if err := recorder.Record(err); err != nil {
 		return GetDetailedRatingForUsageResult{}, err
 	}
 
@@ -291,5 +293,5 @@ func (s *service) ratePeriodPreservingDetails(ctx context.Context, in ratePeriod
 		Totals:        out.DetailedLines.SumTotals(),
 		DetailedLines: out.DetailedLines,
 		Quantity:      in.CurrentQuantity,
-	}, nil
+	}, recorder.ErrorsOrNil()
 }

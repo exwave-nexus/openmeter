@@ -33,6 +33,12 @@ model CreditBalance {
   currency: Currencies.CurrencyCode;
 
   /**
+   * Managed currency reference. Present only for custom currencies.
+   */
+  @visibility(Lifecycle.Read)
+  custom_currency?: Shared.ResourceReference<Currencies.CurrencyCustom>;
+
+  /**
    * Credits available after applying currently live charge impacts.
    *
    * Always zero for historical balance queries using the `timestamp` parameter

@@ -178,6 +178,7 @@ func (a *InvoiceCollector) All(ctx context.Context, namespaces []string, custome
 
 		wg.Wait()
 	}
+
 	closeErrChan()
 
 	var errs []error

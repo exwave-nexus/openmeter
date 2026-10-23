@@ -27,8 +27,9 @@ type CreateInput struct {
 	Intent              meta.Intent
 	IntentMutableFields meta.IntentMutableFields
 
-	Status       meta.ChargeStatus
-	AdvanceAfter *time.Time
+	Status           meta.ChargeStatus
+	AdvanceAfter     *time.Time
+	ValidationIssues billing.ValidationIssues
 }
 
 func (i CreateInput) Validate() error {
@@ -58,6 +59,7 @@ type Creator[T any] interface {
 	entutils.AnnotationsMixinSetter[T]
 	entutils.TimeMixinCreator[T]
 
+	SetSubscriptionPlan(*meta.SubscriptionPlan) T
 	SetCustomerID(customerID string) T
 	SetNillableFiatCurrencyCode(currency *currencyx.Code) T
 	SetNillableCustomCurrencyID(customCurrencyID *string) T
@@ -65,6 +67,7 @@ type Creator[T any] interface {
 	SetNillableSubscriptionID(subscriptionID *string) T
 	SetNillableSubscriptionPhaseID(subscriptionPhaseID *string) T
 	SetNillableSubscriptionItemID(subscriptionItemID *string) T
+	SetValidationIssues(validationIssues billing.ValidationIssues) T
 
 	// Mutable fields
 	SetName(name string) T
@@ -97,6 +100,7 @@ type Updater[T any] interface {
 	SetFullServicePeriodTo(fullServicePeriodTo time.Time) T
 	SetStatus(status meta.ChargeStatus) T
 	SetOrClearAdvanceAfter(advanceAfter *time.Time) T
+	SetOrClearValidationIssues(validationIssues *billing.ValidationIssues) T
 }
 
 func Create[T Creator[T]](creator Creator[T], in CreateInput) (T, error) {
@@ -111,10 +115,12 @@ func Create[T Creator[T]](creator Creator[T], in CreateInput) (T, error) {
 	if in.Intent.Subscription != nil {
 		subscriptionID = &in.Intent.Subscription.SubscriptionID
 	}
+
 	var subscriptionPhaseID *string
 	if in.Intent.Subscription != nil {
 		subscriptionPhaseID = &in.Intent.Subscription.PhaseID
 	}
+
 	var subscriptionItemID *string
 	if in.Intent.Subscription != nil {
 		subscriptionItemID = &in.Intent.Subscription.ItemID
@@ -138,6 +144,14 @@ func Create[T Creator[T]](creator Creator[T], in CreateInput) (T, error) {
 		creator = creator.SetNillableCustomCurrencyID(lo.ToPtr(in.Intent.Currency.ID))
 	default:
 		return lo.Empty[T](), fmt.Errorf("unsupported currency type: %s", in.Intent.Currency.Type())
+	}
+
+	if len(in.ValidationIssues) > 0 {
+		creator = creator.SetValidationIssues(in.ValidationIssues)
+	}
+
+	if in.Intent.SubscriptionPlan != nil {
+		creator = creator.SetSubscriptionPlan(in.Intent.SubscriptionPlan)
 	}
 
 	return creator.
@@ -169,8 +183,9 @@ type UpdateInput struct {
 	Intent              meta.Intent
 	IntentMutableFields meta.IntentMutableFields
 
-	Status       meta.ChargeStatus
-	AdvanceAfter *time.Time
+	Status           meta.ChargeStatus
+	AdvanceAfter     *time.Time
+	ValidationIssues billing.ValidationIssues
 }
 
 func Update[T Updater[T]](updater Updater[T], in UpdateInput) (T, error) {
@@ -187,6 +202,11 @@ func Update[T Updater[T]](updater Updater[T], in UpdateInput) (T, error) {
 		return empty, err
 	}
 
+	var validationIssues *billing.ValidationIssues
+	if len(in.ValidationIssues) > 0 {
+		validationIssues = &in.ValidationIssues
+	}
+
 	return updater.
 		SetName(in.IntentMutableFields.Name).
 		SetOrClearDescription(in.IntentMutableFields.Description).
@@ -199,7 +219,8 @@ func Update[T Updater[T]](updater Updater[T], in UpdateInput) (T, error) {
 		SetFullServicePeriodFrom(in.IntentMutableFields.FullServicePeriod.From.UTC()).
 		SetFullServicePeriodTo(in.IntentMutableFields.FullServicePeriod.To.UTC()).
 		SetStatus(in.Status).
-		SetOrClearAdvanceAfter(in.AdvanceAfter), nil
+		SetOrClearAdvanceAfter(in.AdvanceAfter).
+		SetOrClearValidationIssues(validationIssues), nil
 }
 
 type Getter[T any] interface {
@@ -214,6 +235,7 @@ type Getter[T any] interface {
 	GetMetadata() map[string]string
 	GetAnnotations() models.Annotations
 	GetManagedBy() billing.InvoiceLineManagedBy
+	GetSubscriptionPlan() *meta.SubscriptionPlan
 	GetCustomerID() string
 	GetServicePeriodFrom() time.Time
 	GetServicePeriodTo() time.Time
@@ -230,6 +252,7 @@ type Getter[T any] interface {
 	GetTaxBehavior() *productcatalog.TaxBehavior
 	GetFiatCurrencyCode() *currencyx.Code
 	GetCustomCurrencyID() *string
+	GetValidationIssues() billing.ValidationIssues
 }
 
 type EdgeGetter interface {
@@ -262,6 +285,11 @@ func FromDBWithCurrency[T Getter[T]](entity T, currency currencies.Currency) (me
 		return meta.Charge{}, fmt.Errorf("currency: %w", err)
 	}
 
+	validationIssues := entity.GetValidationIssues()
+	if len(validationIssues) == 0 {
+		validationIssues = nil
+	}
+
 	var subscriptionReference *meta.SubscriptionReference
 	if entity.GetSubscriptionID() != nil && entity.GetSubscriptionPhaseID() != nil && entity.GetSubscriptionItemID() != nil {
 		subscriptionReference = &meta.SubscriptionReference{
@@ -280,10 +308,11 @@ func FromDBWithCurrency[T Getter[T]](entity T, currency currencies.Currency) (me
 			ID:           entity.GetID(),
 		},
 		Intent: meta.Intent{
-			ManagedBy:   entity.GetManagedBy(),
-			CustomerID:  entity.GetCustomerID(),
-			Annotations: entity.GetAnnotations(),
-			Currency:    currency,
+			SubscriptionPlan: entity.GetSubscriptionPlan(),
+			ManagedBy:        entity.GetManagedBy(),
+			CustomerID:       entity.GetCustomerID(),
+			Annotations:      entity.GetAnnotations(),
+			Currency:         currency,
 			TaxConfig: productcatalog.TaxCodeConfig{
 				TaxCodeID: entity.GetTaxCodeID(),
 				Behavior:  entity.GetTaxBehavior(),
@@ -308,7 +337,8 @@ func FromDBWithCurrency[T Getter[T]](entity T, currency currencies.Currency) (me
 				To:   entity.GetBillingPeriodTo().UTC(),
 			},
 		},
-		Status:       entity.GetStatus(),
-		AdvanceAfter: entity.GetAdvanceAfter(),
+		Status:           entity.GetStatus(),
+		AdvanceAfter:     entity.GetAdvanceAfter(),
+		ValidationIssues: validationIssues,
 	}, nil
 }

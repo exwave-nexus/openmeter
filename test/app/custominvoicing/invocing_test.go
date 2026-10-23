@@ -134,7 +134,7 @@ func (s *CustomInvoicingTestSuite) TestInvoicingFlowHooksEnabled() {
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.HUF),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 						Period: timeutil.ClosedPeriod{From: periodStart, To: periodEnd},
 
@@ -174,7 +174,7 @@ func (s *CustomInvoicingTestSuite) TestInvoicingFlowHooksEnabled() {
 							FeatureKey: "test",
 						},
 					},
-				},
+				}),
 			})
 		s.NoError(err, "failed to create pending invoice lines")
 		s.NotNil(res, "result should not be nil")
@@ -262,7 +262,10 @@ func (s *CustomInvoicingTestSuite) TestInvoicingFlowHooksEnabled() {
 			Trigger:   billing.TriggerPaymentUncollectible,
 		})
 		s.Error(err, "failed to handle payment trigger")
-		s.ErrorAs(err, &billing.ValidationError{}, "error should be a validation error")
+		s.ErrorIs(err, billing.ErrInvoiceActionNotAvailable, "error should identify an unavailable invoice action")
+
+		var validationIssue billing.ValidationIssue
+		s.ErrorAs(err, &validationIssue, "error should be surfaced as a validation issue")
 	})
 }
 
@@ -299,7 +302,7 @@ func (s *CustomInvoicingTestSuite) TestInvoicingFlowPaymentStatusOnly() {
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.HUF),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 						Period: timeutil.ClosedPeriod{From: periodStart, To: periodEnd},
 
@@ -311,7 +314,7 @@ func (s *CustomInvoicingTestSuite) TestInvoicingFlowPaymentStatusOnly() {
 						PerUnitAmount: alpacadecimal.NewFromFloat(600),
 						PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 					}),
-				},
+				}),
 			})
 		s.NoError(err, "failed to create pending invoice lines")
 		s.NotNil(res, "result should not be nil")

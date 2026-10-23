@@ -8,6 +8,8 @@ import (
 
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog/planaddon"
 	"github.com/openmeterio/openmeter/openmeter/subscription"
 	subscriptionaddon "github.com/openmeterio/openmeter/openmeter/subscription/addon"
 	subscriptionworkflow "github.com/openmeterio/openmeter/openmeter/subscription/workflow"
@@ -17,11 +19,13 @@ import (
 )
 
 type WorkflowServiceConfig struct {
-	Service      subscription.Service
-	AddonService subscriptionaddon.Service
+	Service          subscription.Service
+	AddonService     subscriptionaddon.Service
+	PlanAddonService planaddon.Service
 	// connectors
 	CustomerService  customer.Service
 	CurrencyResolver currencies.CurrencyResolver
+	FeatureResolver  productcatalog.FeatureResolver
 	// framework
 	TransactionManager transaction.Creator
 	Logger             *slog.Logger
@@ -40,12 +44,20 @@ func (c WorkflowServiceConfig) Validate() error {
 		errs = append(errs, errors.New("subscription add-on service is required"))
 	}
 
+	if c.PlanAddonService == nil {
+		errs = append(errs, errors.New("plan add-on service is required"))
+	}
+
 	if c.CustomerService == nil {
 		errs = append(errs, errors.New("customer service is required"))
 	}
 
 	if c.CurrencyResolver == nil {
 		errs = append(errs, errors.New("currency resolver is required"))
+	}
+
+	if c.FeatureResolver == nil {
+		errs = append(errs, errors.New("feature resolver is required"))
 	}
 
 	if c.TransactionManager == nil {

@@ -15,19 +15,6 @@ permissions:
   contents: read
 
 jobs:
-  artifacts:
-    name: Artifacts
-    # Artifact publishing (container images, etc.) is tag-only.
-    if: github.ref_type == 'tag'
-    uses: ./.github/workflows/artifacts.yaml
-    with:
-      publish: true
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      security-events: write
-
   helm-release:
     name: Helm Charts
     # Helm chart releases are tag-only.
@@ -45,7 +32,7 @@ jobs:
         chart: [ openmeter, benthos-collector ]
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -59,6 +46,7 @@ jobs:
       - name: Set up Nix
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
         with:
+          # Authenticate public flake fetches to avoid GitHub API rate limits.
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           nix_conf: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
@@ -68,13 +56,9 @@ jobs:
       - name: Restore Nix store
         uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{
-            hashFiles('flake.*') }}
+          primary-key: ${{ runner.os }}-openmeter-nix-build-v5-main-${{ hashFiles('.github/workflows/nix.yaml', 'flake.lock', '**/*.nix') }}
           restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
+            ${{ runner.os }}-openmeter-nix-build-v5-main-
 
       - name: Package chart
         # Untrusted values (github.ref_name, matrix.chart) passed via env to
@@ -121,7 +105,7 @@ jobs:
             goarch: arm64
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -135,6 +119,7 @@ jobs:
       - name: Set up Nix
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
         with:
+          # Authenticate public flake fetches to avoid GitHub API rate limits.
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           nix_conf: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
@@ -144,25 +129,18 @@ jobs:
       - name: Restore Nix store
         uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{
-            hashFiles('flake.*') }}
+          primary-key: ${{ runner.os }}-openmeter-nix-build-v5-main-${{ hashFiles('.github/workflows/nix.yaml', 'flake.lock', '**/*.nix') }}
           restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
+            ${{ runner.os }}-openmeter-nix-build-v5-main-
 
-      - name: Restore go.mod cache if exists
+      - name: Restore Go module cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .devenv/state/go
-          key: ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{
-            hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-openmeter-go-modules-${{
+            hashFiles('go.*', 'collector/go.*', 'api/v3/client/go.*', 'e2e/go.*') }}
           restore-keys: |
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-go-modules-main-${{ hashFiles('flake.*', 'go.*', '.github/workflows/*.yaml') }}
-            ${{ runner.os }}-openmeter-go-modules-main
+            ${{ runner.os }}-openmeter-go-modules-
 
       - name: Build benthos-collector binary
         # Untrusted github.ref_name passed via env; matrix values are
@@ -204,7 +182,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -271,7 +249,7 @@ jobs:
     # npm's trusted publisher entry is keyed on caller workflow file + environment,
     # so this single caller must serve both channels.
     needs: [ sdk-javascript-meta ]
-    uses: ./.github/workflows/npm-release.yaml
+    uses: $/.github/workflows/release-npm.yaml
     with:
       version: ${{ needs.sdk-javascript-meta.outputs.version }}
       dist-tag: ${{ needs.sdk-javascript-meta.outputs.dist-tag }}
@@ -287,7 +265,7 @@ jobs:
     # publisher entry is keyed on caller workflow file + environment, so this
     # caller must serve both channels.
     needs: [ sdk-javascript-meta ]
-    uses: ./.github/workflows/aip-npm-release.yaml
+    uses: $/.github/workflows/release-aip-npm.yaml
     with:
       version: ${{ needs.sdk-javascript-meta.outputs.version }}
       dist-tag: ${{ needs.sdk-javascript-meta.outputs.dist-tag }}
@@ -297,13 +275,13 @@ jobs:
 
   sdk-python-release:
     name: Python SDK Release
-    # Python SDK releases are tag-only (dev Python releases live in sdk-python-dev-release.yaml).
+    # Python SDK releases are tag-only (dev Python releases live in release-sdk-python-dev.yaml).
     if: github.ref_type == 'tag'
     runs-on: depot-ubuntu-latest-8
     environment: prod
 
     steps:
-      - uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
           use-policy-store: ${{ secrets.STEP_SECURITY_API_KEY != '' }}
@@ -322,6 +300,7 @@ jobs:
       - name: Set up Nix
         uses: nixbuild/nix-quick-install-action@9f63be77f412a248c9d9a65a4c82cf066cdf8f0c # v35
         with:
+          # Authenticate public flake fetches to avoid GitHub API rate limits.
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           nix_conf: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
@@ -331,13 +310,9 @@ jobs:
       - name: Restore Nix store
         uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          primary-key: ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-${{
-            hashFiles('flake.*') }}
+          primary-key: ${{ runner.os }}-openmeter-nix-build-v5-main-${{ hashFiles('.github/workflows/nix.yaml', 'flake.lock', '**/*.nix') }}
           restore-prefixes-first-match: |
-            ${{ runner.os }}-openmeter-nix-build-${{ github.ref_name }}-
-            ${{ runner.os }}-openmeter-nix-build-main-${{ hashFiles('flake.*') }}
-            ${{ runner.os }}-openmeter-nix-build-main-
-            ${{ runner.os }}-openmeter-nix-build-
+            ${{ runner.os }}-openmeter-nix-build-v5-main-
 
       - name: Publish Python package via Nix make target
         run: |

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/alpacahq/alpacadecimal"
 	"github.com/invopop/gobl/currency"
@@ -19,15 +20,18 @@ import (
 	flatfeeadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/flatfee/adapter"
 	flatfeeservice "github.com/openmeterio/openmeter/openmeter/billing/charges/flatfee/service"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/invoiceupdater"
-	"github.com/openmeterio/openmeter/openmeter/billing/charges/lineage"
-	lineageadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/lineage/adapter"
-	lineageservice "github.com/openmeterio/openmeter/openmeter/billing/charges/lineage/service"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage"
+	legacylineageadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage/adapter"
+	legacylineageservice "github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage/service"
 	chargeslinerouter "github.com/openmeterio/openmeter/openmeter/billing/charges/linerouter"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	metaadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/meta/adapter"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	usagebasedadapter "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/adapter"
 	usagebasedservice "github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased/service"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
+	featuremeterservice "github.com/openmeterio/openmeter/openmeter/billing/featuremeter/service"
 	billingratingservice "github.com/openmeterio/openmeter/openmeter/billing/rating/service"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	currencyadapter "github.com/openmeterio/openmeter/openmeter/currencies/adapter"
@@ -35,8 +39,20 @@ import (
 	currencyservice "github.com/openmeterio/openmeter/openmeter/currencies/service"
 	currenciestestutils "github.com/openmeterio/openmeter/openmeter/currencies/testutils"
 	"github.com/openmeterio/openmeter/openmeter/customer"
+	enttx "github.com/openmeterio/openmeter/openmeter/ent/tx"
+	advancetestutils "github.com/openmeterio/openmeter/openmeter/ledger/advance/testutils"
+	ledgerbreakage "github.com/openmeterio/openmeter/openmeter/ledger/breakage"
+	ledgerchargeadapter "github.com/openmeterio/openmeter/openmeter/ledger/chargeadapter"
+	ledgercollector "github.com/openmeterio/openmeter/openmeter/ledger/collector"
 	"github.com/openmeterio/openmeter/openmeter/ledger/recognizer"
+	ledgertestutils "github.com/openmeterio/openmeter/openmeter/ledger/testutils"
+	"github.com/openmeterio/openmeter/openmeter/ledger/transactions"
+	"github.com/openmeterio/openmeter/openmeter/meter"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
+	featurepkg "github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
+	subscriptionrepo "github.com/openmeterio/openmeter/openmeter/subscription/repo"
+	"github.com/openmeterio/openmeter/openmeter/subscription/validators/itemreference"
+	omtestutils "github.com/openmeterio/openmeter/openmeter/testutils"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/featuregate"
@@ -49,29 +65,45 @@ const USD = currencyx.Code(currency.USD)
 
 type BaseSuite struct {
 	billingtest.BaseSuite
+	billingtest.SubscriptionMixin
 
 	// UnitConfigEnabled toggles the unitConfig.enabled rating flag for the charges
 	// stack the suite builds. Defaults to false; a derived suite sets it in its own
 	// SetupSuite (before calling BaseSuite.SetupSuite) to exercise unit_config rating.
 	UnitConfigEnabled bool
 
+	// UseRealRecognizer wires a real, ledger-backed recognizer.Service instead of
+	// recognizer.NoopService{}. Defaults to false because most suites in this
+	// package drive charges through mock ledger handlers that never persist real
+	// customer/business ledger accounts; a derived suite that needs to observe
+	// actual recognition behavior sets it in its own SetupSuite (before calling
+	// BaseSuite.SetupSuite).
+	UseRealRecognizer bool
+	// UseRealLedgerHandlers wires the production flat-fee and usage-based ledger
+	// handlers while keeping credit-purchase setup independent. Derived suites
+	// enable it before calling BaseSuite.SetupSuite.
+	UseRealLedgerHandlers bool
+
 	Charges                   *service
 	UsageBasedService         usagebased.Service
 	CurrencyService           currencies.Service
 	MetaAdapter               meta.Adapter
-	LineageService            lineage.Service
+	LineageService            legacylineage.Service
 	Locker                    *lockr.Locker
 	InvoiceUpdater            invoiceupdater.Updater
 	FlatFeeAdapter            flatfee.Adapter
 	CreditPurchaseAdapter     creditpurchase.Adapter
 	UsageBasedAdapter         usagebased.Adapter
+	ItemReferenceValidator    itemreference.Validator
 	FlatFeeTestHandler        *flatFeeTestHandler
 	CreditPurchaseTestHandler *creditPurchaseTestHandler
 	UsageBasedTestHandler     *usageBasedTestHandler
+	LedgerDeps                ledgertestutils.Deps
 }
 
 func (s *BaseSuite) SetupSuite() {
 	s.BaseSuite.SetupSuite()
+	s.SubscriptionMixin.SetupSuite(s.T(), s.GetSubscriptionMixInDependencies())
 
 	s.FlatFeeTestHandler = newFlatFeeTestHandler()
 	s.CreditPurchaseTestHandler = newCreditPurchaseTestHandler()
@@ -98,16 +130,47 @@ func (s *BaseSuite) SetupSuite() {
 	s.NoError(err)
 	s.Locker = locker
 
-	lineageAdapter, err := lineageadapter.New(lineageadapter.Config{
+	lineageAdapter, err := legacylineageadapter.New(legacylineageadapter.Config{
 		Client: s.DBClient,
 	})
 	s.NoError(err)
 
-	lineageService, err := lineageservice.New(lineageservice.Config{
+	lineageService, err := legacylineageservice.New(legacylineageservice.Config{
 		Adapter: lineageAdapter,
 	})
 	s.NoError(err)
 	s.LineageService = lineageService
+
+	var (
+		ledgerDeps         ledgertestutils.Deps
+		ledgerResolverDeps transactions.ResolverDependencies
+	)
+	if s.UseRealRecognizer || s.UseRealLedgerHandlers {
+		ledgerDeps, err = ledgertestutils.InitDeps(s.DBClient, slog.Default())
+		s.NoError(err)
+		s.LedgerDeps = ledgerDeps
+		ledgerResolverDeps = transactions.ResolverDependencies{
+			AccountService: ledgerDeps.ResolversService,
+			AccountCatalog: ledgerDeps.AccountService,
+			BalanceQuerier: ledgerDeps.HistoricalLedger,
+		}
+	}
+
+	var recognizerService recognizer.Service = recognizer.NoopService{}
+	if s.UseRealRecognizer {
+		recognizerService, err = recognizer.NewService(recognizer.Config{
+			Ledger:             ledgerDeps.HistoricalLedger,
+			Dependencies:       ledgerResolverDeps,
+			Lineage:            lineageService,
+			TransactionManager: enttx.NewCreator(s.DBClient),
+		})
+		s.NoError(err)
+	}
+
+	subscriptionItemReferenceValidator, err := itemreference.NewValidator(subscriptionrepo.NewSubscriptionItemRepo(s.DBClient))
+	s.Require().NoError(err)
+
+	s.ItemReferenceValidator = subscriptionItemReferenceValidator
 
 	flatFeeAdapter, err := flatfeeadapter.New(flatfeeadapter.Config{
 		Client:      s.DBClient,
@@ -116,15 +179,47 @@ func (s *BaseSuite) SetupSuite() {
 	})
 	s.NoError(err)
 	s.FlatFeeAdapter = flatFeeAdapter
+	var flatFeeHandler flatfee.Handler = s.FlatFeeTestHandler
+	var usageBasedHandler usagebased.Handler = s.UsageBasedTestHandler
+	if s.UseRealLedgerHandlers {
+		breakageService := ledgerbreakage.NewNoopService()
+
+		advanceService := advancetestutils.NewService(s.T(), ledgerDeps, breakageService)
+
+		collectorService, err := ledgercollector.NewService(ledgercollector.Config{
+			Logger:             omtestutils.NewDiscardLogger(s.T()),
+			Advance:            advanceService,
+			Ledger:             ledgerDeps.HistoricalLedger,
+			Dependencies:       ledgerResolverDeps,
+			Breakage:           breakageService,
+			AccountLocker:      ledgerDeps.AccountService,
+			TransactionManager: enttx.NewCreator(s.DBClient),
+		})
+		s.NoError(err)
+
+		flatFeeHandler = ledgerchargeadapter.NewFlatFeeHandler(
+			ledgerDeps.HistoricalLedger,
+			ledgerResolverDeps,
+			collectorService,
+		)
+		usageBasedHandler = ledgerchargeadapter.NewUsageBasedHandler(
+			ledgerDeps.HistoricalLedger,
+			ledgerResolverDeps,
+			collectorService,
+		)
+	}
 
 	flatFeeService, err := flatfeeservice.New(flatfeeservice.Config{
-		Adapter:       flatFeeAdapter,
-		Handler:       s.FlatFeeTestHandler,
-		Lineage:       lineageService,
-		MetaAdapter:   metaAdapter,
-		Locker:        locker,
-		RatingService: billingratingservice.New(billingratingservice.Config{UnitConfigEnabled: s.UnitConfigEnabled}),
-		Currencies:    currencyService,
+		Adapter:                flatFeeAdapter,
+		Handler:                flatFeeHandler,
+		Lineage:                lineageService,
+		MetaAdapter:            metaAdapter,
+		Locker:                 locker,
+		FeatureMeterResolver:   s.FeatureMeterResolver,
+		RatingService:          billingratingservice.New(billingratingservice.Config{UnitConfigEnabled: s.UnitConfigEnabled}),
+		Currencies:             currencyService,
+		ItemReferenceValidator: subscriptionItemReferenceValidator,
+		BillingService:         s.BillingService,
 	})
 	s.NoError(err)
 
@@ -147,17 +242,18 @@ func (s *BaseSuite) SetupSuite() {
 	s.InvoiceUpdater = invoiceUpdater
 
 	usageBasedService, err := usagebasedservice.New(usagebasedservice.Config{
-		Adapter:                 usageBasedAdapter,
-		Handler:                 s.UsageBasedTestHandler,
-		Lineage:                 lineageService,
-		Locker:                  locker,
-		MetaAdapter:             metaAdapter,
-		InvoiceUpdater:          invoiceUpdater,
-		CustomerOverrideService: s.BillingService,
-		FeatureService:          s.FeatureService,
-		RatingService:           billingratingservice.New(billingratingservice.Config{UnitConfigEnabled: s.UnitConfigEnabled}),
-		Currencies:              currencyService,
-		StreamingConnector:      s.MockStreamingConnector,
+		Adapter:                usageBasedAdapter,
+		Handler:                usageBasedHandler,
+		Lineage:                lineageService,
+		Locker:                 locker,
+		MetaAdapter:            metaAdapter,
+		InvoiceUpdater:         invoiceUpdater,
+		BillingService:         s.BillingService,
+		FeatureMeterResolver:   s.FeatureMeterResolver,
+		RatingService:          billingratingservice.New(billingratingservice.Config{UnitConfigEnabled: s.UnitConfigEnabled}),
+		Currencies:             currencyService,
+		StreamingConnector:     s.MockStreamingConnector,
+		ItemReferenceValidator: subscriptionItemReferenceValidator,
 	})
 	s.NoError(err)
 	s.UsageBasedService = usageBasedService
@@ -187,9 +283,13 @@ func (s *BaseSuite) SetupSuite() {
 	createLineRouter, err := chargeslinerouter.New(chargeslinerouter.Config{
 		CreditsEnabled:           true,
 		CreditThenInvoiceEnabled: true,
-		FeatureGate: featuregate.NewFeatureGateChecker(featuregate.NewNoop(), featuregate.Flags{
-			featuregate.CtxKeyCredits: string(featuregate.CtxKeyCredits),
-		}, map[featuregate.FeatureFlag]bool{featuregate.CtxKeyCredits: true}),
+		FeatureGate: featuregate.NewFeatureGateChecker(
+			featuregate.NewNoop(),
+			featuregate.Flags{
+				featuregate.CtxKeyCredits: string(featuregate.CtxKeyCredits),
+			},
+			map[featuregate.FeatureFlag]bool{featuregate.CtxKeyCredits: true},
+		),
 	})
 	s.NoError(err)
 	err = s.BillingService.RegisterCreateLineRouter(createLineRouter)
@@ -208,16 +308,18 @@ func (s *BaseSuite) SetupSuite() {
 		Logger:  slog.Default(),
 		Adapter: chargesAdapter,
 
-		FeatureService:        s.FeatureService,
+		FeatureMeterResolver:  s.FeatureMeterResolver,
 		MetaAdapter:           metaAdapter,
 		FlatFeeService:        flatFeeService,
 		CreditPurchaseService: creditPurchaseService,
 		UsageBasedService:     usageBasedService,
-		RecognizerService:     recognizer.NoopService{},
+		RecognizerService:     recognizerService,
 
-		BillingService:   s.BillingService,
-		TaxCodeService:   s.TaxCodeService,
-		CurrencyResolver: currencyResolver,
+		BillingService:      s.BillingService,
+		TaxCodeService:      s.TaxCodeService,
+		CurrencyResolver:    currencyResolver,
+		CustomerService:     s.CustomerService,
+		SubscriptionService: s.SubscriptionService,
 	})
 	s.NoError(err)
 	s.Charges = chargesService
@@ -305,6 +407,7 @@ func (s *BaseSuite) requireDeletedCustomCurrencyOverageLine(in requireDeletedCus
 	default:
 		s.Fail("overage reason annotation has an unexpected type")
 	}
+
 	s.Empty(in.line.DetailedLines)
 	s.RequireTotals(in.expectFiatTotals, in.line.Totals)
 }
@@ -397,6 +500,7 @@ func (s *BaseSuite) createMockChargeIntent(input createMockChargeIntentInput) ch
 			FeatureKey:     lo.EmptyableToPtr(input.featureKey),
 			SettlementMode: lo.CoalesceOrEmpty(input.settlementMode, productcatalog.CreditThenInvoiceSettlementMode),
 		}
+
 		return charges.NewChargeIntent(flatFeeIntent)
 	}
 
@@ -411,6 +515,7 @@ func (s *BaseSuite) createMockChargeIntent(input createMockChargeIntentInput) ch
 		},
 		SettlementMode: lo.CoalesceOrEmpty(input.settlementMode, productcatalog.CreditThenInvoiceSettlementMode),
 	}
+
 	return charges.NewChargeIntent(usageBasedIntent)
 }
 
@@ -432,14 +537,90 @@ func (s *BaseSuite) grantPromotionalCredits(ctx context.Context, customerID cust
 
 	res, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: customerID.Namespace,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			intent,
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 1)
 
 	return res
+}
+
+func (s *BaseSuite) newFiatCurrency(code currencyx.Code) *currencyx.FiatCurrency {
+	s.T().Helper()
+
+	fiatCurrency, err := currencyx.NewFiatCurrency(code)
+	s.Require().NoError(err)
+
+	return fiatCurrency
+}
+
+func (s *BaseSuite) newUsageBasedIntent(
+	customerID string,
+	currency currencies.Currency,
+	taxCodeID string,
+	uniqueReferenceID string,
+	featureKey string,
+	settlementMode productcatalog.SettlementMode,
+	costBasis *costbasis.Intent,
+) usagebased.Intent {
+	s.T().Helper()
+
+	period := timeutil.ClosedPeriod{
+		From: time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
+		To:   time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC),
+	}
+
+	return usagebased.Intent{
+		Intent: meta.Intent{
+			ManagedBy:         billing.ManuallyManagedLine,
+			CustomerID:        customerID,
+			Currency:          currency,
+			TaxConfig:         productcatalog.TaxCodeConfig{TaxCodeID: taxCodeID},
+			UniqueReferenceID: lo.ToPtr(uniqueReferenceID),
+		},
+		IntentMutableFields: usagebased.IntentMutableFields{
+			IntentMutableFields: meta.IntentMutableFields{
+				Name:              uniqueReferenceID,
+				ServicePeriod:     period,
+				FullServicePeriod: period,
+				BillingPeriod:     period,
+			},
+			InvoiceAt: period.To,
+			Price: *productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+				Amount: alpacadecimal.NewFromInt(1),
+			}),
+		},
+		SettlementMode: settlementMode,
+		FeatureKey:     featureKey,
+		CostBasis:      costBasis,
+	}
+}
+
+func (s *BaseSuite) createFeatureMeters(ctx context.Context, namespace, key string) featuremeterservice.FeatureMeterCollection {
+	s.T().Helper()
+
+	testMeter := newTestMeter(namespace, key+"-meter")
+	s.Require().NoError(s.MeterAdapter.ReplaceMeters(ctx, []meter.Meter{testMeter}))
+
+	feature, err := s.FeatureService.CreateFeature(ctx, featurepkg.CreateFeatureInputs{
+		Namespace: namespace,
+		Name:      key,
+		Key:       key,
+		MeterID:   lo.ToPtr(testMeter.ID),
+	})
+	s.Require().NoError(err)
+
+	featureMeter := billingfeaturemeter.FeatureMeter{
+		Feature: feature,
+		Meter:   &testMeter,
+	}
+
+	return featuremeterservice.FeatureMeterCollection{
+		ByKey: map[string]billingfeaturemeter.FeatureMeter{feature.Key: featureMeter},
+		ByID:  map[string]billingfeaturemeter.FeatureMeter{feature.ID: featureMeter},
+	}
 }
 
 func (s *BaseSuite) mustGetChargeByID(chargeID meta.ChargeID) charges.Charge {
@@ -451,5 +632,20 @@ func (s *BaseSuite) mustGetChargeByID(chargeID meta.ChargeID) charges.Charge {
 		},
 	})
 	s.NoError(err)
+
 	return charge
+}
+
+// Ledger-backed services use the same provisioned customer accounts as production.
+func (s *BaseSuite) CreateTestCustomer(ns, subjectKey string) *customer.Customer {
+	cust := s.BaseSuite.CreateTestCustomer(ns, subjectKey)
+	if s.UseRealRecognizer || s.UseRealLedgerHandlers {
+		_, err := s.LedgerDeps.ResolversService.CreateCustomerAccounts(s.T().Context(), cust.GetID())
+		s.Require().NoError(err)
+
+		_, err = s.LedgerDeps.ResolversService.EnsureBusinessAccounts(s.T().Context(), ns)
+		s.Require().NoError(err)
+	}
+
+	return cust
 }

@@ -31,7 +31,12 @@ func (c *usageBasedChargeCollection) AddCreate(target targetstate.StateItem) err
 		return err
 	}
 
-	return c.addCreate(intent)
+	return c.addCreate(intent, chargesmeta.CreateOptions{
+		// In case the subscription's feature reference is invalid, we need to surface that to the end-user by having
+		// a validation issue on the charge instead of logging the error inside the billing-worker as these errors are
+		// expected to be resolved by the end-user.
+		BypassFeatureMeterValidation: target.Subscription.SettlementMode == productcatalog.CreditThenInvoiceSettlementMode,
+	})
 }
 
 func (c *usageBasedChargeCollection) AddShrink(_ string, existing persistedstate.Item, target targetstate.StateItem) error {
@@ -78,6 +83,11 @@ func (c *usageBasedChargeCollection) AddExtend(existing persistedstate.Item, tar
 
 func newUsageBasedChargeIntent(target targetstate.StateItem) (charges.ChargeIntent, error) {
 	rateCardMeta := target.Spec.RateCard.AsMeta()
+	var featureKey string
+	if rateCardMeta.Feature != nil {
+		featureKey = lo.FromPtr(rateCardMeta.Feature.Key)
+	}
+
 	price := rateCardMeta.Price
 	if price == nil {
 		return charges.ChargeIntent{}, fmt.Errorf("price is required for usage based charge")
@@ -96,8 +106,19 @@ func newUsageBasedChargeIntent(target targetstate.StateItem) (charges.ChargeInte
 		return charges.ChargeIntent{}, err
 	}
 
+	costBasis, err := newChargeCostBasisIntent(target)
+	if err != nil {
+		return charges.ChargeIntent{}, fmt.Errorf("mapping cost basis: %w", err)
+	}
+
+	var subscriptionPlan *chargesmeta.SubscriptionPlan
+	if ref := target.Subscription.PlanRef; ref != nil {
+		subscriptionPlan = &chargesmeta.SubscriptionPlan{Key: ref.Key, Version: ref.Version}
+	}
+
 	return charges.NewChargeIntent(chargesusagebased.Intent{
 		Intent: chargesmeta.Intent{
+			SubscriptionPlan:  subscriptionPlan,
 			ManagedBy:         billing.SubscriptionManagedLine,
 			CustomerID:        target.Subscription.CustomerId,
 			Annotations:       annotations,
@@ -131,6 +152,7 @@ func newUsageBasedChargeIntent(target targetstate.StateItem) (charges.ChargeInte
 			UnitConfig: unitConfig,
 		},
 		SettlementMode: target.Subscription.SettlementMode,
-		FeatureKey:     lo.FromPtr(rateCardMeta.FeatureKey),
+		FeatureKey:     featureKey,
+		CostBasis:      costBasis,
 	}), nil
 }

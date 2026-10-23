@@ -120,6 +120,7 @@ func TestInvoiceEditFlatFeeManualOverrides(t *testing.T) {
 			if profile.Workflow.Invoicing == nil {
 				profile.Workflow.Invoicing = &v3sdk.WorkflowInvoicingSettings{}
 			}
+
 			profile.Workflow.Invoicing.AutoAdvance = lo.ToPtr(false)
 
 			sendInvoice := lo.Must(v3sdk.WorkflowPaymentSettingsFromWorkflowPaymentSendInvoiceSettings(v3sdk.WorkflowPaymentSendInvoiceSettings{
@@ -142,7 +143,7 @@ func TestInvoiceEditFlatFeeManualOverrides(t *testing.T) {
 
 		createdSubscription, err := c.Subscriptions.Create(t.Context(), v3sdk.SubscriptionCreate{
 			Customer:       v3sdk.SubscriptionChangeCustomer{ID: lo.ToPtr(customer.ID)},
-			Plan:           v3sdk.SubscriptionChangePlan{ID: lo.ToPtr(plan.ID)},
+			Plan:           &v3sdk.SubscriptionChangePlan{ID: lo.ToPtr(plan.ID)},
 			SettlementMode: lo.ToPtr(v3sdk.SettlementModeCreditThenInvoice),
 		})
 		c.requireStatus(http.StatusCreated, err)
@@ -213,6 +214,7 @@ func TestInvoiceEditFlatFeeManualOverrides(t *testing.T) {
 
 			replacementLines = append(replacementLines, lineUpdate)
 		}
+
 		replacementLines = append(replacementLines, api.InvoiceLineReplaceUpdate{
 			Name:        createdFlatFeeName,
 			Description: lo.ToPtr("Invoice Override Created Flat Fee " + prefix),
@@ -486,6 +488,7 @@ func waitForManualApprovalInvoice(t *testing.T, client *api.ClientWithResponses,
 	}, 2*time.Minute, time.Second)
 
 	require.NotEmpty(t, invoice.Id)
+
 	return getInvoiceWithDeletedLines(t, client, invoice.Id)
 }
 
@@ -595,6 +598,7 @@ func flatInvoiceLineRateCard(t *testing.T, amount string, source *api.InvoiceUsa
 		if featureKey == nil {
 			rateCard.FeatureKey = source.FeatureKey
 		}
+
 		rateCard.TaxConfig = source.TaxConfig
 	}
 
@@ -635,8 +639,8 @@ func listChargesByName(t require.TestingT, c *v3Client, customerID string, statu
 	statusValues := lo.Map(statuses, func(status v3sdk.ChargeStatus, _ int) string {
 		return string(status)
 	})
-	charges, err := c.Customers.Charges.List(c.t.Context(), customerID, v3sdk.ChargeListParams{
-		Filter: &v3sdk.ChargeFilter{
+	charges, err := c.Customers.Charges.List(c.t.Context(), customerID, v3sdk.ListCustomerChargesParams{
+		Filter: &v3sdk.ListCustomerChargesFilter{
 			Status: &v3sdk.StringExactFilter{Oeq: statusValues},
 		},
 		Page: &v3sdk.PageParams{Size: lo.ToPtr(100)},
@@ -686,17 +690,21 @@ func requireFlatFeeChargeIntentMatchesLine(t *testing.T, charges map[string]invo
 
 	assert.Equal(t, line.Name, charge.Name)
 	assert.Equal(t, line.Description, charge.Description)
-	assert.Equal(t, "USD", charge.Currency)
+	assert.Equal(t, v3sdk.BillingCurrencyCode("USD"), charge.Currency)
 	assert.Equal(t, flatInvoiceLineAmount(t, line), charge.AmountAfterProration.Amount)
-	assert.Equal(t, lo.FromPtr(line.FeatureKey), lo.FromPtr(charge.FeatureKey))
+	if line.FeatureKey != nil {
+		require.NotNil(t, charge.Feature)
+		feature, err := charge.Feature.AsFeature()
+		require.NoError(t, err)
+		assert.Equal(t, lo.FromPtr(line.FeatureKey), feature.Key)
+	}
+
 	assert.Equal(t, line.InvoiceAt, charge.InvoiceAt)
 	assert.Equal(t, line.Period.From, charge.ServicePeriod.From, "service period from")
 	assert.Equal(t, line.Period.To, charge.ServicePeriod.To, "service period to")
 
-	price, err := charge.Price.AsPriceFlat()
-	require.NoError(t, err)
-	assert.Equal(t, v3sdk.PriceTypeFlat, price.Type)
-	assert.Equal(t, flatInvoiceLineAmount(t, line), price.Amount)
+	assert.Equal(t, v3sdk.PriceTypeFlat, charge.Price.Type)
+	assert.Equal(t, flatInvoiceLineAmount(t, line), charge.Price.Amount)
 }
 
 func requireFlatFeeChargeSystemIntentMatchesLine(t *testing.T, charges map[string]invoiceOverrideCharge, name string, line api.InvoiceLine, amount string) {
@@ -817,6 +825,7 @@ func requireCustomerCreditBalance(t *testing.T, balance *v3sdk.CreditBalances, c
 func numericToFloat(t require.TestingT, value string) float64 {
 	out, err := strconv.ParseFloat(value, 64)
 	require.NoError(t, err)
+
 	return out
 }
 

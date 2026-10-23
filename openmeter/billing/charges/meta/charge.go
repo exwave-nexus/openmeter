@@ -9,6 +9,7 @@ import (
 
 	"github.com/samber/lo"
 
+	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
 	"github.com/openmeterio/openmeter/pkg/expand"
@@ -16,6 +17,12 @@ import (
 )
 
 type ChargeID models.NamespacedID
+
+type CreateOptions struct {
+	// BypassFeatureMeterValidation lets creation continue when feature-meter resolution
+	// returns validation issues, which are persisted on the charge.
+	BypassFeatureMeterValidation bool
+}
 
 func (i ChargeID) Validate() error {
 	return models.NamespacedID(i).Validate()
@@ -74,6 +81,17 @@ const (
 	ExpandRealtimeUsage       Expand = "realtime_usage"
 	ExpandDetailedLines       Expand = "detailed_lines"
 	ExpandDeletedRealizations Expand = "deleted_realizations"
+
+	// The expands below are resolved only by the customer-charge API facade
+	// (service.ListCustomerCharges); adapters and sub-services ignore them.
+
+	ExpandCustomer           Expand = "customer"
+	ExpandFeature            Expand = "feature"
+	ExpandSubscription       Expand = "subscription"
+	ExpandRealizationInvoice Expand = "realization_invoice"
+	// ExpandRealizationTotals only gates emission on the API: run totals are
+	// always persisted and loaded with the runs.
+	ExpandRealizationTotals Expand = "realization_totals"
 )
 
 func (e Expand) Values() []Expand {
@@ -82,6 +100,11 @@ func (e Expand) Values() []Expand {
 		ExpandRealtimeUsage,
 		ExpandDetailedLines,
 		ExpandDeletedRealizations,
+		ExpandCustomer,
+		ExpandFeature,
+		ExpandSubscription,
+		ExpandRealizationInvoice,
+		ExpandRealizationTotals,
 	}
 }
 
@@ -143,6 +166,7 @@ type Charge struct {
 	IntentMutableFields IntentMutableFields
 	Status              ChargeStatus
 	AdvanceAfter        *time.Time
+	ValidationIssues    billing.ValidationIssues
 }
 
 func (c Charge) Validate() error {

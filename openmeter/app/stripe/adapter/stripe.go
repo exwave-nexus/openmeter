@@ -58,7 +58,8 @@ func (a *adapter) CreateStripeApp(ctx context.Context, input appstripe.CreateApp
 			SetAPIKey(input.APIKey.ID).
 			SetStripeWebhookID(input.StripeWebhookID).
 			SetWebhookSecret(input.WebhookSecret.ID).
-			SetMaskedAPIKey(input.MaskedAPIKey)
+			SetMaskedAPIKey(input.MaskedAPIKey).
+			SetWebhookSchemaVersion(input.WebhookSchemaVersion)
 
 		dbApp, err := appStripeCreateQuery.Save(ctx)
 		if err != nil {
@@ -173,6 +174,32 @@ func (a *adapter) UpdateAPIKey(ctx context.Context, input appstripe.UpdateAPIKey
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update app status to %s for %s: %w", input.AppID.ID, status, err)
+		}
+
+		return nil
+	})
+}
+
+func (a *adapter) UpdateWebhookSchemaVersion(ctx context.Context, input appstripe.UpdateWebhookSchemaVersionInput) error {
+	if err := input.Validate(); err != nil {
+		return models.NewGenericValidationError(
+			fmt.Errorf("error update webhook schema version: %w", err),
+		)
+	}
+
+	return entutils.TransactingRepoWithNoValue(ctx, a, func(ctx context.Context, repo *adapter) error {
+		updated, err := repo.db.AppStripe.Update().
+			Where(appstripedb.Namespace(input.AppID.Namespace)).
+			Where(appstripedb.ID(input.AppID.ID)).
+			Where(appstripedb.DeletedAtIsNil()).
+			SetWebhookSchemaVersion(input.WebhookSchemaVersion).
+			Save(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to update webhook schema version: %w", err)
+		}
+
+		if updated == 0 {
+			return app.NewAppNotFoundError(input.AppID)
 		}
 
 		return nil
@@ -696,10 +723,11 @@ func (a adapter) getStripeAppClient(ctx context.Context, appID app.AppID, logOpe
 // mapAppStripeData maps stripe app data from the database
 func mapAppStripeData(appID app.AppID, dbApp *entdb.AppStripe) appstripe.AppData {
 	appData := appstripe.AppData{
-		StripeAccountID: dbApp.StripeAccountID,
-		Livemode:        dbApp.StripeLivemode,
-		MaskedAPIKey:    dbApp.MaskedAPIKey,
-		StripeWebhookID: dbApp.StripeWebhookID,
+		StripeAccountID:      dbApp.StripeAccountID,
+		Livemode:             dbApp.StripeLivemode,
+		MaskedAPIKey:         dbApp.MaskedAPIKey,
+		StripeWebhookID:      dbApp.StripeWebhookID,
+		WebhookSchemaVersion: dbApp.WebhookSchemaVersion,
 	}
 
 	if dbApp.APIKey != nil {

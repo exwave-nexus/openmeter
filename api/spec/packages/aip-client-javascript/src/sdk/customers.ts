@@ -14,11 +14,21 @@ import {
   updateCustomerBillingAppData,
   createCustomerStripeCheckoutSession,
   createCustomerStripePortalSession,
+  createCustomerEntitlement,
+  overrideCustomerEntitlement,
+  getCustomerEntitlementHistory,
+  getCustomerEntitlement,
+  listCustomerEntitlements,
+  resetCustomerEntitlementUsage,
+  deleteCustomerEntitlement,
+  createCustomerEntitlementGrant,
+  listCustomerEntitlementGrants,
   createCreditGrant,
   getCreditGrant,
   listCreditGrants,
   getCustomerCreditBalance,
   createCreditAdjustment,
+  voidCreditGrant,
   updateCreditGrantExternalSettlement,
   listCreditTransactions,
   listCustomerCharges,
@@ -45,6 +55,24 @@ import type {
   CreateCustomerStripeCheckoutSessionResponse,
   CreateCustomerStripePortalSessionRequest,
   CreateCustomerStripePortalSessionResponse,
+  CreateCustomerEntitlementRequest,
+  CreateCustomerEntitlementResponse,
+  OverrideCustomerEntitlementRequest,
+  OverrideCustomerEntitlementResponse,
+  GetCustomerEntitlementHistoryRequest,
+  GetCustomerEntitlementHistoryResponse,
+  GetCustomerEntitlementRequest,
+  GetCustomerEntitlementResponse,
+  ListCustomerEntitlementsRequest,
+  ListCustomerEntitlementsResponse,
+  ResetCustomerEntitlementUsageRequest,
+  ResetCustomerEntitlementUsageResponse,
+  DeleteCustomerEntitlementRequest,
+  DeleteCustomerEntitlementResponse,
+  CreateCustomerEntitlementGrantRequest,
+  CreateCustomerEntitlementGrantResponse,
+  ListCustomerEntitlementGrantsRequest,
+  ListCustomerEntitlementGrantsResponse,
   CreateCreditGrantRequest,
   CreateCreditGrantResponse,
   GetCreditGrantRequest,
@@ -55,6 +83,8 @@ import type {
   GetCustomerCreditBalanceResponse,
   CreateCreditAdjustmentRequest,
   CreateCreditAdjustmentResponse,
+  VoidCreditGrantRequest,
+  VoidCreditGrantResponse,
   UpdateCreditGrantExternalSettlementRequest,
   UpdateCreditGrantExternalSettlementResponse,
   ListCreditTransactionsRequest,
@@ -69,6 +99,8 @@ import type {
   CreditGrant,
   CreditTransaction,
   Customer,
+  Entitlement,
+  EntitlementGrant,
 } from '../models/types.js'
 
 export class Customers {
@@ -155,6 +187,11 @@ export class Customers {
   private _billing?: CustomersBilling
   get billing(): CustomersBilling {
     return (this._billing ??= new CustomersBilling(this._client))
+  }
+
+  private _entitlements?: CustomersEntitlements
+  get entitlements(): CustomersEntitlements {
+    return (this._entitlements ??= new CustomersEntitlements(this._client))
   }
 
   private _credits?: CustomersCredits
@@ -257,6 +294,246 @@ export class CustomersBilling {
   }
 }
 
+export class CustomersEntitlements {
+  constructor(private readonly _client: Client) {}
+
+  /**
+   * Create customer entitlement
+   *
+   * Create an entitlement for the customer.
+   *
+   * A customer can have only one active entitlement per feature. The feature must be
+   * compatible with the entitlement type. Entitlements cannot be modified after
+   * creation, only deleted.
+   *
+   * POST /openmeter/customers/{customerId}/entitlements
+   */
+  async create(
+    request: CreateCustomerEntitlementRequest,
+    options?: RequestOptions,
+  ): Promise<CreateCustomerEntitlementResponse> {
+    return unwrap(
+      await createCustomerEntitlement(this._client, request, options),
+    )
+  }
+
+  /**
+   * Override customer entitlement
+   *
+   * Override an entitlement of the customer with a new one.
+   *
+   * The referenced entitlement ends and the new one starts at the same instant, so
+   * access continues without a gap. Both must belong to the same feature. Use this
+   * for upgrades and downgrades.
+   *
+   * Fails if the referenced entitlement does not exist, is deleted, or is no longer
+   * active.
+   *
+   * PUT /openmeter/customers/{customerId}/entitlements/{entitlementId}/override
+   */
+  async override(
+    request: OverrideCustomerEntitlementRequest,
+    options?: RequestOptions,
+  ): Promise<OverrideCustomerEntitlementResponse> {
+    return unwrap(
+      await overrideCustomerEntitlement(this._client, request, options),
+    )
+  }
+
+  /**
+   * Get customer entitlement history
+   *
+   * Get the balance and usage history of a metered entitlement. The queried range
+   * may span multiple usage periods.
+   *
+   * `windowed_history` groups usage into windows of the requested size and reports
+   * the balance at the start of each window. `burndown_history` lists the periods in
+   * which grants were consumed in a fixed order, together with the usage taken from
+   * each grant.
+   *
+   * GET /openmeter/customers/{customerId}/entitlements/{entitlementId}/history
+   */
+  async getHistory(
+    request: GetCustomerEntitlementHistoryRequest,
+    options?: RequestOptions,
+  ): Promise<GetCustomerEntitlementHistoryResponse> {
+    return unwrap(
+      await getCustomerEntitlementHistory(this._client, request, options),
+    )
+  }
+
+  /**
+   * Get customer entitlement
+   *
+   * Get an entitlement of the customer by ID. For checking entitlement access, use
+   * the entitlement access endpoints instead.
+   *
+   * GET /openmeter/customers/{customerId}/entitlements/{entitlementId}
+   */
+  async get(
+    request: GetCustomerEntitlementRequest,
+    options?: RequestOptions,
+  ): Promise<GetCustomerEntitlementResponse> {
+    return unwrap(await getCustomerEntitlement(this._client, request, options))
+  }
+
+  /**
+   * List customer entitlements
+   *
+   * List the entitlements of the customer that are active at the time of the
+   * request. For checking entitlement access, use the entitlement access endpoints
+   * instead.
+   *
+   * GET /openmeter/customers/{customerId}/entitlements
+   */
+  async list(
+    request: ListCustomerEntitlementsRequest,
+    options?: RequestOptions,
+  ): Promise<ListCustomerEntitlementsResponse> {
+    return unwrap(
+      await listCustomerEntitlements(this._client, request, options),
+    )
+  }
+
+  /**
+   * List customer entitlements
+   *
+   * List the entitlements of the customer that are active at the time of the
+   * request. For checking entitlement access, use the entitlement access endpoints
+   * instead.
+   *
+   * Iterates every item across all pages, fetching more as the returned iterable is consumed.
+   *
+   * GET /openmeter/customers/{customerId}/entitlements
+   */
+  listAll(
+    request: ListCustomerEntitlementsRequest,
+    options?: RequestOptions,
+  ): AsyncIterable<Entitlement> {
+    return paginatePages(
+      (req, opts) => listCustomerEntitlements(this._client, req, opts),
+      request,
+      options,
+    )
+  }
+
+  /**
+   * Reset customer entitlement usage
+   *
+   * Reset the usage of a metered entitlement. The reset starts a new usage period:
+   * usage is zeroed and grants roll over according to their rollover settings.
+   *
+   * Usage is reset automatically at the end of each usage period. Use this operation
+   * to reset it earlier, for example to align the entitlement with the customer's
+   * billing period. The usage period anchor can be moved at the same time.
+   *
+   * POST /openmeter/customers/{customerId}/entitlements/{entitlementId}/reset
+   */
+  async resetUsage(
+    request: ResetCustomerEntitlementUsageRequest,
+    options?: RequestOptions,
+  ): Promise<ResetCustomerEntitlementUsageResponse> {
+    return unwrap(
+      await resetCustomerEntitlementUsage(this._client, request, options),
+    )
+  }
+
+  /**
+   * Delete customer entitlement
+   *
+   * Deletes the entitlement and revokes access to its feature. A customer can hold
+   * only one active entitlement per feature, so migrating a feature requires
+   * deleting the previous entitlement first.
+   *
+   * Deletion sets the `deleted_at` timestamp instead of removing history. Access and
+   * status queries for earlier points in time still treat the entitlement as active,
+   * so access changes are never retroactive.
+   *
+   * DELETE /openmeter/customers/{customerId}/entitlements/{entitlementId}
+   */
+  async delete(
+    request: DeleteCustomerEntitlementRequest,
+    options?: RequestOptions,
+  ): Promise<DeleteCustomerEntitlementResponse> {
+    return unwrap(
+      await deleteCustomerEntitlement(this._client, request, options),
+    )
+  }
+
+  private _grants?: CustomersEntitlementsGrants
+  get grants(): CustomersEntitlementsGrants {
+    return (this._grants ??= new CustomersEntitlementsGrants(this._client))
+  }
+}
+
+export class CustomersEntitlementsGrants {
+  constructor(private readonly _client: Client) {}
+
+  /**
+   * Create customer entitlement grant
+   *
+   * Issue a grant for a metered entitlement of the customer. Boolean and static
+   * entitlements cannot have grants, so the request is rejected for them.
+   *
+   * Grants are immutable. The amount is added to the balance from `effective_at`,
+   * which cannot be earlier than the start of the current usage period.
+   *
+   * POST /openmeter/customers/{customerId}/entitlements/{entitlementId}/grants
+   */
+  async create(
+    request: CreateCustomerEntitlementGrantRequest,
+    options?: RequestOptions,
+  ): Promise<CreateCustomerEntitlementGrantResponse> {
+    return unwrap(
+      await createCustomerEntitlementGrant(this._client, request, options),
+    )
+  }
+
+  /**
+   * List customer entitlement grants
+   *
+   * List the grants issued for an entitlement of the customer. Grants only exist for
+   * metered entitlements, so the list is empty for boolean and static entitlements.
+   *
+   * Deleted grants are excluded unless `include_deleted` is set. Voided and expired
+   * grants are always included, as they are part of the balance history.
+   *
+   * GET /openmeter/customers/{customerId}/entitlements/{entitlementId}/grants
+   */
+  async list(
+    request: ListCustomerEntitlementGrantsRequest,
+    options?: RequestOptions,
+  ): Promise<ListCustomerEntitlementGrantsResponse> {
+    return unwrap(
+      await listCustomerEntitlementGrants(this._client, request, options),
+    )
+  }
+
+  /**
+   * List customer entitlement grants
+   *
+   * List the grants issued for an entitlement of the customer. Grants only exist for
+   * metered entitlements, so the list is empty for boolean and static entitlements.
+   *
+   * Deleted grants are excluded unless `include_deleted` is set. Voided and expired
+   * grants are always included, as they are part of the balance history.
+   *
+   * Iterates every item across all pages, fetching more as the returned iterable is consumed.
+   *
+   * GET /openmeter/customers/{customerId}/entitlements/{entitlementId}/grants
+   */
+  listAll(
+    request: ListCustomerEntitlementGrantsRequest,
+    options?: RequestOptions,
+  ): AsyncIterable<EntitlementGrant> {
+    return paginatePages(
+      (req, opts) => listCustomerEntitlementGrants(this._client, req, opts),
+      request,
+      options,
+    )
+  }
+}
+
 export class CustomersCredits {
   constructor(private readonly _client: Client) {}
 
@@ -347,6 +624,28 @@ export class CustomersCreditsGrants {
       request,
       options,
     )
+  }
+
+  /**
+   * Void credit grant
+   *
+   * Void a credit grant, forfeiting the remaining unused balance.
+   *
+   * Voiding is a forward-looking, irreversible operation. Credits already consumed
+   * by usage remain unaffected — only the remaining balance is forfeited. The grant
+   * reads as `voided` status afterwards. Payment state is not adjusted when
+   * `payment_adjustment` is `none`, so invoice-backed or externally collected
+   * payments may still collect the original amount. Only `active` grants can be
+   * voided; voiding a pending, expired, or fully consumed grant returns a conflict.
+   * Retrying a successful void is an idempotent success.
+   *
+   * POST /openmeter/customers/{customerId}/credits/grants/{creditGrantId}/void
+   */
+  async void(
+    request: VoidCreditGrantRequest,
+    options?: RequestOptions,
+  ): Promise<VoidCreditGrantResponse> {
+    return unwrap(await voidCreditGrant(this._client, request, options))
   }
 
   /**

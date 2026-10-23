@@ -56,6 +56,7 @@ const (
 	StandardInvoiceStatusDraftUpdating             StandardInvoiceStatus = "draft.updating"
 	StandardInvoiceStatusDraftManualApprovalNeeded StandardInvoiceStatus = "draft.manual_approval_needed"
 	StandardInvoiceStatusDraftValidating           StandardInvoiceStatus = "draft.validating"
+	StandardInvoiceStatusDraftInvalidCreated       StandardInvoiceStatus = "draft.invalid_created"
 	StandardInvoiceStatusDraftInvalid              StandardInvoiceStatus = "draft.invalid"
 	StandardInvoiceStatusDraftSyncing              StandardInvoiceStatus = "draft.syncing"
 	StandardInvoiceStatusDraftSyncFailed           StandardInvoiceStatus = "draft.sync_failed"
@@ -106,6 +107,7 @@ var validStatuses = []StandardInvoiceStatus{
 	StandardInvoiceStatusDraftUpdating,
 	StandardInvoiceStatusDraftManualApprovalNeeded,
 	StandardInvoiceStatusDraftValidating,
+	StandardInvoiceStatusDraftInvalidCreated,
 	StandardInvoiceStatusDraftInvalid,
 	StandardInvoiceStatusDraftSyncing,
 	StandardInvoiceStatusDraftSyncFailed,
@@ -179,6 +181,8 @@ func (s StandardInvoiceStatus) MatchesInvoiceStatus(status StandardInvoiceStatus
 }
 
 var failedStatuses = []StandardInvoiceStatus{
+	StandardInvoiceStatusDraftInvalidCreated,
+	StandardInvoiceStatusDraftInvalid,
 	StandardInvoiceStatusDraftSyncFailed,
 	StandardInvoiceStatusIssuingLineFinalizationFailed,
 	StandardInvoiceStatusIssuingSyncFailed,
@@ -229,6 +233,7 @@ func (s InvoiceShortStatus) Values() []InvoiceShortStatus {
 		StandardInvoiceStatusDeleteFailed,
 		StandardInvoiceStatusDeleted,
 	}
+
 	return lo.Uniq(lo.Map(lo.Without(validStatuses, unsupportedStatuses...), func(st StandardInvoiceStatus, _ int) InvoiceShortStatus {
 		return InvoiceShortStatus(st.ShortStatus())
 	}))
@@ -351,7 +356,10 @@ func (i StandardInvoiceBase) GetCustomerID() customer.CustomerID {
 	}
 }
 
-var _ GenericInvoice = (*StandardInvoice)(nil)
+var (
+	_ GenericInvoice          = (*StandardInvoice)(nil)
+	_ ValidationIssueAppender = (*StandardInvoice)(nil)
+)
 
 type StandardInvoice struct {
 	StandardInvoiceBase `json:",inline"`
@@ -439,11 +447,16 @@ func (i *StandardInvoice) SetLines(lines []GenericInvoiceLine) error {
 	}
 
 	i.Lines = NewStandardInvoiceLines(mappedLines)
+
 	return nil
 }
 
 func (i *StandardInvoice) UnsetLines() {
 	i.Lines = StandardInvoiceLines{}
+}
+
+func (i *StandardInvoice) AppendValidationIssues(issues ...ValidationIssue) {
+	i.ValidationIssues = append(i.ValidationIssues, issues...)
 }
 
 func (i *StandardInvoice) MergeValidationIssues(errIn error, reportingComponent ComponentName) error {
@@ -492,7 +505,6 @@ func (i *StandardInvoice) getLeafLines() DetailedLines {
 
 	for _, line := range i.Lines.OrEmpty() {
 		// Skip non leaf nodes
-
 		out = append(out, line.DetailedLines...)
 	}
 
@@ -531,7 +543,11 @@ func (i StandardInvoice) Clone() (StandardInvoice, error) {
 	}
 
 	clone.Lines = clonedLines
-	clone.ValidationIssues = i.ValidationIssues.Clone()
+	clone.ValidationIssues, err = i.ValidationIssues.Clone()
+	if err != nil {
+		return StandardInvoice{}, fmt.Errorf("cloning validation issues: %w", err)
+	}
+
 	clone.Totals = i.Totals
 
 	return clone, nil
@@ -637,6 +653,7 @@ func (c *StandardInvoiceLines) ReplaceByID(id string, newLine *StandardLine) boo
 
 			lines[i] = newLine
 			lines[i].DBState = originalDBState
+
 			return true
 		}
 	}
@@ -732,14 +749,6 @@ func (c *StandardInvoiceLines) RemoveByID(id string) bool {
 	)
 
 	return true
-}
-
-func (c StandardInvoiceLines) GetReferencedFeatureKeys() ([]string, error) {
-	if c.IsAbsent() {
-		return nil, nil
-	}
-
-	return c.OrEmpty().GetReferencedFeatureKeys()
 }
 
 type StandardInvoiceAvailableActions struct {
@@ -1261,16 +1270,10 @@ type CreateStandardInvoiceFromGatheringLinesInput struct {
 	Currency    currencyx.FiatCode
 	Description *string
 
-	Lines                       GatheringLines
-	PostCreationCalculationHook PostCreationCalculationHook
-	ForceAsyncAdvance           bool
+	Lines             GatheringLines
+	ValidationIssues  ValidationIssues
+	ForceAsyncAdvance bool
 }
-
-type (
-	PostCreationCalculationHook func(StandardInvoice, StandardLine) (LineMutators, error)
-	LineMutator                 func(*StandardLine) error
-	LineMutators                = []LineMutator
-)
 
 func (i CreateStandardInvoiceFromGatheringLinesInput) Validate() error {
 	var errs []error
@@ -1308,10 +1311,3 @@ type (
 	StandardInvoiceHook  = models.ServiceHook[StandardInvoice]
 	StandardInvoiceHooks = models.ServiceHookRegistry[StandardInvoice]
 )
-
-func NewSetCreditsAppliedOperation(creditsApplied CreditsApplied) LineMutator {
-	return func(line *StandardLine) error {
-		line.CreditsApplied = creditsApplied
-		return nil
-	}
-}

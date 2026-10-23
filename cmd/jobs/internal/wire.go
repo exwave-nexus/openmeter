@@ -14,6 +14,7 @@ import (
 	"github.com/openmeterio/openmeter/app/common"
 	"github.com/openmeterio/openmeter/app/config"
 	"github.com/openmeterio/openmeter/openmeter/app"
+	appcustominvoicing "github.com/openmeterio/openmeter/openmeter/app/custominvoicing"
 	appstripe "github.com/openmeterio/openmeter/openmeter/app/stripe"
 	chargesworkeradvance "github.com/openmeterio/openmeter/openmeter/billing/charges/worker/advance"
 	billingworkerautoadvance "github.com/openmeterio/openmeter/openmeter/billing/worker/advance"
@@ -39,8 +40,13 @@ type Application struct {
 	common.GlobalInitializer
 	common.Migrator
 
-	App                           app.Service
-	AppStripe                     appstripe.Service
+	App       app.Service
+	AppStripe appstripe.Service
+	// Constructing the custom invoicing service registers its marketplace
+	// listing; without it the subscription sync reconciler cannot resolve
+	// a billing profile driven by the custom_invoicing app
+	// ("listing with type not found: custom_invoicing").
+	AppCustomInvoicing            appcustominvoicing.Service
 	AppSandboxProvisioner         common.AppSandboxProvisioner
 	Customer                      customer.Service
 	BillingRegistry               common.BillingRegistry

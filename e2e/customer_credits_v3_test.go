@@ -43,6 +43,171 @@ func TestV3CustomerCreditBalanceTimestampParamParsing(t *testing.T) {
 	})
 }
 
+func TestV3CustomerCreditTransactionBalancesAcrossCurrencies(t *testing.T) {
+	c := newV3Client(t)
+	prefix := uniqueKey("credit_transactions_currencies")
+
+	// given:
+	// - one customer receives promotional credits in USD and EUR
+	// - an in-advance credit-only fee then consumes part of each balance
+	customer, err := c.Customers.Create(t.Context(), v3sdk.CreateCustomerRequest{
+		Key:      prefix + "_customer",
+		Name:     "Multi-currency Credit Transaction Customer " + prefix,
+		Currency: lo.ToPtr("USD"),
+	})
+	c.requireStatus(http.StatusCreated, err)
+	require.NotNil(t, customer)
+
+	_, err = c.Customers.Credits.Grants.Create(t.Context(), customer.ID, v3sdk.CreateCreditGrantRequest{
+		Name:          "USD promotional credits " + prefix,
+		Amount:        "100",
+		Currency:      v3sdk.BillingCurrencyCode("USD"),
+		FundingMethod: v3sdk.CreditFundingMethodNone,
+	})
+	c.requireStatus(http.StatusCreated, err)
+
+	_, err = c.Customers.Credits.Grants.Create(t.Context(), customer.ID, v3sdk.CreateCreditGrantRequest{
+		Name:          "EUR promotional credits " + prefix,
+		Amount:        "80",
+		Currency:      v3sdk.BillingCurrencyCode("EUR"),
+		FundingMethod: v3sdk.CreditFundingMethodNone,
+	})
+	c.requireStatus(http.StatusCreated, err)
+
+	// Capture the in-advance service start after both grants so the fees are due
+	// immediately while still being booked after the credits they consume.
+	servicePeriodStart := time.Now().UTC().Truncate(time.Microsecond)
+	servicePeriod := v3sdk.ClosedPeriod{
+		From: servicePeriodStart,
+		To:   servicePeriodStart.Add(30 * 24 * time.Hour),
+	}
+
+	usdCharge, err := v3sdk.CreateChargeRequestFromCreateChargeFlatFeeRequest(v3sdk.CreateChargeFlatFeeRequest{
+		Name:           "USD in-advance fee " + prefix,
+		Type:           v3sdk.ChargeTypeFlatFee,
+		Currency:       "USD",
+		InvoiceAt:      servicePeriod.From,
+		ServicePeriod:  servicePeriod,
+		SettlementMode: v3sdk.SettlementModeCreditOnly,
+		PaymentTerm:    v3sdk.PricePaymentTermInAdvance,
+		ProrationConfiguration: v3sdk.RateCardProrationConfiguration{
+			Mode: v3sdk.RateCardProrationModeNoProration,
+		},
+		AmountBeforeProration: v3sdk.CurrencyAmount{Amount: "30", Currency: "USD"},
+	})
+	require.NoError(t, err)
+	createdUSDCharge, err := c.Customers.Charges.Create(t.Context(), customer.ID, usdCharge)
+	c.requireStatus(http.StatusCreated, err)
+	require.NotNil(t, createdUSDCharge)
+	createdUSDFlatFee, err := createdUSDCharge.AsChargeFlatFee()
+	require.NoError(t, err)
+	require.Equal(t, v3sdk.ChargeStatusFinal, createdUSDFlatFee.Status)
+
+	eurCharge, err := v3sdk.CreateChargeRequestFromCreateChargeFlatFeeRequest(v3sdk.CreateChargeFlatFeeRequest{
+		Name:           "EUR in-advance fee " + prefix,
+		Type:           v3sdk.ChargeTypeFlatFee,
+		Currency:       "EUR",
+		InvoiceAt:      servicePeriod.From,
+		ServicePeriod:  servicePeriod,
+		SettlementMode: v3sdk.SettlementModeCreditOnly,
+		PaymentTerm:    v3sdk.PricePaymentTermInAdvance,
+		ProrationConfiguration: v3sdk.RateCardProrationConfiguration{
+			Mode: v3sdk.RateCardProrationModeNoProration,
+		},
+		AmountBeforeProration: v3sdk.CurrencyAmount{Amount: "20", Currency: "EUR"},
+	})
+	require.NoError(t, err)
+	createdEURCharge, err := c.Customers.Charges.Create(t.Context(), customer.ID, eurCharge)
+	c.requireStatus(http.StatusCreated, err)
+	require.NotNil(t, createdEURCharge)
+	createdEURFlatFee, err := createdEURCharge.AsChargeFlatFee()
+	require.NoError(t, err)
+	require.Equal(t, v3sdk.ChargeStatusFinal, createdEURFlatFee.Status)
+
+	// when:
+	// - the customer's complete transaction history is listed without a currency filter
+	transactions, err := c.Customers.Credits.Transactions.List(t.Context(), customer.ID, v3sdk.CreditTransactionListParams{})
+	c.requireStatus(http.StatusOK, err)
+	require.NotNil(t, transactions)
+	require.Len(t, transactions.Data, 4)
+
+	// then:
+	// - the shared chronological stream reconstructs an independent balance chain for each currency
+	type transactionBalance struct {
+		Type   v3sdk.CreditTransactionType
+		Amount v3sdk.Numeric
+		Before v3sdk.Numeric
+		After  v3sdk.Numeric
+	}
+
+	byCurrency := map[v3sdk.BillingCurrencyCode][]transactionBalance{}
+	for _, transaction := range transactions.Data {
+		byCurrency[transaction.Currency] = append(byCurrency[transaction.Currency], transactionBalance{
+			Type:   transaction.Type,
+			Amount: transaction.Amount,
+			Before: transaction.AvailableBalance.Before,
+			After:  transaction.AvailableBalance.After,
+		})
+	}
+
+	require.Equal(t, map[v3sdk.BillingCurrencyCode][]transactionBalance{
+		"USD": {
+			{Type: v3sdk.CreditTransactionTypeConsumed, Amount: "-30", Before: "100", After: "70"},
+			{Type: v3sdk.CreditTransactionTypeFunded, Amount: "100", Before: "0", After: "100"},
+		},
+		"EUR": {
+			{Type: v3sdk.CreditTransactionTypeConsumed, Amount: "-20", Before: "80", After: "60"},
+			{Type: v3sdk.CreditTransactionTypeFunded, Amount: "80", Before: "0", After: "80"},
+		},
+	}, byCurrency)
+}
+
+func TestV3CustomerCreditCustomCurrencyReference(t *testing.T) {
+	c := newV3Client(t)
+	prefix := uniqueKey("credit_custom_currency_reference")
+
+	// given:
+	// - a customer receives promotional credits in a managed custom currency
+	customCurrency := createCustomCurrency(t, c, uniqueCustomCurrencyCode("cc"))
+	customer, err := c.Customers.Create(t.Context(), v3sdk.CreateCustomerRequest{
+		Key:      prefix + "_customer",
+		Name:     "Custom Currency Credit Customer " + prefix,
+		Currency: lo.ToPtr("USD"),
+	})
+	c.requireStatus(http.StatusCreated, err)
+	require.NotNil(t, customer)
+
+	_, err = c.Customers.Credits.Grants.Create(t.Context(), customer.ID, v3sdk.CreateCreditGrantRequest{
+		Name:          "Custom currency promotional credits " + prefix,
+		Amount:        "10",
+		Currency:      v3sdk.BillingCurrencyCode(customCurrency.Code),
+		FundingMethod: v3sdk.CreditFundingMethodNone,
+	})
+	c.requireStatus(http.StatusCreated, err)
+
+	// when:
+	// - the balance and transaction history are read through the generated SDK
+	balances, err := c.Customers.Credits.Balance.Get(t.Context(), customer.ID, v3sdk.GetCustomerCreditBalanceParams{})
+	c.requireStatus(http.StatusOK, err)
+	require.NotNil(t, balances)
+	require.Len(t, balances.Balances, 1)
+
+	transactions, err := c.Customers.Credits.Transactions.List(t.Context(), customer.ID, v3sdk.CreditTransactionListParams{})
+	c.requireStatus(http.StatusOK, err)
+	require.NotNil(t, transactions)
+	require.Len(t, transactions.Data, 1)
+
+	// then:
+	// - both response models carry the custom currency as a nested resource reference
+	assert.Equal(t, v3sdk.BillingCurrencyCode(customCurrency.Code), balances.Balances[0].Currency)
+	require.NotNil(t, balances.Balances[0].CustomCurrency)
+	assert.Equal(t, customCurrency.ID, balances.Balances[0].CustomCurrency.ID)
+
+	assert.Equal(t, v3sdk.BillingCurrencyCode(customCurrency.Code), transactions.Data[0].Currency)
+	require.NotNil(t, transactions.Data[0].CustomCurrency)
+	assert.Equal(t, customCurrency.ID, transactions.Data[0].CustomCurrency.ID)
+}
+
 // TestV3CreateCreditGrantMissingTaxCode verifies the documented contract for
 // create-credit-grant: referencing a tax code that does not exist is rejected
 // with HTTP 400 (a validation error), not a 412/500. The OpenAPI spec documents
@@ -68,8 +233,8 @@ func TestV3CreateCreditGrantMissingTaxCode(t *testing.T) {
 		Amount:        v3sdk.Numeric("10"),
 		Currency:      currency,
 		FundingMethod: v3sdk.CreditFundingMethodNone,
-		TaxConfig: &v3sdk.CreditGrantTaxConfig{
-			TaxCode: &v3sdk.TaxCodeReference{ID: missingTaxCode},
+		TaxConfig: &v3sdk.TaxCodeConfig{
+			Code: &v3sdk.TaxCodeReference{ID: missingTaxCode},
 		},
 	})
 
@@ -85,6 +250,7 @@ func TestV3CreateCreditGrantMissingTaxCode(t *testing.T) {
 			mentionsTaxCode = true
 		}
 	}
+
 	assert.True(t, mentionsTaxCode, "response should name the missing tax code, problem: %+v", problem)
 }
 
@@ -100,6 +266,7 @@ func TestV3CreateCreditGrantIdempotencyKey(t *testing.T) {
 		})
 		c.requireStatus(http.StatusCreated, err)
 		require.NotNil(t, customer)
+
 		return customer.ID
 	}
 
@@ -290,11 +457,26 @@ func TestV3VoidCreditGrant(t *testing.T) {
 		require.NotNil(t, all)
 
 		typeCounts := map[v3sdk.CreditTransactionType]int{}
+		fundedByID := map[string]v3sdk.CreditTransaction{}
 		for _, tx := range all.Data {
 			typeCounts[tx.Type]++
+			if tx.Type == v3sdk.CreditTransactionTypeFunded {
+				fundedByID[tx.ID] = tx
+			}
 		}
+
 		assert.Equal(t, 2, typeCounts[v3sdk.CreditTransactionTypeFunded])
 		assert.Equal(t, 1, typeCounts[txType])
+
+		voidedFunding, ok := fundedByID[grant.ID]
+		require.True(t, ok)
+		require.NotNil(t, voidedFunding.Labels)
+		assert.Equal(t, "true", voidedFunding.Labels["voided"])
+
+		activeFunding, ok := fundedByID[keptGrant.ID]
+		require.True(t, ok)
+		require.NotNil(t, activeFunding.Labels)
+		assert.NotContains(t, activeFunding.Labels, "voided")
 	})
 
 	t.Run("voiding an unknown grant is a 404", func(t *testing.T) {
@@ -436,5 +618,110 @@ func TestV3CreditGrantKeyReadAndFilter(t *testing.T) {
 		c.requireStatus(http.StatusOK, err)
 		require.NotNil(t, list)
 		require.Empty(t, list.Data)
+	})
+}
+
+func TestV3CreateCreditGrantCostBasis(t *testing.T) {
+	c := newV3Client(t)
+	currency := v3sdk.BillingCurrencyCode("USD")
+
+	customer, err := c.Customers.Create(t.Context(), v3sdk.CreateCustomerRequest{
+		Key:      uniqueKey("credit_grant_cost_basis_customer"),
+		Name:     "Credit Grant Cost Basis Test Customer",
+		Currency: lo.ToPtr("USD"),
+	})
+	c.requireStatus(http.StatusCreated, err)
+	require.NotNil(t, customer)
+
+	manualCostBasis := func(fiatCurrency *string) *v3sdk.ChargeCostBasis {
+		costBasis, err := v3sdk.ChargeCostBasisFromChargeCostBasisManual(v3sdk.ChargeCostBasisManual{
+			Type:         v3sdk.ChargeCostBasisTypeManual,
+			FiatCurrency: fiatCurrency,
+			Rate:         v3sdk.Numeric("0.5"),
+		})
+		require.NoError(t, err)
+
+		return &costBasis
+	}
+
+	grant := func(purchase v3sdk.CreateCreditGrantPurchase) v3sdk.CreateCreditGrantRequest {
+		return v3sdk.CreateCreditGrantRequest{
+			Name:          "cost basis grant",
+			Amount:        v3sdk.Numeric("10"),
+			Currency:      currency,
+			FundingMethod: v3sdk.CreditFundingMethodExternal,
+			Purchase:      &purchase,
+		}
+	}
+
+	requireHalfRate := func(t *testing.T, created *v3sdk.CreditGrant) {
+		t.Helper()
+
+		require.NotNil(t, created)
+		require.NotNil(t, created.Purchase)
+		require.Equal(t, "USD", created.Purchase.Currency)
+		require.Equal(t, v3sdk.Numeric("0.5"), lo.FromPtr(created.Purchase.PerUnitCostBasis))
+		require.Equal(t, v3sdk.Numeric("5"), lo.FromPtr(created.Purchase.Amount))
+		require.NotNil(t, created.Purchase.ResolvedCostBasis)
+		require.Equal(t, "USD", created.Purchase.ResolvedCostBasis.FiatCurrency)
+		require.Equal(t, v3sdk.Numeric("0.5"), created.Purchase.ResolvedCostBasis.Rate)
+		require.Nil(t, created.Purchase.ResolvedCostBasis.CostBasisID)
+	}
+
+	t.Run("manual cost basis without fiat currency", func(t *testing.T) {
+		created, err := c.Customers.Credits.Grants.Create(t.Context(), customer.ID, grant(v3sdk.CreateCreditGrantPurchase{
+			Currency:  "USD",
+			CostBasis: manualCostBasis(nil),
+		}))
+		c.requireStatus(http.StatusCreated, err)
+		requireHalfRate(t, created)
+	})
+
+	t.Run("manual cost basis with a fiat currency is rejected on a fiat grant", func(t *testing.T) {
+		_, err := c.Customers.Credits.Grants.Create(t.Context(), customer.ID, grant(v3sdk.CreateCreditGrantPurchase{
+			Currency:  "USD",
+			CostBasis: manualCostBasis(lo.ToPtr("USD")),
+		}))
+		requireProblem(t, err, http.StatusBadRequest)
+	})
+
+	t.Run("deprecated per unit cost basis", func(t *testing.T) {
+		created, err := c.Customers.Credits.Grants.Create(t.Context(), customer.ID, grant(v3sdk.CreateCreditGrantPurchase{
+			Currency:         "USD",
+			PerUnitCostBasis: lo.ToPtr(v3sdk.Numeric("0.5")),
+		}))
+		c.requireStatus(http.StatusCreated, err)
+		requireHalfRate(t, created)
+	})
+
+	t.Run("manual cost basis in another currency is rejected", func(t *testing.T) {
+		_, err := c.Customers.Credits.Grants.Create(t.Context(), customer.ID, grant(v3sdk.CreateCreditGrantPurchase{
+			Currency:  "USD",
+			CostBasis: manualCostBasis(lo.ToPtr("EUR")),
+		}))
+		requireProblem(t, err, http.StatusBadRequest)
+	})
+
+	t.Run("both rate inputs are rejected", func(t *testing.T) {
+		_, err := c.Customers.Credits.Grants.Create(t.Context(), customer.ID, grant(v3sdk.CreateCreditGrantPurchase{
+			Currency:         "USD",
+			PerUnitCostBasis: lo.ToPtr(v3sdk.Numeric("0.5")),
+			CostBasis:        manualCostBasis(nil),
+		}))
+		requireProblem(t, err, http.StatusBadRequest)
+	})
+
+	t.Run("dynamic cost basis on a fiat grant is rejected", func(t *testing.T) {
+		costBasis, err := v3sdk.ChargeCostBasisFromChargeCostBasisDynamic(v3sdk.ChargeCostBasisDynamic{
+			Type:         v3sdk.ChargeCostBasisTypeDynamic,
+			FiatCurrency: "USD",
+		})
+		require.NoError(t, err)
+
+		_, err = c.Customers.Credits.Grants.Create(t.Context(), customer.ID, grant(v3sdk.CreateCreditGrantPurchase{
+			Currency:  "USD",
+			CostBasis: &costBasis,
+		}))
+		requireProblem(t, err, http.StatusBadRequest)
 	})
 }

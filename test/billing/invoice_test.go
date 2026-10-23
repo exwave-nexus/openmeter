@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -43,8 +44,151 @@ type InvoicingTestSuite struct {
 	BaseSuite
 }
 
+type countingAPIEditLineEngine struct {
+	billing.LineEngine
+	callCount int
+}
+
+func (e *countingAPIEditLineEngine) OnMutableInvoiceLinesEditedViaAPI(ctx context.Context, input billing.OnMutableInvoiceUpdateInput) (billing.OnMutableInvoiceUpdateResult, error) {
+	e.callCount++
+
+	return e.LineEngine.OnMutableInvoiceLinesEditedViaAPI(ctx, input)
+}
+
 func TestInvoicing(t *testing.T) {
 	suite.Run(t, new(InvoicingTestSuite))
+}
+
+func (s *InvoicingTestSuite) TestSimulateInvoiceFeatureMeterValidation() {
+	ctx := s.T().Context()
+	namespace := s.GetUniqueNamespace("ns-simulate-invoice-feature-meter-validation")
+	sandboxApp := s.InstallSandboxApp(s.T(), namespace)
+	s.ProvisionBillingProfile(ctx, namespace, sandboxApp.GetID())
+	customerEntity := s.CreateTestCustomer(namespace, "test-customer")
+
+	now := time.Now().Truncate(time.Microsecond).UTC()
+	newLine := func(featureKey string) *billing.StandardLine {
+		return billing.NewFlatFeeLine(billing.NewFlatFeeLineInput{
+			Namespace:     namespace,
+			Period:        timeutil.ClosedPeriod{From: now.Add(-time.Hour), To: now},
+			InvoiceAt:     now,
+			Name:          "simulate line",
+			PerUnitAmount: alpacadecimal.NewFromInt(10),
+			PaymentTerm:   productcatalog.InAdvancePaymentTerm,
+			ManagedBy:     billing.ManuallyManagedLine,
+		}, billing.WithFeatureKey(featureKey))
+	}
+
+	s.Run("rating warnings preserve caller input", func() {
+		// Given supplied negative usage and a missing feature on a transient line.
+		line := newLine("missing-feature")
+		line.UsageBased.MeteredQuantity = lo.ToPtr(alpacadecimal.NewFromInt(-5))
+		line.UsageBased.MeteredPreLinePeriodQuantity = lo.ToPtr(alpacadecimal.Zero)
+		before, err := json.Marshal(line)
+		s.Require().NoError(err)
+
+		// When simulation validates the feature and rates supplied quantities.
+		invoice, err := s.BillingService.SimulateInvoice(ctx, billing.SimulateInvoiceInput{
+			Namespace:  namespace,
+			CustomerID: &customerEntity.ID,
+			Currency:   currencyx.FiatCode(currency.USD),
+			Lines:      billing.NewStandardInvoiceLines(billing.StandardLines{line}),
+		})
+		s.Require().NoError(err)
+
+		// Then both issue channels survive, and normalization leaves the input intact.
+		s.Equal(billing.StandardInvoiceStatusDraftInvalid, invoice.Status)
+		s.Equal(float64(10), invoice.Totals.Total.InexactFloat64())
+		s.Require().Len(invoice.ValidationIssues, 2)
+		warning, found := lo.Find(invoice.ValidationIssues, func(issue billing.ValidationIssue) bool {
+			return issue.Code == billing.WarnNegativeMeteredQuantityClamped.Code
+		})
+		s.Require().True(found)
+		s.Equal(billing.LineEngineValidationComponent(billing.LineEngineTypeInvoice), warning.Component)
+		s.Equal(invoice.Lines.OrEmpty()[0].ID, warning.Attributes[billing.AttributeKeyLineID])
+		after, err := json.Marshal(line)
+		s.Require().NoError(err)
+		s.JSONEq(string(before), string(after))
+	})
+
+	s.Run("missing feature", func() {
+		// given:
+		// - a valid flat-price line referencing a feature absent from the catalog
+		line := newLine("missing-feature")
+
+		// when:
+		// - the invoice is simulated
+		invoice, err := s.BillingService.SimulateInvoice(ctx, billing.SimulateInvoiceInput{
+			Namespace:  namespace,
+			CustomerID: &customerEntity.ID,
+			Currency:   currencyx.FiatCode(currency.USD),
+			Lines:      billing.NewStandardInvoiceLines([]*billing.StandardLine{line}),
+		})
+
+		// then:
+		// - calculation succeeds while the missing feature is retained as a critical issue
+		s.Require().NoError(err)
+		s.Equal(billing.StandardInvoiceStatusDraftInvalid, invoice.Status)
+		s.True(invoice.StatusDetails.Failed)
+		s.Equal(10.0, invoice.Totals.Amount.InexactFloat64())
+		s.Require().Len(invoice.ValidationIssues, 1)
+		s.Equal(billing.ValidationIssues{{
+			Severity:   billing.ValidationIssueSeverityCritical,
+			Code:       billing.ErrInvoiceLineFeatureNotFound.Code,
+			Message:    billing.ErrInvoiceLineFeatureNotFound.Message,
+			Component:  billing.ValidationComponentOpenMeterMetering,
+			Path:       fmt.Sprintf("/lines/%s", invoice.Lines.OrEmpty()[0].ID),
+			Attributes: models.Annotations{"feature_key": "missing-feature"},
+		}}, billing.ValidationIssues{invoice.ValidationIssues[0]}.RemoveMetaForCompare())
+	})
+
+	s.Run("feature without required meter", func() {
+		// given:
+		// - a catalog feature without a meter and a valid unit-price line requiring one
+		meterlessFeature, err := s.FeatureService.CreateFeature(ctx, feature.CreateFeatureInputs{
+			Namespace: namespace,
+			Name:      "meterless feature",
+			Key:       "meterless-feature",
+		})
+		s.Require().NoError(err)
+
+		line := newLine("meterless-feature")
+		line.UsageBased.Price = productcatalog.NewPriceFrom(productcatalog.UnitPrice{Amount: alpacadecimal.NewFromInt(10)})
+		quantity := alpacadecimal.NewFromInt(1)
+		preLinePeriodQuantity := alpacadecimal.NewFromInt(0)
+		line.UsageBased.Quantity = &quantity
+		line.UsageBased.MeteredQuantity = &quantity
+		line.UsageBased.PreLinePeriodQuantity = &preLinePeriodQuantity
+		line.UsageBased.MeteredPreLinePeriodQuantity = &preLinePeriodQuantity
+
+		// when:
+		// - the invoice is simulated
+		invoice, err := s.BillingService.SimulateInvoice(ctx, billing.SimulateInvoiceInput{
+			Namespace:  namespace,
+			CustomerID: &customerEntity.ID,
+			Currency:   currencyx.FiatCode(currency.USD),
+			Lines:      billing.NewStandardInvoiceLines([]*billing.StandardLine{line}),
+		})
+
+		// then:
+		// - calculation succeeds while the missing required meter is retained as a critical issue
+		s.Require().NoError(err)
+		s.Equal(billing.StandardInvoiceStatusDraftInvalid, invoice.Status)
+		s.True(invoice.StatusDetails.Failed)
+		s.Equal(10.0, invoice.Totals.Amount.InexactFloat64())
+		s.Require().Len(invoice.ValidationIssues, 1)
+		s.Equal(billing.ValidationIssues{{
+			Severity:  billing.ValidationIssueSeverityCritical,
+			Code:      billing.ErrInvoiceLineFeatureHasNoMeters.Code,
+			Message:   billing.ErrInvoiceLineFeatureHasNoMeters.Message,
+			Component: billing.ValidationComponentOpenMeterMetering,
+			Path:      fmt.Sprintf("/lines/%s", invoice.Lines.OrEmpty()[0].ID),
+			Attributes: models.Annotations{
+				"feature_id":  meterlessFeature.ID,
+				"feature_key": meterlessFeature.Key,
+			},
+		}}, billing.ValidationIssues{invoice.ValidationIssues[0]}.RemoveMetaForCompare())
+	})
 }
 
 func (s *InvoicingTestSuite) TestPendingLineCreation() {
@@ -130,12 +274,11 @@ func (s *InvoicingTestSuite) TestPendingLineCreation() {
 
 	s.T().Run("CreateInvoiceItems", func(t *testing.T) {
 		// When we create invoice items
-
 		res, err := s.BillingService.CreatePendingInvoiceLines(ctx,
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 						Namespace: namespace,
 
@@ -156,7 +299,7 @@ func (s *InvoicingTestSuite) TestPendingLineCreation() {
 						PerUnitAmount: alpacadecimal.NewFromFloat(100),
 						PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 					}),
-				},
+				}),
 			},
 		)
 
@@ -169,7 +312,7 @@ func (s *InvoicingTestSuite) TestPendingLineCreation() {
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.HUF),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 						Period: timeutil.ClosedPeriod{From: periodStart, To: periodEnd},
 
@@ -209,7 +352,7 @@ func (s *InvoicingTestSuite) TestPendingLineCreation() {
 							FeatureKey: "test",
 						},
 					},
-				},
+				}),
 			})
 
 		// Then we should have the items created
@@ -424,7 +567,7 @@ func (s *InvoicingTestSuite) TestCreateInvoice() {
 		billing.CreatePendingInvoiceLinesInput{
 			Customer: customerEntity.GetID(),
 			Currency: currencyx.FiatCode(currency.USD),
-			Lines: []billing.GatheringLine{
+			Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 				billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 					Namespace: namespace,
 					Period:    timeutil.ClosedPeriod{From: periodStart, To: periodEnd},
@@ -455,7 +598,7 @@ func (s *InvoicingTestSuite) TestCreateInvoice() {
 					PerUnitAmount: alpacadecimal.NewFromFloat(200),
 					PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 				}),
-			},
+			}),
 		})
 
 	// Then we should have the items created
@@ -604,7 +747,7 @@ func (s *InvoicingTestSuite) TestCreateInvoice() {
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 						Name:      "Test item1",
 						Namespace: namespace,
@@ -620,7 +763,7 @@ func (s *InvoicingTestSuite) TestCreateInvoice() {
 						PerUnitAmount: alpacadecimal.NewFromFloat(100),
 						PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 					}),
-				},
+				}),
 			})
 
 		s.NoError(err)
@@ -669,7 +812,7 @@ func (s *InvoicingTestSuite) TestListCustomerIDsPendingCollectionReturnsUniqueCu
 	res, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customerEntity.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			billing.NewFlatFeeGatheringLine(
 				billing.NewFlatFeeLineInput{
 					Namespace:     namespace,
@@ -680,7 +823,7 @@ func (s *InvoicingTestSuite) TestListCustomerIDsPendingCollectionReturnsUniqueCu
 					PerUnitAmount: alpacadecimal.NewFromFloat(100),
 				},
 			),
-		},
+		}),
 	})
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), res)
@@ -698,7 +841,7 @@ func (s *InvoicingTestSuite) TestListCustomerIDsPendingCollectionReturnsUniqueCu
 	_, err = s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customerEntity.GetID(),
 		Currency: currencyx.FiatCode(currency.HUF),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 				Namespace:     namespace,
 				Period:        timeutil.ClosedPeriod{From: now.Add(-24 * time.Hour), To: now},
@@ -707,7 +850,7 @@ func (s *InvoicingTestSuite) TestListCustomerIDsPendingCollectionReturnsUniqueCu
 				Name:          "Test item - HUF",
 				PerUnitAmount: alpacadecimal.NewFromFloat(100),
 			}),
-		},
+		}),
 	})
 	require.NoError(s.T(), err)
 
@@ -1094,7 +1237,7 @@ func (s *InvoicingTestSuite) TestStatusDetailsSimulationDoesNotMutatePaymentProc
 }
 
 type ValidationIssueIntrospector interface {
-	IntrospectValidationIssues(ctx context.Context, invoice billing.InvoiceID) ([]billingadapter.ValidationIssueWithDBMeta, error)
+	IntrospectValidationIssues(ctx context.Context, invoice billing.InvoiceID) (billing.ValidationIssues, error)
 }
 
 func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
@@ -1123,12 +1266,21 @@ func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
 			advance: func(t *testing.T, ctx context.Context, ns string, customer *customer.Customer, mockApp *appsandbox.MockApp) *billing.StandardInvoice {
 				calcMock := s.InvoiceCalculator.EnableMock()
 				defer s.InvoiceCalculator.DisableMock(t)
+				validationAttributes := models.Annotations{
+					"invoice": "invoice-context",
+					"line":    "line-context",
+				}
 
 				validationIssueGetter, ok := s.BillingAdapter.(ValidationIssueIntrospector)
 				require.True(t, ok)
 
 				// Given that the app will return a validation error
-				mockApp.OnValidateStandardInvoice(billing.NewValidationError("test1", "validation error"))
+				mockApp.OnValidateStandardInvoice(billing.ValidationIssue{
+					Severity:   billing.ValidationIssueSeverityCritical,
+					Code:       "test1",
+					Message:    "validation error",
+					Attributes: validationAttributes,
+				})
 				calcMock.OnCalculate(nil)
 				calcMock.OnCalculateGatheringInvoice(nil)
 
@@ -1142,6 +1294,7 @@ func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
 				// Then we should end up in draft_invalid state
 				require.Equal(s.T(), billing.StandardInvoiceStatusDraftInvalid, invoice.Status)
 				require.Equal(s.T(), billing.StandardInvoiceStatusDetails{
+					Failed: true,
 					AvailableActions: billing.StandardInvoiceAvailableActions{
 						Retry: &billing.StandardInvoiceAvailableActionDetails{
 							ResultingState: billing.StandardInvoiceStatusPaymentProcessingPending,
@@ -1154,10 +1307,11 @@ func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
 				}, invoice.StatusDetails)
 				require.Equal(s.T(), billing.ValidationIssues{
 					{
-						Severity:  billing.ValidationIssueSeverityCritical,
-						Code:      "test1",
-						Message:   "validation error",
-						Component: "app.sandbox.invoiceCustomers.validate",
+						Severity:   billing.ValidationIssueSeverityCritical,
+						Code:       "test1",
+						Message:    "validation error",
+						Component:  "app.sandbox.invoiceCustomers.validate",
+						Attributes: validationAttributes,
 					},
 				}, invoice.ValidationIssues.RemoveMetaForCompare())
 
@@ -1170,12 +1324,13 @@ func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
 				require.Len(t, issues, 1)
 				require.Equal(t,
 					billing.ValidationIssue{
-						Severity:  billing.ValidationIssueSeverityCritical,
-						Code:      "test1",
-						Message:   "validation error",
-						Component: "app.sandbox.invoiceCustomers.validate",
+						Severity:   billing.ValidationIssueSeverityCritical,
+						Code:       "test1",
+						Message:    "validation error",
+						Component:  "app.sandbox.invoiceCustomers.validate",
+						Attributes: validationAttributes,
 					},
-					issues[0].ValidationIssue,
+					billing.ValidationIssues{issues[0]}.RemoveMetaForCompare()[0],
 				)
 				require.Nil(t, issues[0].DeletedAt)
 				customerValidationIssueID := issues[0].ID
@@ -1199,6 +1354,7 @@ func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
 				// Then we should end up in draft_invalid state
 				require.Equal(s.T(), billing.StandardInvoiceStatusDraftInvalid, invoice.Status)
 				require.Equal(s.T(), billing.StandardInvoiceStatusDetails{
+					Failed: true,
 					AvailableActions: billing.StandardInvoiceAvailableActions{
 						Retry: &billing.StandardInvoiceAvailableActionDetails{
 							ResultingState: billing.StandardInvoiceStatusPaymentProcessingPending,
@@ -1228,39 +1384,41 @@ func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
 				require.Len(t, issues, 3)
 
 				// The old issue should be deleted
-				invoiceIssue, ok := lo.Find(issues, func(i billingadapter.ValidationIssueWithDBMeta) bool {
+				invoiceIssue, ok := lo.Find(issues, func(i billing.ValidationIssue) bool {
 					return i.ID == customerValidationIssueID
 				})
 				require.True(t, ok, "old issue should be present")
 				require.NotNil(t, invoiceIssue.DeletedAt)
 				require.Equal(t,
 					billing.ValidationIssue{
-						Severity:  billing.ValidationIssueSeverityCritical,
-						Code:      "test1",
-						Message:   "validation error",
-						Component: "app.sandbox.invoiceCustomers.validate",
+						Severity:   billing.ValidationIssueSeverityCritical,
+						Code:       "test1",
+						Message:    "validation error",
+						Component:  "app.sandbox.invoiceCustomers.validate",
+						Attributes: validationAttributes,
 					},
-					invoiceIssue.ValidationIssue,
+					billing.ValidationIssues{invoiceIssue}.RemoveMetaForCompare()[0],
 				)
 
 				// A new version of the issue is present with downgraded severity, to facilitate the retry
-				downgradedIssue, ok := lo.Find(issues, func(i billingadapter.ValidationIssueWithDBMeta) bool {
+				downgradedIssue, ok := lo.Find(issues, func(i billing.ValidationIssue) bool {
 					return i.Code == "test1" && i.Severity == billing.ValidationIssueSeverityWarning
 				})
 				require.True(t, ok, "the issue should be present")
 				require.NotNil(t, downgradedIssue.DeletedAt)
 				require.Equal(t,
 					billing.ValidationIssue{
-						Severity:  billing.ValidationIssueSeverityWarning,
-						Code:      "test1",
-						Message:   "validation error",
-						Component: "app.sandbox.invoiceCustomers.validate",
+						Severity:   billing.ValidationIssueSeverityWarning,
+						Code:       "test1",
+						Message:    "validation error",
+						Component:  "app.sandbox.invoiceCustomers.validate",
+						Attributes: validationAttributes,
 					},
-					downgradedIssue.ValidationIssue,
+					billing.ValidationIssues{downgradedIssue}.RemoveMetaForCompare()[0],
 				)
 
 				// The new issue should not be deleted
-				calculationErrorIssue, ok := lo.Find(issues, func(i billingadapter.ValidationIssueWithDBMeta) bool {
+				calculationErrorIssue, ok := lo.Find(issues, func(i billing.ValidationIssue) bool {
 					return i.Code == "test2"
 				})
 				require.True(t, ok, "new issue should be present")
@@ -1271,14 +1429,19 @@ func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
 						Message:   "validation error",
 						Component: "openmeter",
 					},
-					calculationErrorIssue.ValidationIssue,
+					billing.ValidationIssues{calculationErrorIssue}.RemoveMetaForCompare()[0],
 				)
 
 				mockApp.Reset(t)
 				calcMock.Reset(t)
 
 				// Given that both issues are present, both will be reported
-				mockApp.OnValidateStandardInvoice(billing.NewValidationError("test1", "validation error"))
+				mockApp.OnValidateStandardInvoice(billing.ValidationIssue{
+					Severity:   billing.ValidationIssueSeverityCritical,
+					Code:       "test1",
+					Message:    "validation error",
+					Attributes: validationAttributes,
+				})
 				calcMock.OnCalculate(billing.NewValidationError("test2", "validation error"))
 
 				// regardless the state transition will be the same for now.
@@ -1292,6 +1455,7 @@ func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
 				// Then we should end up in draft_invalid state
 				require.Equal(s.T(), billing.StandardInvoiceStatusDraftInvalid, invoice.Status)
 				require.Equal(s.T(), billing.StandardInvoiceStatusDetails{
+					Failed: true,
 					AvailableActions: billing.StandardInvoiceAvailableActions{
 						Retry: &billing.StandardInvoiceAvailableActionDetails{
 							ResultingState: billing.StandardInvoiceStatusPaymentProcessingPending,
@@ -1304,10 +1468,11 @@ func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
 				}, invoice.StatusDetails)
 				require.ElementsMatch(s.T(), billing.ValidationIssues{
 					{
-						Severity:  billing.ValidationIssueSeverityCritical,
-						Code:      "test1",
-						Message:   "validation error",
-						Component: "app.sandbox.invoiceCustomers.validate",
+						Severity:   billing.ValidationIssueSeverityCritical,
+						Code:       "test1",
+						Message:    "validation error",
+						Component:  "app.sandbox.invoiceCustomers.validate",
+						Attributes: validationAttributes,
 					},
 					{
 						Severity:  billing.ValidationIssueSeverityCritical,
@@ -1323,12 +1488,12 @@ func (s *InvoicingTestSuite) TestInvoicingFlowErrorHandling() {
 					ID:        invoice.ID,
 				})
 				require.NoError(t, err)
-				criticalIssues := lo.Filter(issues, func(i billingadapter.ValidationIssueWithDBMeta, _ int) bool {
+				criticalIssues := lo.Filter(issues, func(i billing.ValidationIssue, _ int) bool {
 					return i.Severity == billing.ValidationIssueSeverityCritical
 				})
 				require.Len(t, criticalIssues, 2)
 
-				_, deletedIssueFound := lo.Find(criticalIssues, func(i billingadapter.ValidationIssueWithDBMeta) bool {
+				_, deletedIssueFound := lo.Find(criticalIssues, func(i billing.ValidationIssue) bool {
 					return i.DeletedAt != nil
 				})
 				require.False(t, deletedIssueFound, "no issues should be deleted")
@@ -1508,6 +1673,48 @@ func (s *InvoicingTestSuite) TestEmptyInvoiceIsDeletedInsteadOfIssued() {
 	s.NotNil(invoiceWithDeletedLines.Lines.OrEmpty()[0].DeletedAt)
 }
 
+func (s *InvoicingTestSuite) TestDeleteInvoiceIsIdempotent() {
+	ctx := s.T().Context()
+	namespace := s.GetUniqueNamespace("invoice-delete-idempotent")
+
+	// Given a deletable invoice and external integrations that record deletion calls.
+	lineEngine := &countingAPIEditLineEngine{LineEngine: s.LegacyBillingLineEngine}
+	s.Require().NoError(s.BillingService.DeregisterLineEngine(billing.LineEngineTypeInvoice))
+	s.Require().NoError(s.BillingService.RegisterLineEngine(lineEngine))
+	s.T().Cleanup(func() {
+		s.Require().NoError(s.BillingService.DeregisterLineEngine(billing.LineEngineTypeInvoice))
+		s.Require().NoError(s.BillingService.RegisterLineEngine(s.LegacyBillingLineEngine))
+	})
+
+	invoice := s.createManualApprovalInvoice(ctx, namespace, billing.Discounts{})
+	mockApp := s.SandboxApp.EnableMock(s.T())
+	defer s.SandboxApp.DisableMock()
+	mockApp.OnDeleteStandardInvoice(nil)
+
+	// When the invoice is deleted twice.
+	firstDelete, err := s.BillingService.DeleteInvoice(ctx, billing.DeleteInvoiceInput{
+		Invoice:        invoice.GetInvoiceID(),
+		DeletionSource: billing.ChangeSourceAPIRequest,
+	})
+	s.Require().NoError(err)
+	s.Require().NotNil(firstDelete.DeletedAt)
+
+	secondDelete, err := s.BillingService.DeleteInvoice(ctx, billing.DeleteInvoiceInput{
+		Invoice:        invoice.GetInvoiceID(),
+		DeletionSource: billing.ChangeSourceAPIRequest,
+	})
+
+	// Then the second delete succeeds without changing deletion history or repeating external cleanup.
+	s.Require().NoError(err)
+	s.Equal(billing.StandardInvoiceStatusDeleted, secondDelete.Status)
+	s.Require().NotNil(secondDelete.DeletedAt)
+	s.Equal(*firstDelete.DeletedAt, *secondDelete.DeletedAt)
+	s.Equal(firstDelete.DeletionSource, secondDelete.DeletionSource)
+	s.Equal(1, lineEngine.callCount)
+	s.Equal(1, mockApp.DeleteInvoiceCallCount())
+	mockApp.AssertExpectations(s.T())
+}
+
 func (s *InvoicingTestSuite) TestEmptyInvoiceDeletionFailureCanBeRetried() {
 	ctx := s.T().Context()
 	namespace := s.GetUniqueNamespace("empty-invoice-deletion-failure")
@@ -1612,7 +1819,7 @@ func (s *InvoicingTestSuite) createManualApprovalInvoice(
 	pendingLines, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customerEntity.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 				Namespace:         namespace,
 				Period:            period,
@@ -1624,7 +1831,7 @@ func (s *InvoicingTestSuite) createManualApprovalInvoice(
 				PaymentTerm:       productcatalog.InArrearsPaymentTerm,
 				RateCardDiscounts: discounts,
 			}),
-		},
+		}),
 	})
 	s.Require().NoError(err)
 	s.Require().Len(pendingLines.Lines, 1)
@@ -1838,7 +2045,7 @@ func (s *InvoicingTestSuite) TestUBPProgressiveInvoicing() {
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					{
 						GatheringLineBase: billing.GatheringLineBase{
 							ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -1939,7 +2146,7 @@ func (s *InvoicingTestSuite) TestUBPProgressiveInvoicing() {
 							})),
 						},
 					},
-				},
+				}),
 			},
 		)
 		require.NoError(s.T(), err)
@@ -2092,6 +2299,7 @@ func (s *InvoicingTestSuite) TestUBPProgressiveInvoicing() {
 					line.UsageBased.Price = productcatalog.NewPriceFrom(productcatalog.UnitPrice{
 						Amount: alpacadecimal.NewFromFloat(250),
 					})
+
 					return nil
 				},
 			})
@@ -2142,6 +2350,7 @@ func (s *InvoicingTestSuite) TestUBPProgressiveInvoicing() {
 					}
 
 					line.DeletedAt = lo.ToPtr(clock.Now())
+
 					return nil
 				},
 				IncludeDeletedLines: true,
@@ -2526,6 +2735,7 @@ func (s *InvoicingTestSuite) TestUBPProgressiveInvoicing() {
 		for _, line := range []*billing.StandardLine{flatPerUnit, tieredGraduated} {
 			require.True(s.T(), expectedPeriod.Equal(line.Period), "period should be changed for the line items")
 		}
+
 		require.True(s.T(), tieredVolume.Period.Equal(lines.tieredVolume.ServicePeriod), "period should be unchanged for the tiered volume line")
 		require.True(s.T(), flatFee.Period.Equal(lines.flatFee.ServicePeriod), "period should be unchanged for the flat line")
 
@@ -2709,7 +2919,7 @@ func (s *InvoicingTestSuite) TestUBPGraduatingFlatFeeTier1() {
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					{
 						GatheringLineBase: billing.GatheringLineBase{
 							ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -2749,7 +2959,7 @@ func (s *InvoicingTestSuite) TestUBPGraduatingFlatFeeTier1() {
 							})),
 						},
 					},
-				},
+				}),
 			},
 		)
 		require.NoError(s.T(), err)
@@ -2834,7 +3044,6 @@ func (s *InvoicingTestSuite) TestUBPGraduatingFlatFeeTier1() {
 
 	s.Run("create new invoice, with usage", func() {
 		// Period
-
 		s.MockStreamingConnector.AddSimpleEvent("tiered-graduated", 15, periodStart.Add(time.Minute*130)) // 2h10m
 
 		asOf := periodStart.Add(3 * time.Hour)
@@ -3025,7 +3234,7 @@ func (s *InvoicingTestSuite) TestUBPNonProgressiveInvoicing() {
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					{
 						GatheringLineBase: billing.GatheringLineBase{
 							ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -3126,7 +3335,7 @@ func (s *InvoicingTestSuite) TestUBPNonProgressiveInvoicing() {
 							})),
 						},
 					},
-				},
+				}),
 			},
 		)
 		require.NoError(s.T(), err)
@@ -3322,6 +3531,7 @@ func (s *InvoicingTestSuite) lineInSameSplitLineGroup(lines []*billing.StandardL
 	}
 
 	require.Fail(s.T(), "line with parent not found")
+
 	return nil
 }
 
@@ -3334,6 +3544,7 @@ func (s *InvoicingTestSuite) lineByID(lines []*billing.StandardLine, id string) 
 	}
 
 	require.Fail(s.T(), "line not found")
+
 	return nil
 }
 
@@ -3525,7 +3736,7 @@ func (s *InvoicingTestSuite) TestGatheringInvoiceRecalculation() {
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					{
 						GatheringLineBase: billing.GatheringLineBase{
 							ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -3543,7 +3754,7 @@ func (s *InvoicingTestSuite) TestGatheringInvoiceRecalculation() {
 							})),
 						},
 					},
-				},
+				}),
 			},
 		)
 		require.NoError(s.T(), err)
@@ -3617,7 +3828,6 @@ func (s *InvoicingTestSuite) TestEmptyInvoiceGenerationZeroUsage() {
 	// Given we have a test customer and an UBP line without usage priced at 0
 	// we can create the invoice and even if there are no detailed lines the validation
 	// errors should be empty
-
 	namespace := "ns-empty-invoice-generation"
 	ctx := context.Background()
 	periodStart := lo.Must(time.Parse(time.RFC3339, "2024-09-02T12:13:14Z"))
@@ -3692,7 +3902,7 @@ func (s *InvoicingTestSuite) TestEmptyInvoiceGenerationZeroUsage() {
 		billing.CreatePendingInvoiceLinesInput{
 			Customer: customerEntity.GetID(),
 			Currency: currencyx.FiatCode(currency.USD),
-			Lines: []billing.GatheringLine{
+			Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 				{
 					GatheringLineBase: billing.GatheringLineBase{
 						ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -3707,7 +3917,7 @@ func (s *InvoicingTestSuite) TestEmptyInvoiceGenerationZeroUsage() {
 						})),
 					},
 				},
-			},
+			}),
 		},
 	)
 	s.NoError(err)
@@ -3736,7 +3946,6 @@ func (s *InvoicingTestSuite) TestEmptyInvoiceGenerationZeroPrice() {
 	// Given we have a test customer and an UBP line with usage priced at 0
 	// we can create the invoice and there should be one detailed line with 0 total
 	// amount and no validation issues
-
 	namespace := "ns-empty-invoice-generation-zero-price"
 	ctx := context.Background()
 	periodStart := lo.Must(time.Parse(time.RFC3339, "2024-09-02T12:13:14Z"))
@@ -3811,7 +4020,7 @@ func (s *InvoicingTestSuite) TestEmptyInvoiceGenerationZeroPrice() {
 		billing.CreatePendingInvoiceLinesInput{
 			Customer: customerEntity.GetID(),
 			Currency: currencyx.FiatCode(currency.USD),
-			Lines: []billing.GatheringLine{
+			Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 				{
 					GatheringLineBase: billing.GatheringLineBase{
 						ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -3826,7 +4035,7 @@ func (s *InvoicingTestSuite) TestEmptyInvoiceGenerationZeroPrice() {
 						})),
 					},
 				},
-			},
+			}),
 		},
 	)
 	s.NoError(err)
@@ -4041,7 +4250,7 @@ func (s *InvoicingTestSuite) TestProgressiveBillLate() {
 	pendingLines, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customer.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			{
 				GatheringLineBase: billing.GatheringLineBase{
 					ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -4071,7 +4280,7 @@ func (s *InvoicingTestSuite) TestProgressiveBillLate() {
 						})),
 				},
 			},
-		},
+		}),
 	})
 
 	s.NoError(err)
@@ -4133,7 +4342,7 @@ func (s *InvoicingTestSuite) TestPartialInvoiceLinesOptions() {
 	pendingLines, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customer.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			{
 				GatheringLineBase: billing.GatheringLineBase{
 					ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -4180,7 +4389,7 @@ func (s *InvoicingTestSuite) TestPartialInvoiceLinesOptions() {
 					)),
 				},
 			},
-		},
+		}),
 	})
 
 	s.NoError(err)
@@ -4240,7 +4449,7 @@ func (s *InvoicingTestSuite) TestSortLines() {
 	pendingLines, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customer.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			{
 				GatheringLineBase: billing.GatheringLineBase{
 					ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -4280,7 +4489,7 @@ func (s *InvoicingTestSuite) TestSortLines() {
 					)),
 				},
 			},
-		},
+		}),
 	})
 
 	s.NoError(err)
@@ -4347,7 +4556,6 @@ func (s *InvoicingTestSuite) TestSortLines() {
 func (s *InvoicingTestSuite) TestGatheringInvoicePeriodPersisting() {
 	// When a gathering invoice has been created
 	// Then the period is persisted into the database (so that we can filter/sort by it)
-
 	namespace := "ns-gathering-invoice-period-persisting"
 	ctx := context.Background()
 
@@ -4366,7 +4574,7 @@ func (s *InvoicingTestSuite) TestGatheringInvoicePeriodPersisting() {
 	pendingLines, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customer.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 				Period:    timeutil.ClosedPeriod{From: periodStart, To: periodEnd},
 				InvoiceAt: periodStart,
@@ -4375,7 +4583,7 @@ func (s *InvoicingTestSuite) TestGatheringInvoicePeriodPersisting() {
 				PerUnitAmount: alpacadecimal.NewFromFloat(10),
 				PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 			}),
-		},
+		}),
 	})
 	s.NoError(err)
 	s.Len(pendingLines.Lines, 1)
@@ -4398,7 +4606,7 @@ func (s *InvoicingTestSuite) TestGatheringInvoicePeriodPersisting() {
 	pendingLines, err = s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customer.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 				Period:    timeutil.ClosedPeriod{From: newPeriodStart, To: newPeriodEnd},
 				InvoiceAt: newPeriodStart,
@@ -4407,7 +4615,7 @@ func (s *InvoicingTestSuite) TestGatheringInvoicePeriodPersisting() {
 				PerUnitAmount: alpacadecimal.NewFromFloat(10),
 				PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 			}),
-		},
+		}),
 	})
 	s.NoError(err)
 	s.Len(pendingLines.Lines, 1)
@@ -4465,7 +4673,7 @@ func (s *InvoicingTestSuite) TestDeleteGatheringInvoiceViaService() {
 	pendingLines, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customer.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 				Namespace: namespace,
 				Period:    timeutil.ClosedPeriod{From: periodStart, To: periodEnd},
@@ -4484,7 +4692,7 @@ func (s *InvoicingTestSuite) TestDeleteGatheringInvoiceViaService() {
 				PerUnitAmount: alpacadecimal.NewFromFloat(20),
 				PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 			}),
-		},
+		}),
 	})
 	require.NoError(s.T(), err)
 	require.Len(s.T(), pendingLines.Lines, 2)
@@ -4554,7 +4762,7 @@ func (s *InvoicingTestSuite) TestCreatePendingInvoiceLinesForDeletedCustomers() 
 	pendingLines, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customer.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 				Period:    timeutil.ClosedPeriod{From: periodStart, To: periodEnd},
 				InvoiceAt: periodStart,
@@ -4563,7 +4771,7 @@ func (s *InvoicingTestSuite) TestCreatePendingInvoiceLinesForDeletedCustomers() 
 				PerUnitAmount: alpacadecimal.NewFromFloat(10),
 				PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 			}),
-		},
+		}),
 	})
 	s.NoError(err)
 	s.Len(pendingLines.Lines, 1)
@@ -4590,7 +4798,7 @@ func (s *InvoicingTestSuite) TestCreatePendingInvoiceLinesForDeletedCustomers() 
 	pendingLines, err = s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customer.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 				Period:        timeutil.ClosedPeriod{From: clock.Now(), To: clock.Now().Add(time.Hour * 24)},
 				InvoiceAt:     clock.Now(),
@@ -4598,30 +4806,179 @@ func (s *InvoicingTestSuite) TestCreatePendingInvoiceLinesForDeletedCustomers() 
 				PerUnitAmount: alpacadecimal.NewFromFloat(10),
 				PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 			}),
-		},
+		}),
 	})
 	s.Error(err)
 	s.Nil(pendingLines)
 }
 
-func (s *InvoicingTestSuite) TestSnapshotQuantityInvalidDatabaseState() {
-	// Given there's:
-	// - A feature + meter
-	// - A gathering invoice with usage based line
-	// - the invoice pending lines is called and the standard invoice is in draft.waiting_for_collection state
-	// When
-	// - the meter is deleted
-	// Then
-	// - advancing the invoice works
-	// - the invoice ends up in draft.invalid state
+func (s *InvoicingTestSuite) TestSnapshotQuantityMissingFeature() {
+	ctx := s.T().Context()
+	namespace := s.GetUniqueNamespace("ns-snapshot-quantity-missing-feature")
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	servicePeriod := timeutil.ClosedPeriod{
+		From: now.Add(-time.Hour),
+		To:   now,
+	}
 
+	clock.FreezeTime(now)
+	defer clock.UnFreeze()
+
+	sandboxApp := s.InstallSandboxApp(s.T(), namespace)
+	s.ProvisionBillingProfile(ctx, namespace, sandboxApp.GetID(), WithCollectionInterval(datetime.MustParseDuration(s.T(), "PT1H")))
+
+	testFeature := s.SetupApiRequestsTotalFeature(ctx, namespace)
+	defer testFeature.Cleanup()
+
+	customerEntity := s.CreateTestCustomer(namespace, "test-customer")
+
+	// given:
+	// - a valid metered gathering line whose persisted feature reference becomes orphaned
+	pendingLines, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
+		Customer: customerEntity.GetID(),
+		Currency: currencyx.FiatCode(currency.USD),
+		Lines: billing.NewCreatePendingInvoiceLines(billing.GatheringLines{{
+			GatheringLineBase: billing.GatheringLineBase{
+				ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
+					Namespace: namespace,
+					Name:      "metered line with missing feature",
+				}),
+				ManagedBy:     billing.ManuallyManagedLine,
+				ServicePeriod: servicePeriod,
+				InvoiceAt:     servicePeriod.To,
+				FeatureKey:    testFeature.Feature.Key,
+				Price: lo.FromPtr(productcatalog.NewPriceFrom(productcatalog.UnitPrice{
+					Amount: alpacadecimal.NewFromInt(1),
+				})),
+			},
+		}}),
+	})
+	s.Require().NoError(err)
+	s.Require().Len(pendingLines.Lines, 1)
+	pendingLineID := pendingLines.Lines[0].ID
+	usageBasedConfigID := pendingLines.Lines[0].UBPConfigID
+
+	_, err = s.TestDB.PGDriver.DB().ExecContext(ctx,
+		`UPDATE billing_invoice_usage_based_line_configs SET feature_key = $1 WHERE id = $2`,
+		"missing-feature",
+		usageBasedConfigID,
+	)
+	s.Require().NoError(err)
+
+	// A live preview currently rejects the incomplete builder output before it
+	// can expose the missing-feature issue. Preserve this independent limitation.
+	_, err = s.BillingService.ListInvoices(ctx, billing.ListInvoicesInput{
+		Namespace: namespace,
+		Expand: billing.InvoiceExpands{}.
+			With(billing.InvoiceExpandCalculateGatheringInvoiceWithLiveData),
+	})
+	s.Require().ErrorContains(err, "validating build standard invoice lines with live data ids")
+
+	// when:
+	// - billing collects the line after the feature can no longer be resolved
+	invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
+		Customer:          customerEntity.GetID(),
+		ForceAsyncAdvance: true,
+	})
+
+	// then:
+	// - calculation is skipped and the incomplete line is persisted for retry
+	s.Require().NoError(err)
+	s.Require().Len(invoices, 1)
+	invoice := invoices[0]
+	s.Equal(billing.StandardInvoiceStatusDraftInvalidCreated, invoice.Status)
+	s.Nil(invoice.QuantitySnapshotedAt)
+	s.Require().Len(invoice.Lines.OrEmpty(), 1)
+	s.Nil(invoice.Lines.OrEmpty()[0].UsageBased.MeteredQuantity)
+	standardUsageBasedConfigID := invoice.Lines.OrEmpty()[0].UsageBased.ConfigID
+	s.Require().Len(invoice.ValidationIssues, 1)
+	issue := invoice.ValidationIssues[0]
+	s.Equal(billing.ValidationIssueSeverityCritical, issue.Severity)
+	s.Equal(billing.ErrInvoiceLineFeatureNotFound.Code, issue.Code)
+	s.Equal(billing.LineEngineValidationComponent(billing.LineEngineTypeInvoice), issue.Component)
+	s.Equal(fmt.Sprintf("/lines/%s", pendingLineID), issue.Path)
+
+	// Retrying before the cutoff permits waiting, but forcing an incomplete
+	// snapshot still fails without replacing the persisted lines or issues.
+	queuedBillingService := s.BillingService.WithAdvancementStrategy(billing.QueuedAdvancementStrategy)
+	invoice, err = queuedBillingService.RetryInvoice(ctx, invoice.GetInvoiceID())
+	s.Require().NoError(err)
+	invoice, err = s.BillingService.AdvanceInvoice(ctx, invoice.GetInvoiceID())
+	s.Require().NoError(err)
+	s.Equal(billing.StandardInvoiceStatusDraftWaitingForCollection, invoice.Status)
+	_, err = s.BillingService.ForceCollectInvoice(ctx, invoice.GetInvoiceID())
+	s.Require().ErrorContains(err, "metered quantity is required")
+	invoice, err = s.BillingService.GetStandardInvoiceById(ctx, billing.GetStandardInvoiceByIdInput{
+		Invoice: invoice.GetInvoiceID(),
+		Expand:  billing.StandardInvoiceExpandAll,
+	})
+	s.Require().NoError(err)
+	s.Nil(invoice.QuantitySnapshotedAt)
+	s.Nil(invoice.Lines.OrEmpty()[0].UsageBased.MeteredQuantity)
+	s.Require().Len(invoice.ValidationIssues, 1)
+	s.Equal(billing.ValidationIssueSeverityWarning, invoice.ValidationIssues[0].Severity)
+
+	// when:
+	// - collection is retried while the feature is still missing
+	clock.FreezeTime(invoice.DefaultCollectionAtForStandardInvoice().Add(time.Minute))
+	defer clock.UnFreeze()
+	invoice, err = s.BillingService.AdvanceInvoice(ctx, invoice.GetInvoiceID())
+	s.Require().NoError(err)
+	s.Equal(billing.StandardInvoiceStatusDraftInvalidCreated, invoice.Status)
+	invoice, err = queuedBillingService.RetryInvoice(ctx, invoice.GetInvoiceID())
+	s.Require().NoError(err)
+	s.Equal(billing.StandardInvoiceStatusDraftCreated, invoice.Status)
+	s.Require().Len(invoice.ValidationIssues, 1)
+	s.Equal(billing.ValidationIssueSeverityWarning, invoice.ValidationIssues[0].Severity)
+
+	invoice, err = s.BillingService.AdvanceInvoice(ctx, invoice.GetInvoiceID())
+	s.Require().NoError(err)
+	s.Equal(billing.StandardInvoiceStatusDraftInvalidCreated, invoice.Status)
+	s.Require().Len(invoice.ValidationIssues, 1)
+	s.Equal(billing.ValidationIssueSeverityCritical, invoice.ValidationIssues[0].Severity)
+	s.Nil(invoice.QuantitySnapshotedAt)
+
+	// when:
+	// - the feature reference is repaired and collection is retried
+	_, err = s.TestDB.PGDriver.DB().ExecContext(ctx,
+		`UPDATE billing_invoice_usage_based_line_configs SET feature_key = $1 WHERE id = $2`,
+		testFeature.Feature.Key,
+		standardUsageBasedConfigID,
+	)
+	s.Require().NoError(err)
+
+	invoice, err = s.BillingService.RetryInvoice(ctx, invoice.GetInvoiceID())
+
+	// then:
+	// - quantity snapshotting and detailed-line calculation complete normally
+	s.Require().NoError(err)
+	s.Equal(billing.StandardInvoiceStatusDraftWaitingAutoApproval, invoice.Status)
+	s.Empty(invoice.ValidationIssues)
+	s.NotNil(invoice.QuantitySnapshotedAt)
+	s.Require().Len(invoice.Lines.OrEmpty(), 1)
+	s.NotNil(invoice.Lines.OrEmpty()[0].UsageBased.MeteredQuantity)
+}
+
+func (s *InvoicingTestSuite) TestSnapshotQuantityInvalidDatabaseState() {
+	// given:
+	// - a metered feature and gathering usage line ready for collection
+	// - metered usage exists in the line's service period
+	// when:
+	// - the meter is removed before gathering collection
+	// then:
+	// - collection persists a draft.invalid_created standard invoice with a line-scoped critical validation issue
+	// - retry remains invalid until the meter is restored, then snapshots usage and advances the invoice
 	var (
-		ctx       = context.Background()
+		ctx       = s.T().Context()
 		namespace = "ns-snapshot-quantity-invalid-database-state"
 
-		periodStart  time.Time
-		periodEnd    time.Time
-		collectionAt time.Time
+		periodStart time.Time
+		periodEnd   time.Time
+
+		customerID         customer.CustomerID
+		snapshotMeter      meter.Meter
+		gatheringInvoiceID billing.InvoiceID
+		pendingLineID      string
 
 		invoice billing.StandardInvoice
 	)
@@ -4634,30 +4991,30 @@ func (s *InvoicingTestSuite) TestSnapshotQuantityInvalidDatabaseState() {
 	}()
 	defer s.MockStreamingConnector.Reset()
 
-	s.Run("Given a feature+meter and a draft invoice waiting for collection", func() {
+	s.Run("Given a feature and meter with a gathering usage line", func() {
 		sandboxApp := s.InstallSandboxApp(s.T(), namespace)
 
 		meterSlug := "snapshot-meter"
 		snapshotMeterID := ulid.Make().String()
-		err := s.MeterAdapter.ReplaceMeters(ctx, []meter.Meter{
-			{
-				ManagedResource: models.ManagedResource{
-					ID: snapshotMeterID,
-					NamespacedModel: models.NamespacedModel{
-						Namespace: namespace,
-					},
-					ManagedModel: models.ManagedModel{
-						CreatedAt: time.Now(),
-						UpdatedAt: time.Now(),
-					},
-					Name: "Snapshot Meter",
+		snapshotMeter = meter.Meter{
+			ManagedResource: models.ManagedResource{
+				ID: snapshotMeterID,
+				NamespacedModel: models.NamespacedModel{
+					Namespace: namespace,
 				},
-				Key:           meterSlug,
-				Aggregation:   meter.MeterAggregationSum,
-				EventType:     "test",
-				ValueProperty: lo.ToPtr("$.value"),
+				ManagedModel: models.ManagedModel{
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+				},
+				Name: "Snapshot Meter",
 			},
-		})
+			Key:           meterSlug,
+			Aggregation:   meter.MeterAggregationSum,
+			EventType:     "test",
+			ValueProperty: lo.ToPtr("$.value"),
+		}
+
+		err := s.MeterAdapter.ReplaceMeters(ctx, []meter.Meter{snapshotMeter})
 		s.NoError(err, "failed to replace meters")
 
 		snapshotFeature := lo.Must(s.FeatureService.CreateFeature(ctx, feature.CreateFeatureInputs{
@@ -4681,6 +5038,7 @@ func (s *InvoicingTestSuite) TestSnapshotQuantityInvalidDatabaseState() {
 		s.NoError(err)
 		s.NotNil(customerEntity)
 		s.NotEmpty(customerEntity.ID)
+		customerID = customerEntity.GetID()
 
 		s.ProvisionBillingProfile(ctx, namespace, sandboxApp.GetID(),
 			WithCollectionInterval(datetime.NewISODuration(0, 0, 0, 1, 0, 0, 0)), // 1 day collection interval
@@ -4689,13 +5047,13 @@ func (s *InvoicingTestSuite) TestSnapshotQuantityInvalidDatabaseState() {
 		periodStart = lo.Must(time.Parse(time.RFC3339, "2024-09-02T11:13:14Z"))
 		periodEnd = lo.Must(time.Parse(time.RFC3339, "2024-09-02T13:13:14Z"))
 
-		s.MockStreamingConnector.AddSimpleEvent(meterSlug, 0, periodStart.Add(-time.Minute))
+		s.MockStreamingConnector.AddSimpleEvent(meterSlug, 7, periodStart.Add(time.Minute))
 
 		pendingLines, err := s.BillingService.CreatePendingInvoiceLines(ctx,
 			billing.CreatePendingInvoiceLinesInput{
-				Customer: customerEntity.GetID(),
+				Customer: customerID,
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					{
 						GatheringLineBase: billing.GatheringLineBase{
 							ManagedResource: models.ManagedResource{
@@ -4713,37 +5071,102 @@ func (s *InvoicingTestSuite) TestSnapshotQuantityInvalidDatabaseState() {
 							})),
 						},
 					},
-				},
+				}),
 			},
 		)
 		s.NoError(err)
 		s.Len(pendingLines.Lines, 1)
+		pendingLineID = pendingLines.Lines[0].ID
+		gatheringInvoiceID = pendingLines.Invoice.GetInvoiceID()
 
 		clock.SetTime(periodEnd)
+	})
+
+	s.Run("When the meter is deleted before gathering collection", func() {
+		err := s.MeterAdapter.ReplaceMeters(ctx, []meter.Meter{})
+		s.NoError(err)
 
 		invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
-			Customer: customerEntity.GetID(),
+			Customer:          customerID,
+			ForceAsyncAdvance: true,
 		})
 		s.NoError(err)
 		s.Len(invoices, 1)
 		invoice = invoices[0]
-		s.Equal(billing.StandardInvoiceStatusDraftWaitingForCollection, invoice.Status)
-		collectionAt = invoice.DefaultCollectionAtForStandardInvoice()
 	})
 
-	s.Run("When the meter is deleted", func() {
-		err := s.MeterAdapter.ReplaceMeters(ctx, []meter.Meter{})
+	s.Run("Then a standard invoice is persisted as draft.invalid_created", func() {
+		s.Equal(billing.StandardInvoiceStatusDraftInvalidCreated, invoice.Status)
+		s.Nil(invoice.QuantitySnapshotedAt)
+		s.Require().Len(invoice.Lines.OrEmpty(), 1)
+		s.Equal(pendingLineID, invoice.Lines.OrEmpty()[0].ID)
+		s.Nil(invoice.Lines.OrEmpty()[0].UsageBased.MeteredQuantity)
+
+		s.Require().Len(invoice.ValidationIssues, 1)
+		issue := invoice.ValidationIssues[0]
+		s.Equal(billing.ValidationIssueSeverityCritical, issue.Severity)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Code, issue.Code)
+		s.Equal(billing.LineEngineValidationComponent(billing.LineEngineTypeInvoice), issue.Component)
+		s.Equal(fmt.Sprintf("/lines/%s", pendingLineID), issue.Path)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Message, issue.Message)
+		s.Equal("snapshot-feature", issue.Attributes["feature_key"])
+		s.Equal(snapshotMeter.ID, issue.Attributes["meter_id"])
+		s.Equal(snapshotMeter.Key, issue.Attributes["meter_slug"])
+
+		persistedInvoice, err := s.BillingService.GetStandardInvoiceById(ctx, billing.GetStandardInvoiceByIdInput{
+			Invoice: invoice.GetInvoiceID(),
+			Expand:  billing.StandardInvoiceExpandAll,
+		})
 		s.NoError(err)
+		s.Equal(billing.StandardInvoiceStatusDraftInvalidCreated, persistedInvoice.Status)
+		s.Require().Len(persistedInvoice.ValidationIssues, 1)
 
-		clock.SetTime(collectionAt.Add(time.Minute))
+		gatheringInvoice, err := s.BillingService.GetGatheringInvoiceById(ctx, billing.GetGatheringInvoiceByIdInput{
+			Invoice: gatheringInvoiceID,
+			Expand:  billing.GatheringInvoiceExpandAll,
+		})
+		s.NoError(err)
+		s.NotNil(gatheringInvoice.DeletedAt)
+		s.Empty(gatheringInvoice.Lines.OrEmpty())
 	})
 
-	s.Run("Then advancing transitions the invoice to draft.invalid", func() {
+	s.Run("And retrying re-enters draft.created", func() {
+		clock.SetTime(invoice.DefaultCollectionAtForStandardInvoice().Add(time.Minute))
+
+		queuedBillingService := s.BillingService.WithAdvancementStrategy(billing.QueuedAdvancementStrategy)
+
+		var err error
+		invoice, err = queuedBillingService.RetryInvoice(ctx, invoice.GetInvoiceID())
+		s.NoError(err)
+		s.Equal(billing.StandardInvoiceStatusDraftCreated, invoice.Status)
+		s.Require().Len(invoice.ValidationIssues, 1)
+		s.Equal(billing.ValidationIssueSeverityWarning, invoice.ValidationIssues[0].Severity)
+		s.Equal(billing.ErrInvoiceLineFeatureHasNoMeters.Code, invoice.ValidationIssues[0].Code)
+		s.Equal(billing.LineEngineValidationComponent(billing.LineEngineTypeInvoice), invoice.ValidationIssues[0].Component)
+	})
+
+	s.Run("And advancing while the meter is missing returns to draft.invalid_created", func() {
 		var err error
 		invoice, err = s.BillingService.AdvanceInvoice(ctx, invoice.GetInvoiceID())
 		s.NoError(err)
-		s.Equal(billing.StandardInvoiceStatusDraftInvalid, invoice.Status)
-		s.NotEmpty(invoice.ValidationIssues)
+		s.Equal(billing.StandardInvoiceStatusDraftInvalidCreated, invoice.Status)
+		s.Require().Len(invoice.ValidationIssues, 1)
+		s.Equal(billing.ValidationIssueSeverityCritical, invoice.ValidationIssues[0].Severity)
+		s.Nil(invoice.QuantitySnapshotedAt)
+	})
+
+	s.Run("And retrying after restoring the meter re-snapshots quantities", func() {
+		err := s.MeterAdapter.ReplaceMeters(ctx, []meter.Meter{snapshotMeter})
+		s.NoError(err)
+
+		invoice, err = s.BillingService.RetryInvoice(ctx, invoice.GetInvoiceID())
+		s.NoError(err)
+		s.Equal(billing.StandardInvoiceStatusDraftWaitingAutoApproval, invoice.Status)
+		s.Empty(invoice.ValidationIssues)
+		s.NotNil(invoice.QuantitySnapshotedAt)
+		s.Require().Len(invoice.Lines.OrEmpty(), 1)
+		s.Require().NotNil(invoice.Lines.OrEmpty()[0].UsageBased.MeteredQuantity)
+		s.Equal(float64(7), invoice.Lines.OrEmpty()[0].UsageBased.MeteredQuantity.InexactFloat64())
 	})
 }
 
@@ -4788,7 +5211,7 @@ func (s *InvoicingTestSuite) TestGatheringInvoiceEmulation() {
 		billing.CreatePendingInvoiceLinesInput{
 			Customer: customerEntity.GetID(),
 			Currency: currencyx.FiatCode(currency.USD),
-			Lines: []billing.GatheringLine{
+			Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 				billing.NewFlatFeeGatheringLine(billing.NewFlatFeeLineInput{
 					Namespace:     namespace,
 					Period:        timeutil.ClosedPeriod{From: periodStart, To: periodEnd},
@@ -4798,7 +5221,7 @@ func (s *InvoicingTestSuite) TestGatheringInvoiceEmulation() {
 					PerUnitAmount: alpacadecimal.NewFromFloat(100),
 					PaymentTerm:   productcatalog.InAdvancePaymentTerm,
 				}),
-			},
+			}),
 		})
 
 	// Then we should have the items created
@@ -4873,7 +5296,7 @@ func (s *InvoicingTestSuite) TestUpdateInvoice() {
 			res, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines:    testLines,
+				Lines:    billing.NewCreatePendingInvoiceLines(testLines),
 			})
 			require.NoError(s.T(), err)
 			require.Len(s.T(), res.Lines, 2)
@@ -4968,7 +5391,7 @@ func (s *InvoicingTestSuite) TestUpdateInvoice() {
 			pendingLines, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines:    testLines,
+				Lines:    billing.NewCreatePendingInvoiceLines(testLines),
 			})
 			require.NoError(s.T(), err)
 			require.Len(s.T(), pendingLines.Lines, 2)
@@ -5001,6 +5424,7 @@ func (s *InvoicingTestSuite) TestUpdateInvoice() {
 					}
 
 					line.DeletedAt = lo.ToPtr(clock.Now())
+
 					return nil
 				},
 			})

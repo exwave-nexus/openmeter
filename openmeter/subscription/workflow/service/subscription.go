@@ -12,6 +12,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/customer"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	productcatalogcurrencyresolver "github.com/openmeterio/openmeter/openmeter/productcatalog/currencyresolver"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog/featureresolver"
 	"github.com/openmeterio/openmeter/openmeter/subscription"
 	subscriptionaddon "github.com/openmeterio/openmeter/openmeter/subscription/addon"
 	"github.com/openmeterio/openmeter/openmeter/subscription/patch"
@@ -84,7 +85,7 @@ func (s *service) createFromPlan(ctx context.Context, inp subscriptionworkflow.C
 			return def, err
 		}
 
-		// Let's normalize the billing anchor to the closest iteration based on the cadence
+		// Keep the supplied recurrence anchor; billing calculates periods from it.
 		billingAnchor := lo.FromPtrOr(inp.BillingAnchor, activeFrom).UTC()
 
 		// Let's create the new Spec
@@ -124,25 +125,17 @@ func resolveSubscriptionInvoiceCurrency(cus customer.Customer, plan subscription
 		return "", models.NewGenericValidationError(fmt.Errorf("invalid plan currency: %w", err))
 	}
 
-	if cus.Currency == nil {
-		if planCurrency.IsFiat() {
-			return planCurrency.GetCode(), nil
-		}
-
-		return "", models.NewGenericValidationError(fmt.Errorf(
-			"customer currency is required when plan currency %q is custom",
-			planCurrency.GetCode(),
-		))
-	}
-
-	if !cus.Currency.IsFiat() {
+	if cus.Currency != nil && !cus.Currency.IsFiat() {
 		return "", models.NewGenericValidationError(fmt.Errorf("customer currency %q must be fiat", *cus.Currency))
 	}
 
-	if planCurrency.IsFiat() && planCurrency.GetCode() != *cus.Currency {
+	if planCurrency.IsFiat() {
+		return planCurrency.GetCode(), nil
+	}
+
+	if cus.Currency == nil {
 		return "", models.NewGenericValidationError(fmt.Errorf(
-			"currency mismatch: customer currency is %s, but plan currency is %s",
-			*cus.Currency,
+			"customer currency is required when plan currency %q is custom",
 			planCurrency.GetCode(),
 		))
 	}
@@ -150,9 +143,9 @@ func resolveSubscriptionInvoiceCurrency(cus customer.Customer, plan subscription
 	return *cus.Currency, nil
 }
 
-// resolveEditPatchCurrency resolves the currency of a newly authored priced
-// item before patch validation requires a persisted custom-currency identity.
-func (s *service) resolveEditPatchCurrency(ctx context.Context, namespace string, invoiceCurrency currencyx.Code, customization subscription.Patch) (subscription.Patch, error) {
+// resolveEditPatchRateCardReferences canonicalizes the feature and currency of
+// a newly authored item before the patch is applied to the subscription spec.
+func (s *service) resolveEditPatchRateCardReferences(ctx context.Context, namespace string, invoiceCurrency currencyx.Code, customization subscription.Patch) (subscription.Patch, error) {
 	var addItem *patch.PatchAddItem
 	returnsPointer := false
 
@@ -163,6 +156,7 @@ func (s *service) resolveEditPatchCurrency(ctx context.Context, namespace string
 		if value == nil {
 			return nil, errors.New("add-item patch is required")
 		}
+
 		addItem = value
 		returnsPointer = true
 	default:
@@ -170,29 +164,42 @@ func (s *service) resolveEditPatchCurrency(ctx context.Context, namespace string
 	}
 
 	rateCard := addItem.CreateInput.RateCard
-	if rateCard == nil || rateCard.AsMeta().Price == nil {
+	if rateCard == nil {
 		return customization, nil
 	}
 
 	rateCard = rateCard.Clone()
-	if rateCard.AsMeta().Currency == nil {
-		if err := rateCard.ChangeMeta(func(meta productcatalog.RateCardMeta) (productcatalog.RateCardMeta, error) {
-			meta.Currency = lo.ToPtr(currencies.NewCurrencyReference(invoiceCurrency))
-			return meta, nil
-		}); err != nil {
-			return nil, fmt.Errorf("defaulting add-item currency: %w", err)
-		}
+	rateCards := productcatalog.RateCards{rateCard}
+	if err := featureresolver.ResolveFeaturesForRateCards(ctx, s.FeatureResolver, namespace, &rateCards); err != nil {
+		return nil, fmt.Errorf("resolving add-item feature: %w", err)
 	}
 
-	rateCards := productcatalog.RateCards{rateCard}
-	if err := productcatalogcurrencyresolver.ResolveCurrenciesForRateCards(ctx, s.CurrencyResolver.WithNamespace(namespace), &rateCards); err != nil {
-		return nil, fmt.Errorf("resolving add-item currency: %w", err)
+	rateCard = rateCards[0]
+
+	if rateCard.AsMeta().Price != nil {
+		if rateCard.AsMeta().Currency == nil {
+			if err := rateCard.ChangeMeta(func(meta productcatalog.RateCardMeta) (productcatalog.RateCardMeta, error) {
+				meta.Currency = lo.ToPtr(currencies.NewCurrencyReference(invoiceCurrency))
+				return meta, nil
+			}); err != nil {
+				return nil, fmt.Errorf("defaulting add-item currency: %w", err)
+			}
+		}
+
+		rateCards[0] = rateCard
+		if err := productcatalogcurrencyresolver.ResolveCurrenciesForRateCards(ctx, s.CurrencyResolver.WithNamespace(namespace), &rateCards); err != nil {
+			return nil, fmt.Errorf("resolving add-item currency: %w", err)
+		}
+
+		rateCard = rateCards[0]
 	}
-	addItem.CreateInput.RateCard = rateCards[0]
+
+	addItem.CreateInput.RateCard = rateCard
 
 	if returnsPointer {
 		return addItem, nil
 	}
+
 	return *addItem, nil
 }
 
@@ -223,6 +230,7 @@ func (s *service) EditRunning(ctx context.Context, subscriptionID models.Namespa
 				if ap.CreateInput.CreateSubscriptionItemInput.Annotations == nil {
 					ap.CreateInput.CreateSubscriptionItemInput.Annotations = models.Annotations{}
 				}
+
 				_, _ = subscription.AnnotationParser.AddOwnerSubSystem(ap.CreateInput.CreateSubscriptionItemInput.Annotations, subscription.OwnerSubscriptionSubSystem)
 
 				subscriptionworkflow.AnnotationParser.SetUniquePatchID(ap.CreateInput.CreateSubscriptionItemInput.Annotations)
@@ -234,6 +242,7 @@ func (s *service) EditRunning(ctx context.Context, subscriptionID models.Namespa
 				if ap.CreateInput.CreateSubscriptionItemInput.Annotations == nil {
 					ap.CreateInput.CreateSubscriptionItemInput.Annotations = models.Annotations{}
 				}
+
 				_, _ = subscription.AnnotationParser.AddOwnerSubSystem(ap.CreateInput.CreateSubscriptionItemInput.Annotations, subscription.OwnerSubscriptionSubSystem)
 
 				subscriptionworkflow.AnnotationParser.SetUniquePatchID(ap.CreateInput.CreateSubscriptionItemInput.Annotations)
@@ -252,10 +261,11 @@ func (s *service) EditRunning(ctx context.Context, subscriptionID models.Namespa
 		}
 
 		for i, customization := range customizations {
-			resolved, err := s.resolveEditPatchCurrency(ctx, subscriptionID.Namespace, curr.Spec.InvoiceCurrency, customization)
+			resolved, err := s.resolveEditPatchRateCardReferences(ctx, subscriptionID.Namespace, curr.Spec.InvoiceCurrency, customization)
 			if err != nil {
 				return subscription.SubscriptionView{}, models.ErrorWithComponent(models.ComponentName(fmt.Sprintf("patch[%d]", i)), err)
 			}
+
 			customizations[i] = resolved
 		}
 
@@ -381,14 +391,17 @@ func (s *service) ChangeToPlan(ctx context.Context, subscriptionID models.Namesp
 		} else {
 			currAnnotations = maps.Clone(currAnnotations)
 		}
+
 		currAnnotations, err = subscription.AnnotationParser.SetSupersedingSubscriptionID(currAnnotations, new.Subscription.ID)
 		if err != nil {
 			return res{}, fmt.Errorf("failed to set superseding subscription ID: %w", err)
 		}
+
 		updatedCurr, err := s.Service.UpdateAnnotations(ctx, curr.NamespacedID, currAnnotations)
 		if err != nil {
 			return res{}, fmt.Errorf("failed to update current subscription annotations: %w", err)
 		}
+
 		curr = *updatedCurr
 
 		// Let's just return after a great success

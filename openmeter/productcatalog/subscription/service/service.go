@@ -10,6 +10,7 @@ import (
 
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
+	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/plan"
 	plansubscription "github.com/openmeterio/openmeter/openmeter/productcatalog/subscription"
 	"github.com/openmeterio/openmeter/openmeter/subscription"
@@ -18,11 +19,17 @@ import (
 	"github.com/openmeterio/openmeter/pkg/models"
 )
 
+// errCustomCurrenciesDisabled is returned when an inline plan uses a custom
+// currency but the credits feature (which gates custom currencies) is not enabled
+// on the deployment. Shared by the create and change paths.
+var errCustomCurrenciesDisabled = errors.New("custom currencies are not enabled on this deployment of OpenMeter")
+
 type Config struct {
 	// TODO: WorkflowService and this can probably be merged
 	WorkflowService     subscriptionworkflow.Service
 	SubscriptionService subscription.Service
 	PlanService         plan.Service
+	FeatureResolver     productcatalog.FeatureResolver
 	CurrencyResolver    currencies.CurrencyResolver
 	Logger              *slog.Logger
 	CustomerService     customer.Service
@@ -41,6 +48,10 @@ func (c Config) Validate() error {
 
 	if c.PlanService == nil {
 		errs = append(errs, errors.New("plan service is required"))
+	}
+
+	if c.FeatureResolver == nil {
+		errs = append(errs, errors.New("feature resolver is required"))
 	}
 
 	if c.CurrencyResolver == nil {

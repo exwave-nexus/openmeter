@@ -815,6 +815,16 @@ func ManagedByNotIn(vs ...billing.InvoiceLineManagedBy) predicate.ChargeUsageBas
 	return predicate.ChargeUsageBased(sql.FieldNotIn(FieldManagedBy, v...))
 }
 
+// SubscriptionPlanIsNil applies the IsNil predicate on the "subscription_plan" field.
+func SubscriptionPlanIsNil() predicate.ChargeUsageBased {
+	return predicate.ChargeUsageBased(sql.FieldIsNull(FieldSubscriptionPlan))
+}
+
+// SubscriptionPlanNotNil applies the NotNil predicate on the "subscription_plan" field.
+func SubscriptionPlanNotNil() predicate.ChargeUsageBased {
+	return predicate.ChargeUsageBased(sql.FieldNotNull(FieldSubscriptionPlan))
+}
+
 // SubscriptionIDEQ applies the EQ predicate on the "subscription_id" field.
 func SubscriptionIDEQ(v string) predicate.ChargeUsageBased {
 	return predicate.ChargeUsageBased(sql.FieldEQ(FieldSubscriptionID, v))
@@ -1550,6 +1560,16 @@ func DescriptionContainsFold(v string) predicate.ChargeUsageBased {
 	return predicate.ChargeUsageBased(sql.FieldContainsFold(FieldDescription, v))
 }
 
+// ValidationIssuesIsNil applies the IsNil predicate on the "validation_issues" field.
+func ValidationIssuesIsNil() predicate.ChargeUsageBased {
+	return predicate.ChargeUsageBased(sql.FieldIsNull(FieldValidationIssues))
+}
+
+// ValidationIssuesNotNil applies the NotNil predicate on the "validation_issues" field.
+func ValidationIssuesNotNil() predicate.ChargeUsageBased {
+	return predicate.ChargeUsageBased(sql.FieldNotNull(FieldValidationIssues))
+}
+
 // InvoiceAtEQ applies the EQ predicate on the "invoice_at" field.
 func InvoiceAtEQ(v time.Time) predicate.ChargeUsageBased {
 	return predicate.ChargeUsageBased(sql.FieldEQ(FieldInvoiceAt, v))
@@ -1798,6 +1818,16 @@ func FeatureIDHasPrefix(v string) predicate.ChargeUsageBased {
 // FeatureIDHasSuffix applies the HasSuffix predicate on the "feature_id" field.
 func FeatureIDHasSuffix(v string) predicate.ChargeUsageBased {
 	return predicate.ChargeUsageBased(sql.FieldHasSuffix(FieldFeatureID, v))
+}
+
+// FeatureIDIsNil applies the IsNil predicate on the "feature_id" field.
+func FeatureIDIsNil() predicate.ChargeUsageBased {
+	return predicate.ChargeUsageBased(sql.FieldIsNull(FieldFeatureID))
+}
+
+// FeatureIDNotNil applies the NotNil predicate on the "feature_id" field.
+func FeatureIDNotNil() predicate.ChargeUsageBased {
+	return predicate.ChargeUsageBased(sql.FieldNotNull(FieldFeatureID))
 }
 
 // FeatureIDEqualFold applies the EqualFold predicate on the "feature_id" field.

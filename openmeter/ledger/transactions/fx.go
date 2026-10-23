@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/alpacahq/alpacadecimal"
-	"github.com/samber/lo"
 
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
@@ -15,6 +14,8 @@ import (
 	"github.com/openmeterio/openmeter/pkg/models"
 )
 
+// ConvertCurrencyTemplate materializes a fiat-funded custom-currency
+// receivable exchange. The source is fiat and the target is custom currency.
 type ConvertCurrencyTemplate struct {
 	At           time.Time
 	SourceAmount alpacadecimal.Decimal
@@ -23,7 +24,9 @@ type ConvertCurrencyTemplate struct {
 
 	SourceCurrency currencies.CurrencyReference
 	TargetCurrency currencies.CurrencyReference
-	Features       []string
+	Filters        ledger.CreditFilters
+	SourceChargeID *string
+	SpendChargeID  *string
 }
 
 func (t ConvertCurrencyTemplate) Validate() error {
@@ -59,12 +62,10 @@ func (t ConvertCurrencyTemplate) Validate() error {
 
 	if err := t.TargetCurrency.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("target currency: %w", err))
-	} else if t.TargetCurrency.IsCustom() {
-		if !t.TargetCurrency.IsResolved() {
-			errs = append(errs, errors.New("target custom currency must be resolved"))
-		}
-	} else if !t.TargetCurrency.IsFiat() || t.TargetCurrency.Code != t.SourceCurrency.Code {
-		errs = append(errs, errors.New("target currency must be custom or match the source fiat currency"))
+	} else if !t.TargetCurrency.IsCustom() {
+		errs = append(errs, errors.New("target currency must be custom"))
+	} else if !t.TargetCurrency.IsResolved() {
+		errs = append(errs, errors.New("target custom currency must be resolved"))
 	}
 
 	return models.NewNillableGenericValidationError(errors.Join(errs...))
@@ -72,8 +73,97 @@ func (t ConvertCurrencyTemplate) Validate() error {
 
 var _ CustomerTransactionTemplate = (ConvertCurrencyTemplate{})
 
-func (t ConvertCurrencyTemplate) correct(CorrectionInput) ([]ledger.TransactionInput, error) {
-	return nil, templateCorrectionNotImplemented(TemplateCode(t))
+// correct reverses the complete original conversion, reusing its exact rounded
+// source amount. Partial correction requires persisted cross-realization FX
+// remainder state and is therefore intentionally unsupported here.
+func (t ConvertCurrencyTemplate) correct(scope CorrectionInput) ([]ledger.TransactionInput, error) {
+	if scope.CostBasis == nil {
+		return nil, errors.New("cost basis is required to correct a currency conversion")
+	}
+
+	var sourceReceivable, brokerageSource, targetReceivable, brokerageTarget ledger.Entry
+	var originalSourceAmount, originalTargetAmount alpacadecimal.Decimal
+	var originalCostBasis *alpacadecimal.Decimal
+
+	for _, entry := range scope.OriginalTransaction.Entries() {
+		route := entry.PostingAddress().Route().Route()
+
+		switch {
+		case entry.PostingAddress().AccountType() == ledger.AccountTypeCustomerReceivable && entry.Amount().IsNegative():
+			sourceReceivable = entry
+			originalSourceAmount = originalSourceAmount.Add(entry.Amount().Abs())
+			originalCostBasis = route.CostBasis
+		case entry.PostingAddress().AccountType() == ledger.AccountTypeCustomerReceivable && entry.Amount().IsPositive():
+			targetReceivable = entry
+			originalTargetAmount = originalTargetAmount.Add(entry.Amount())
+		case entry.PostingAddress().AccountType() == ledger.AccountTypeBrokerage && entry.Amount().IsPositive() && route.CostBasisCurrency == nil:
+			brokerageSource = entry
+		case entry.PostingAddress().AccountType() == ledger.AccountTypeBrokerage && entry.Amount().IsNegative() && route.CostBasisCurrency != nil:
+			brokerageTarget = entry
+		}
+	}
+
+	if sourceReceivable == nil || brokerageSource == nil || targetReceivable == nil || brokerageTarget == nil {
+		return nil, errors.New("currency conversion correction requires the original source and target receivable and brokerage entries")
+	}
+
+	if originalCostBasis == nil || !originalCostBasis.Equal(*scope.CostBasis) {
+		return nil, fmt.Errorf("correction cost basis %s does not match the original booking", scope.CostBasis.String())
+	}
+
+	if !scope.Amount.Equal(originalTargetAmount) {
+		return nil, fmt.Errorf("currency conversion correction requires full original target amount %s, got %s", originalTargetAmount.String(), scope.Amount.String())
+	}
+
+	entryInputs := []*EntryInput{
+		{
+			address: sourceReceivable.PostingAddress(),
+			amount:  originalSourceAmount,
+			identity: ledger.EntryIdentityParts{
+				Provenance: ledger.Provenance{
+					SourceChargeID: sourceReceivable.Provenance().SourceChargeID,
+					SpendChargeID:  sourceReceivable.Provenance().SpendChargeID,
+				},
+			},
+		},
+		{
+			address: brokerageSource.PostingAddress(),
+			amount:  originalSourceAmount.Neg(),
+			identity: ledger.EntryIdentityParts{
+				Provenance: ledger.Provenance{
+					SourceChargeID: brokerageSource.Provenance().SourceChargeID,
+					SpendChargeID:  brokerageSource.Provenance().SpendChargeID,
+				},
+			},
+		},
+		{
+			address: targetReceivable.PostingAddress(),
+			amount:  scope.Amount.Neg(),
+			identity: ledger.EntryIdentityParts{
+				Provenance: ledger.Provenance{
+					SourceChargeID: targetReceivable.Provenance().SourceChargeID,
+					SpendChargeID:  targetReceivable.Provenance().SpendChargeID,
+				},
+			},
+		},
+		{
+			address: brokerageTarget.PostingAddress(),
+			amount:  scope.Amount,
+			identity: ledger.EntryIdentityParts{
+				Provenance: ledger.Provenance{
+					SourceChargeID: brokerageTarget.Provenance().SourceChargeID,
+					SpendChargeID:  brokerageTarget.Provenance().SpendChargeID,
+				},
+			},
+		},
+	}
+
+	return []ledger.TransactionInput{
+		&TransactionInput{
+			bookedAt:    scope.At,
+			entryInputs: entryInputs,
+		},
+	}, nil
 }
 
 func (t ConvertCurrencyTemplate) typeGuard() guard {
@@ -85,11 +175,14 @@ func (t ConvertCurrencyTemplate) code() TransactionTemplateCode {
 }
 
 func (t ConvertCurrencyTemplate) resolve(ctx context.Context, customerID customer.CustomerID, resolvers ResolverDependencies) (ledger.TransactionInput, error) {
-	costBasis := t.CostBasis
-	targetCostBasisCurrency := lo.ToPtr(t.SourceCurrency.Code)
-	if t.TargetCurrency.IsFiat() {
-		targetCostBasisCurrency = nil
+	identity := ledger.EntryIdentityParts{
+		Provenance: ledger.Provenance{
+			SourceChargeID: t.SourceChargeID,
+			SpendChargeID:  t.SpendChargeID,
+		},
 	}
+	costBasis := t.CostBasis
+	targetCostBasisCurrency := t.SourceCurrency.Code
 	customerAccounts, err := resolvers.AccountService.GetCustomerAccounts(ctx, customerID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get customer accounts: %w", err)
@@ -98,7 +191,7 @@ func (t ConvertCurrencyTemplate) resolve(ctx context.Context, customerID custome
 	sourceAccount, err := customerAccounts.ReceivableAccount.GetSubAccountForRoute(ctx, ledger.CustomerReceivableRouteParams{
 		Currency:                       t.SourceCurrency,
 		CostBasis:                      &costBasis,
-		Features:                       t.Features,
+		Filters:                        t.Filters,
 		TransactionAuthorizationStatus: ledger.TransactionAuthorizationStatusOpen,
 	})
 	if err != nil {
@@ -107,9 +200,9 @@ func (t ConvertCurrencyTemplate) resolve(ctx context.Context, customerID custome
 
 	targetAccount, err := customerAccounts.ReceivableAccount.GetSubAccountForRoute(ctx, ledger.CustomerReceivableRouteParams{
 		Currency:                       t.TargetCurrency,
-		CostBasisCurrency:              targetCostBasisCurrency,
+		CostBasisCurrency:              &targetCostBasisCurrency,
 		CostBasis:                      &costBasis,
-		Features:                       t.Features,
+		Filters:                        t.Filters,
 		TransactionAuthorizationStatus: ledger.TransactionAuthorizationStatusOpen,
 	})
 	if err != nil {
@@ -131,27 +224,11 @@ func (t ConvertCurrencyTemplate) resolve(ctx context.Context, customerID custome
 
 	brokerageTarget, err := businessAccounts.BrokerageAccount.GetSubAccountForRoute(ctx, ledger.BusinessRouteParams{
 		Currency:          t.TargetCurrency,
-		CostBasisCurrency: targetCostBasisCurrency,
+		CostBasisCurrency: &targetCostBasisCurrency,
 		CostBasis:         &costBasis,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get brokerage target sub-account: %w", err)
-	}
-
-	if t.TargetCurrency.IsFiat() {
-		return &TransactionInput{
-			bookedAt: t.At,
-			entryInputs: []*EntryInput{
-				{
-					address: sourceAccount.Address(),
-					amount:  t.TargetAmount.Sub(t.SourceAmount),
-				},
-				{
-					address: brokerageSource.Address(),
-					amount:  t.SourceAmount.Sub(t.TargetAmount),
-				},
-			},
-		}, nil
 	}
 
 	return &TransactionInput{
@@ -159,21 +236,25 @@ func (t ConvertCurrencyTemplate) resolve(ctx context.Context, customerID custome
 		entryInputs: []*EntryInput{
 			// Source currency
 			{
-				address: sourceAccount.Address(),
-				amount:  t.SourceAmount.Neg(),
+				address:  sourceAccount.Address(),
+				amount:   t.SourceAmount.Neg(),
+				identity: identity,
 			},
 			{
-				address: brokerageSource.Address(),
-				amount:  t.SourceAmount,
+				address:  brokerageSource.Address(),
+				amount:   t.SourceAmount,
+				identity: identity,
 			},
 			// Target currency
 			{
-				address: targetAccount.Address(),
-				amount:  t.TargetAmount,
+				address:  targetAccount.Address(),
+				amount:   t.TargetAmount,
+				identity: identity,
 			},
 			{
-				address: brokerageTarget.Address(),
-				amount:  t.TargetAmount.Neg(),
+				address:  brokerageTarget.Address(),
+				amount:   t.TargetAmount.Neg(),
+				identity: identity,
 			},
 		},
 	}, nil

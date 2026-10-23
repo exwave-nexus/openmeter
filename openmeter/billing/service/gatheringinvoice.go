@@ -8,10 +8,8 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/openmeterio/openmeter/openmeter/billing"
-	"github.com/openmeterio/openmeter/openmeter/billing/rating"
 	"github.com/openmeterio/openmeter/openmeter/billing/service/invoicecalc"
 	"github.com/openmeterio/openmeter/openmeter/customer"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/framework/transaction"
 	"github.com/openmeterio/openmeter/pkg/pagination"
@@ -149,6 +147,7 @@ func (s *Service) UpdateGatheringInvoice(ctx context.Context, input billing.Upda
 			if err != nil {
 				return billing.GatheringInvoice{}, fmt.Errorf("converting edited invoice to gathering invoice: %w", err)
 			}
+
 			invoice = gatheringInvoice
 
 		case billing.ChangeSourceSystem:
@@ -179,13 +178,8 @@ func (s *Service) UpdateGatheringInvoice(ctx context.Context, input billing.Upda
 			}
 		}
 
-		featureMeters, err := s.resolveFeatureMeters(ctx, invoice.Namespace, invoice.Lines)
-		if err != nil {
-			return billing.GatheringInvoice{}, fmt.Errorf("resolving feature meters: %w", err)
-		}
-
 		// Check if the new lines are still invoicable
-		if err := s.checkIfGatheringLinesAreInvoicable(ctx, invoice, customerProfile.MergedProfile.WorkflowConfig.Invoicing.ProgressiveBilling, featureMeters); err != nil {
+		if err := s.checkIfGatheringLinesAreInvoicable(ctx, invoice, customerProfile.MergedProfile.WorkflowConfig.Invoicing.ProgressiveBilling); err != nil {
 			return billing.GatheringInvoice{}, err
 		}
 
@@ -218,35 +212,33 @@ func (s *Service) UpdateGatheringInvoice(ctx context.Context, input billing.Upda
 	})
 }
 
-func (s Service) checkIfGatheringLinesAreInvoicable(ctx context.Context, invoice billing.GatheringInvoice, progressiveBilling bool, featureMeters feature.FeatureMeters) error {
+func (s Service) checkIfGatheringLinesAreInvoicable(ctx context.Context, invoice billing.GatheringInvoice, progressiveBilling bool) error {
 	linesToCheck := lo.Filter(invoice.Lines.OrEmpty(), func(line billing.GatheringLine, _ int) bool {
 		return line.DeletedAt == nil
 	})
 
-	return errors.Join(
-		lo.Map(linesToCheck, func(line billing.GatheringLine, _ int) error {
-			if err := line.Validate(); err != nil {
-				return fmt.Errorf("validating line[%s]: %w", line.ID, err)
-			}
-			period, err := s.ratingService.ResolveBillablePeriod(rating.ResolveBillablePeriodInput{
-				Line:               line,
-				FeatureMeters:      featureMeters,
-				ProgressiveBilling: progressiveBilling,
-				AsOf:               line.InvoiceAt,
+	var errs []error
+	for _, line := range linesToCheck {
+		// Note: this is considered a low frequency operation, so we are not using the batch API here.
+		// Current implementation focuses on main use-cases and readability over the performance of this operation.
+		results, err := s.areGatheringLinesBillableAsOf(ctx, billing.AreLinesBillableAsOfInput{
+			Invoice:            invoice,
+			AsOf:               line.InvoiceAt,
+			ProgressiveBilling: progressiveBilling,
+			Lines:              billing.GatheringLines{line},
+		})
+		if err != nil {
+			return err
+		}
+
+		if len(results) != 1 || !results[0].Billable {
+			errs = append(errs, billing.ValidationError{
+				Err: fmt.Errorf("line[%s]: %w as of %s", line.ID, billing.ErrInvoiceLinesNotBillable, line.InvoiceAt),
 			})
-			if err != nil {
-				return fmt.Errorf("checking if line[%s] can be invoiced: %w", line.ID, err)
-			}
+		}
+	}
 
-			if period == nil {
-				return billing.ValidationError{
-					Err: fmt.Errorf("line[%s]: %w as of %s", line.ID, billing.ErrInvoiceLinesNotBillable, line.InvoiceAt),
-				}
-			}
-
-			return nil
-		})...,
-	)
+	return errors.Join(errs...)
 }
 
 func (s *Service) GetGatheringInvoiceById(ctx context.Context, input billing.GetGatheringInvoiceByIdInput) (billing.GatheringInvoice, error) {

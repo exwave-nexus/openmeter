@@ -3,31 +3,42 @@ package usagebased
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
+	"github.com/alpacahq/alpacadecimal"
 	"github.com/samber/lo"
 
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
+	billingfeaturemeter "github.com/openmeterio/openmeter/openmeter/billing/featuremeter"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
+	"github.com/openmeterio/openmeter/openmeter/ledger"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
+	"github.com/openmeterio/openmeter/pkg/equal"
 	"github.com/openmeterio/openmeter/pkg/models"
 	"github.com/openmeterio/openmeter/pkg/ref"
 	"github.com/openmeterio/openmeter/pkg/timeutil"
 )
 
-var _ meta.ChargeAccessor = (*ChargeBase)(nil)
+var (
+	_ meta.ChargeAccessor                        = (*ChargeBase)(nil)
+	_ billingfeaturemeter.FeatureReferenceGetter = Charge{}
+	_ billingfeaturemeter.FeatureReferenceOwner  = Charge{}
+	_ billingfeaturemeter.FeatureReferenceGetter = Intent{}
+	_ models.Equaler[Intent]                     = Intent{}
+)
 
 type ChargeBase struct {
 	meta.ManagedResource
 
-	Intent OverridableIntent `json:"intent"`
-	Status Status            `json:"status"`
+	Intent           OverridableIntent        `json:"intent"`
+	Status           Status                   `json:"status"`
+	ValidationIssues billing.ValidationIssues `json:"validationIssues,omitempty"`
 
 	State State `json:"state"`
 }
@@ -83,6 +94,13 @@ func (c ChargeBase) GetCustomerID() customer.CustomerID {
 
 func (c ChargeBase) GetCurrency() currencies.Currency {
 	return c.Intent.GetCurrency()
+}
+
+// GetResolvedCostBasis returns the charge's persisted cost-basis snapshot, or
+// nil if the charge's currency is fiat or the dynamic cost basis has not been
+// resolved yet.
+func (c ChargeBase) GetResolvedCostBasis() *costbasis.State {
+	return c.State.ResolvedCostBasis
 }
 
 func (c ChargeBase) GetInvoiceCurrency() (currencyx.FiatCode, error) {
@@ -169,6 +187,75 @@ func (c Charge) GetCurrentRealizationRun() (RealizationRun, error) {
 	return c.Realizations.GetByID(*c.State.CurrentRealizationRunID)
 }
 
+// ServicePeriodFor returns the nominal service period of a realization run.
+// A run starts at its referenced predecessor's persisted end, or at the
+// effective intent's service-period start when it has no predecessor.
+func (c Charge) ServicePeriodFor(currentRun RealizationRun) (timeutil.ClosedPeriod, error) {
+	periodTo := meta.NormalizeTimestamp(currentRun.ServicePeriodTo)
+	if currentRun.PriorRunID == nil {
+		return timeutil.ClosedPeriod{
+			From: meta.NormalizeTimestamp(c.Intent.GetEffectiveServicePeriod().From),
+			To:   periodTo,
+		}, nil
+	}
+
+	priorRun, err := c.Realizations.GetByID(currentRun.PriorRunID.ID)
+	if err != nil {
+		return timeutil.ClosedPeriod{}, fmt.Errorf("resolve prior realization run %s for run %s: %w", currentRun.PriorRunID.ID, currentRun.ID.ID, err)
+	}
+
+	if priorRun.ID.Namespace != currentRun.ID.Namespace {
+		return timeutil.ClosedPeriod{}, fmt.Errorf("prior realization run %s namespace does not match run %s namespace", priorRun.ID.ID, currentRun.ID.ID)
+	}
+
+	if priorRun.ID == currentRun.ID {
+		return timeutil.ClosedPeriod{}, fmt.Errorf("prior realization run cannot reference run %s itself", currentRun.ID.ID)
+	}
+
+	return timeutil.ClosedPeriod{
+		From: meta.NormalizeTimestamp(priorRun.ServicePeriodTo),
+		To:   periodTo,
+	}, nil
+}
+
+// BisectRealizationRunsByTimestamp splits non-voided realization runs by their
+// nominal service period relative to at.
+//
+// The returned before slice contains every non-voided run whose derived
+// service period ends at or before at. The returned containingOrAfter slice
+// contains every non-voided run whose derived service period contains at, or
+// whose nominal service period starts after at. Both returned slices are sorted
+// by ServicePeriodTo and then CreatedAt.
+func (c Charge) BisectRealizationRunsByTimestamp(at time.Time) (before RealizationRuns, containingOrAfter RealizationRuns, err error) {
+	at = meta.NormalizeTimestamp(at)
+
+	nonVoidedRuns := c.Realizations.WithoutVoidedBillingHistory()
+	slices.SortStableFunc(nonVoidedRuns, func(a RealizationRun, b RealizationRun) int {
+		if comparison := meta.NormalizeTimestamp(a.ServicePeriodTo).Compare(meta.NormalizeTimestamp(b.ServicePeriodTo)); comparison != 0 {
+			return comparison
+		}
+
+		return a.CreatedAt.Compare(b.CreatedAt)
+	})
+
+	for _, run := range nonVoidedRuns {
+		runPeriod, err := c.ServicePeriodFor(run)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		containsAt := !at.Before(runPeriod.From) && at.Before(runPeriod.To)
+		startsAfterAt := runPeriod.From.After(at)
+		if containsAt || startsAfterAt {
+			containingOrAfter = append(containingOrAfter, run)
+		} else {
+			before = append(before, run)
+		}
+	}
+
+	return before, containingOrAfter, nil
+}
+
 func (c Charge) ConvertCustomCurrencyOverageToFiat(creditCurrencyTotals totals.Totals) (meta.FiatOverage, error) {
 	return meta.ConvertCustomCurrencyOverageToFiat(meta.ConvertCustomCurrencyOverageToFiatInput{
 		Currency:          c.Intent.GetCurrency(),
@@ -185,53 +272,27 @@ func (c Charge) GetCustomerID() customer.CustomerID {
 	}
 }
 
-func (c Charge) GetFeatureKeyOrID() ref.IDOrKey {
-	// State.FeatureID is the persisted resolved feature snapshot used by active
-	// charges; created/deleted fallbacks resolve by key.
-	switch c.Status {
-	case StatusCreated:
-		return ref.IDOrKey{
-			Key: c.Intent.GetBaseIntent().FeatureKey,
-		}
-	case StatusDeleted:
-		if c.State.FeatureID != "" {
-			return ref.IDOrKey{
-				ID: c.State.FeatureID,
-			}
-		}
-
-		return ref.IDOrKey{
-			Key: c.Intent.GetBaseIntent().FeatureKey,
-		}
-	default:
-		return ref.IDOrKey{
-			ID: c.State.FeatureID,
-		}
+func (c Charge) GetFeatureMeterRef() *billingfeaturemeter.FeatureMeterRef {
+	featureRef := ref.IDOrKey{ID: c.State.FeatureID}
+	if featureRef.ID == "" {
+		featureRef = ref.IDOrKey{Key: c.Intent.GetBaseIntent().FeatureKey}
 	}
-}
 
-func (c Charge) ResolveFeatureMeter(featureMeters feature.FeatureMeters) (feature.FeatureMeter, error) {
-	featureMeter, err := featureMeters.Resolve(feature.FeatureMeterRef{
-		IDOrKey:      c.GetFeatureKeyOrID(),
+	if lo.IsEmpty(featureRef) {
+		return nil
+	}
+
+	return &billingfeaturemeter.FeatureMeterRef{
+		IDOrKey:      featureRef,
 		RequireMeter: true,
-	})
-	if err != nil {
-		return feature.FeatureMeter{}, fmt.Errorf("resolve feature meter: %w", err)
 	}
-
-	return featureMeter, nil
 }
 
-// GetFeatureKeysOrIDs returns the unique state-aware feature references for the charges.
-// Each charge contributes the ref returned by GetFeatureKeyOrID, so created charges use keys,
-// deleted charges prefer IDs and fall back to keys, and all other states use IDs.
-func (c Charges) GetFeatureKeysOrIDs() []feature.FeatureMeterRef {
-	return lo.Uniq(lo.Map(c, func(charge Charge, _ int) feature.FeatureMeterRef {
-		return feature.FeatureMeterRef{
-			IDOrKey:      charge.GetFeatureKeyOrID(),
-			RequireMeter: true,
-		}
-	}))
+func (c Charge) GetFeatureMeterOwner() billingfeaturemeter.FeatureReferenceIdentity {
+	return billingfeaturemeter.FeatureReferenceIdentity{
+		Kind: billingfeaturemeter.FeatureReferenceKindCharges,
+		ID:   c.ID,
+	}
 }
 
 type Intent struct {
@@ -241,6 +302,10 @@ type Intent struct {
 	FeatureKey          string                        `json:"featureKey"`
 	FeatureID           string                        `json:"featureId"`
 	CostBasis           *costbasis.Intent             `json:"costBasis,omitempty"`
+}
+
+func (i Intent) Equal(other Intent) bool {
+	return deriveEqualIntent(&i, &other)
 }
 
 // AsOverridableIntent maps the intent's mutable fields as the base layer.
@@ -290,7 +355,15 @@ func (i Intent) GetFeatureRef() ref.IDOrKey {
 	if i.FeatureID != "" {
 		return ref.IDOrKey{ID: i.FeatureID}
 	}
+
 	return ref.IDOrKey{Key: i.FeatureKey}
+}
+
+func (i Intent) GetFeatureMeterRef() *billingfeaturemeter.FeatureMeterRef {
+	return &billingfeaturemeter.FeatureMeterRef{
+		IDOrKey:      i.GetFeatureRef(),
+		RequireMeter: true,
+	}
 }
 
 func validateCostBasis(currency currencies.Currency, settlementMode productcatalog.SettlementMode, intent *costbasis.Intent) error {
@@ -647,6 +720,20 @@ type IntentMutableFields struct {
 	UnitConfig *productcatalog.UnitConfig `json:"unitConfig,omitempty"`
 }
 
+func (f IntentMutableFields) Equal(other IntentMutableFields) bool {
+	return f.Name == other.Name &&
+		equal.ComparablePtrEqual(f.Description, other.Description) &&
+		f.Metadata.Equal(other.Metadata) &&
+		f.ServicePeriod.Equal(other.ServicePeriod) &&
+		f.FullServicePeriod.Equal(other.FullServicePeriod) &&
+		f.BillingPeriod.Equal(other.BillingPeriod) &&
+		equal.PtrEqual(f.IntentDeletedAt, other.IntentDeletedAt) &&
+		f.InvoiceAt.Equal(other.InvoiceAt) &&
+		(&f.Price).Equal(&other.Price) &&
+		f.Discounts.Equal(other.Discounts) &&
+		f.UnitConfig.Equal(other.UnitConfig)
+}
+
 func (f IntentMutableFields) Normalized() IntentMutableFields {
 	f.IntentMutableFields = f.IntentMutableFields.Normalized()
 	f.InvoiceAt = meta.NormalizeTimestamp(f.InvoiceAt)
@@ -694,6 +781,10 @@ func (f IntentMutableFields) Validate() error {
 		errs = append(errs, fmt.Errorf("unit config: %w", err))
 	}
 
+	if f.UnitConfig != nil && !f.Price.SupportsUnitConfig() {
+		errs = append(errs, errors.New("unit config requires a usage-based price (unit, graduated, or volume)"))
+	}
+
 	return models.NewNillableGenericValidationError(errors.Join(errs...))
 }
 
@@ -719,10 +810,6 @@ func (s State) Validate() error {
 		errs = append(errs, fmt.Errorf("current realization run ID must be non-empty"))
 	}
 
-	if s.FeatureID == "" {
-		errs = append(errs, fmt.Errorf("feature id must be set"))
-	}
-
 	if err := s.RatingEngine.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("rating engine: %w", err))
 	}
@@ -742,6 +829,10 @@ func (s State) Validate() error {
 
 type Expands struct {
 	RealtimeUsage *totals.Totals `json:"realtimeUsage,omitempty"`
+	// RealtimeQuantity is the cumulative metered quantity behind
+	// RealtimeUsage, captured by the same live read; set only under the
+	// realtime usage expand.
+	RealtimeQuantity *alpacadecimal.Decimal `json:"realtimeQuantity,omitempty"`
 }
 
 func (e Expands) Validate() error {
@@ -754,4 +845,8 @@ func (e Expands) Validate() error {
 	}
 
 	return models.NewNillableGenericValidationError(errors.Join(errs...))
+}
+
+func (i OverridableIntent) GetCreditFilters() ledger.CreditFilters {
+	return i.intent.GetCreditFilters(i.GetFeatureKey())
 }

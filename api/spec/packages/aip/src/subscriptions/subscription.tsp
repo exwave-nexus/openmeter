@@ -1,6 +1,7 @@
 import "@typespec/openapi";
 import "../shared/index.tsp";
 import "../productcatalog/ratecard.tsp";
+import "../productcatalog/plan.tsp";
 
 using TypeSpec.OpenAPI;
 
@@ -78,13 +79,49 @@ union SubscriptionEditTiming {
 }
 
 /**
- * Subscription create request.
+ * Subscription create timing. Only immediate is supported as an enum value —
+ * unlike edit timing, next_billing_cycle is not accepted on create, since a new
+ * subscription has no current billing cycle to schedule against.
  */
+@friendlyName("BillingSubscriptionCreateTimingEnum")
+enum SubscriptionCreateTimingEnum {
+  Immediate: "immediate",
+}
+
+/**
+ * When a subscription should start: immediate (the default) or a custom timestamp
+ * to schedule a future start.
+ */
+@oneOf
+@friendlyName("BillingSubscriptionCreateTiming")
+@example(SubscriptionCreateTimingEnum.Immediate)
+union SubscriptionCreateTiming {
+  Enum: SubscriptionCreateTimingEnum,
+  Custom: Shared.DateTime,
+}
+
+/**
+ * An inline (custom) plan definition used to create or change a subscription
+ * without referencing a published plan. Mirrors the plan create shape without a
+ * key or version, since a custom plan is not persisted or versioned on its own.
+ *
+ * `settlement_mode` is also omitted: it is a subscription-level concern set via
+ * the `settlement_mode` field on the create/change request, not on the inline
+ * plan.
+ */
+@friendlyName("BillingSubscriptionCustomPlan")
+model SubscriptionCustomPlan {
+  ...Shared.CreateRequest<OmitProperties<
+    ProductCatalog.Plan,
+    "key" | "version" | "settlement_mode"
+  >>;
+}
+
 @friendlyName("BillingSubscriptionCreate")
 model SubscriptionCreate {
   ...Shared.CreateRequest<OmitProperties<
     Subscription,
-    "customer_id" | "plan_id" | "billing_anchor"
+    "customer_id" | "plan" | "billing_anchor"
   >>;
 
   /**
@@ -113,9 +150,14 @@ model SubscriptionCreate {
   };
 
   /**
-   * The plan reference of the subscription.
+   * A reference to a published plan the subscription is created from.
+   *
+   * Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the
+   * subscription on an existing published plan; use `custom_plan` to define the plan
+   * inline.
    */
-  plan: {
+  @visibility(Lifecycle.Create)
+  plan?: {
     /**
      * The plan ID of the subscription. Set if subscription is created from a plan.
      *
@@ -147,6 +189,39 @@ model SubscriptionCreate {
   };
 
   /**
+   * An inline plan definition to create the subscription from, without referencing a
+   * published plan.
+   *
+   * Exactly one of `plan` or `custom_plan` must be provided. The subscription is not
+   * linked to a persisted plan, so the response omits the `plan` reference.
+   */
+  @visibility(Lifecycle.Create)
+  @summary("Custom plan")
+  custom_plan?: SubscriptionCustomPlan;
+
+  /**
+   * The key of the phase to start the subscription in. If not provided, the
+   * subscription starts in the first phase of the plan.
+   *
+   * Only applies when creating from a published `plan`; custom plans define their
+   * own phases inline.
+   */
+  @visibility(Lifecycle.Create)
+  @summary("Starting phase")
+  @minLength(1)
+  starting_phase?: string;
+
+  /**
+   * When the subscription should start. If not provided, the subscription starts
+   * immediately. Provide a future timestamp to schedule the subscription to start
+   * later — this creates a not-yet-active, scheduled subscription. A timestamp in
+   * the past is rejected.
+   */
+  @visibility(Lifecycle.Create)
+  @summary("Timing")
+  timing?: SubscriptionCreateTiming;
+
+  /**
    * A billing anchor is the fixed point in time that determines the subscription's
    * recurring billing cycle. It affects when charges occur and how prorations are
    * calculated. Common anchors:
@@ -171,12 +246,46 @@ model SubscriptionCreate {
 }
 
 /**
- * Subscription.
+ * Subscription fields without phases or the current billing period.
  */
-#suppress "@openmeter/api-spec-aip/repeated-prefix-grouping" "cost basis mode and pins are separate subscription properties"
-@friendlyName("BillingSubscription")
-model Subscription {
+#suppress "@openmeter/api-spec-aip/repeated-prefix-grouping" "cost_basis, active, and billing fields are separate top-level subscription properties, not sub-objects"
+@friendlyName("BillingSubscriptionBase")
+model SubscriptionBase {
   ...OmitProperties<Shared.Resource, "name" | "description">;
+
+  /**
+   * Display name of the subscription. Defaults to the plan name when the
+   * subscription is created from a plan.
+   */
+  @visibility(Lifecycle.Read)
+  @minLength(1)
+  @maxLength(256)
+  @summary("Name")
+  name: string;
+
+  /**
+   * Optional description of the subscription.
+   */
+  @visibility(Lifecycle.Read)
+  @maxLength(1024)
+  @summary("Description")
+  description?: string;
+
+  /**
+   * An ISO-8601 timestamp representation of when the subscription became (or will
+   * become) active.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Active from")
+  active_from: Shared.DateTime;
+
+  /**
+   * An ISO-8601 timestamp representation of when the subscription stops being
+   * active. Open-ended when not set.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Active to")
+  active_to?: Shared.DateTime;
 
   /**
    * The customer ID of the subscription.
@@ -187,10 +296,21 @@ model Subscription {
 
   /**
    * The plan ID of the subscription. Set if subscription is created from a plan.
+   *
+   * @deprecated Use `plan` instead, which also includes the plan key and version.
    */
+  #deprecated "Use plan instead"
   @visibility(Lifecycle.Read)
   @summary("Plan ID")
   plan_id?: Shared.ULID;
+
+  /**
+   * The plan the subscription was created from, if any. Includes the plan key and
+   * version so clients can resolve the exact plan revision.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Plan")
+  plan?: SubscriptionPlanReference;
 
   /**
    * The fiat currency in which the subscription is invoiced.
@@ -213,6 +333,22 @@ model Subscription {
   @visibility(Lifecycle.Read)
   @summary("Pinned cost bases")
   cost_basis_pins: SubscriptionCostBasisPin[];
+
+  /**
+   * The billing cadence of the subscription in ISO-8601 duration format. Defines how
+   * often the customer is billed. Examples: `P1M` (monthly), `P3M` (quarterly),
+   * `P1Y` (annually).
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Billing cadence")
+  billing_cadence: Shared.ISO8601Duration;
+
+  /**
+   * The pro-rating configuration of the subscription.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Pro-rating configuration")
+  pro_rating_config?: SubscriptionProRatingConfig;
 
   /**
    * A billing anchor is the fixed point in time that determines the subscription's
@@ -246,4 +382,148 @@ model Subscription {
   @visibility(Lifecycle.Create, Lifecycle.Read)
   @summary("Settlement Mode")
   settlement_mode?: ProductCatalog.SettlementMode;
+}
+
+/**
+ * Subscription.
+ */
+#suppress "@openmeter/api-spec-aip/repeated-prefix-grouping" "cost_basis, active, and billing fields are separate top-level subscription properties, not sub-objects"
+@friendlyName("BillingSubscription")
+model Subscription {
+  ...SubscriptionBase;
+
+  /**
+   * The current aligned billing period. Present only when the subscription is active
+   * and aligned.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Current billing period")
+  current_period?: Shared.ClosedPeriod;
+
+  /**
+   * The phases of the subscription in chronological order. A phase groups the rate
+   * cards that are in effect for a segment of the subscription's lifetime.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Phases")
+  phases: SubscriptionPhase[];
+}
+
+/**
+ * A reference to the plan a subscription was created from, pinned to an exact
+ * revision.
+ */
+@friendlyName("BillingSubscriptionPlanReference")
+model SubscriptionPlanReference {
+  /**
+   * The plan ID (exact revision).
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Plan ID")
+  id: Shared.ULID;
+
+  /**
+   * The plan key. References the plan across versions.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Plan key")
+  key: Shared.ResourceKey;
+
+  /**
+   * The plan version.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Plan version")
+  @minValue(1)
+  version: integer;
+}
+
+/**
+ * The pro-rating configuration of a subscription.
+ */
+@friendlyName("BillingSubscriptionProRatingConfig")
+model SubscriptionProRatingConfig {
+  /**
+   * Whether pro-rating is enabled.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Enabled")
+  enabled: boolean;
+
+  /**
+   * How pro-rating is calculated when enabled.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Mode")
+  mode: ProductCatalog.ProrationMode;
+}
+
+/**
+ * A subscription phase groups the rate cards in effect for a segment of the
+ * subscription's lifetime. Analogous to plan phases.
+ */
+#suppress "@openmeter/api-spec-aip/repeated-prefix-grouping" "active_from and active_to are standard AIP temporal fields"
+@friendlyName("BillingSubscriptionPhase")
+model SubscriptionPhase {
+  ...Shared.ResourceWithKey;
+
+  /**
+   * An ISO-8601 timestamp representation of when the phase becomes active.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Active from")
+  active_from: Shared.DateTime;
+
+  /**
+   * An ISO-8601 timestamp representation of when the phase stops being active.
+   * Open-ended for the last phase.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Active to")
+  active_to?: Shared.DateTime;
+
+  /**
+   * The rate cards in effect for this phase, resolved to the version active at the
+   * queried time (the currently active version for the current phase, the first
+   * version for future phases, and the last version for past phases).
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Items")
+  items: SubscriptionItem[];
+}
+
+/**
+ * A subscription item pins a rate card to a cadence within a subscription phase.
+ */
+#suppress "@openmeter/api-spec-aip/repeated-prefix-grouping" "active_from and active_to are standard AIP temporal fields"
+@friendlyName("BillingSubscriptionItem")
+model SubscriptionItem {
+  /**
+   * The unique identifier of the subscription item instance.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("ID")
+  id: Shared.ULID;
+
+  /**
+   * An ISO-8601 timestamp representation of when this item version becomes active.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Active from")
+  active_from: Shared.DateTime;
+
+  /**
+   * An ISO-8601 timestamp representation of when this item version stops being
+   * active.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Active to")
+  active_to?: Shared.DateTime;
+
+  /**
+   * The rate card describing what the customer gets and pays for this item.
+   */
+  @visibility(Lifecycle.Read)
+  @summary("Rate card")
+  rate_card: ProductCatalog.RateCard;
 }

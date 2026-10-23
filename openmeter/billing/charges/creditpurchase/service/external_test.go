@@ -13,7 +13,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase"
 	creditpurchaserealizations "github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase/service/realizations"
-	"github.com/openmeterio/openmeter/openmeter/billing/charges/lineage"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	chargecostbasis "github.com/openmeterio/openmeter/openmeter/billing/charges/models/costbasis"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/ledgertransaction"
@@ -40,7 +40,7 @@ func TestExternalCreditPurchaseServiceRoutesAuthorizedInitialStatus(t *testing.T
 	lineageService := &externalStateMachineLineage{}
 	handler := &externalStateMachineHandler{}
 	handler.On("OnCreditPurchaseInitiated", mock.Anything, mock.Anything).
-		Return(ledgertransaction.GroupReference{TransactionGroupID: "initiated-ledger-tx"}, nil).
+		Return(creditpurchase.CreditGrantResult{GroupReference: ledgertransaction.GroupReference{TransactionGroupID: "initiated-ledger-tx"}}, nil).
 		Once()
 	lineageService.On("BackfillAdvanceLineageSegments", mock.Anything, mock.Anything).
 		Return(nil).
@@ -133,7 +133,7 @@ func newExternalStateMachineRealizations(
 	t *testing.T,
 	adapter creditpurchase.Adapter,
 	handler creditpurchase.Handler,
-	lineageService lineage.Service,
+	lineageService legacylineage.Service,
 ) *creditpurchaserealizations.Service {
 	t.Helper()
 
@@ -244,6 +244,7 @@ type externalStateMachineAdapter struct {
 func (a *externalStateMachineAdapter) UpdateCharge(ctx context.Context, charge creditpurchase.ChargeBase) (creditpurchase.ChargeBase, error) {
 	a.updateChargeCalls++
 	a.updatedBaseStatuses = append(a.updatedBaseStatuses, charge.Status)
+
 	return charge, nil
 }
 
@@ -259,6 +260,7 @@ func (a *externalStateMachineAdapter) CreateCreditGrant(ctx context.Context, _ m
 func (a *externalStateMachineAdapter) CreateExternalPayment(ctx context.Context, _ meta.ChargeID, input payment.ExternalCreateInput) (payment.External, error) {
 	a.createExternalPaymentCalls++
 	a.createdExternalPayment = input
+
 	return payment.External{
 		Payment: payment.Payment{
 			NamespacedID: models.NamespacedID{
@@ -304,9 +306,9 @@ type externalStateMachineHandler struct {
 	mock.Mock
 }
 
-func (h *externalStateMachineHandler) OnCreditPurchaseInitiated(ctx context.Context, charge creditpurchase.Charge) (ledgertransaction.GroupReference, error) {
-	args := h.Called(ctx, charge)
-	return args.Get(0).(ledgertransaction.GroupReference), args.Error(1)
+func (h *externalStateMachineHandler) OnCreditPurchaseInitiated(ctx context.Context, input creditpurchase.CreditGrantInput) (creditpurchase.CreditGrantResult, error) {
+	args := h.Called(ctx, input.Charge)
+	return args.Get(0).(creditpurchase.CreditGrantResult), args.Error(1)
 }
 
 func (h *externalStateMachineHandler) OnCreditPurchasePaymentAuthorized(ctx context.Context, input creditpurchase.PaymentEventInput) (ledgertransaction.GroupReference, error) {
@@ -320,16 +322,20 @@ func (h *externalStateMachineHandler) OnCreditPurchasePaymentSettled(ctx context
 }
 
 type externalStateMachineLineage struct {
-	lineage.Service
+	legacylineage.Service
 	mock.Mock
 }
 
-func (l *externalStateMachineLineage) BackfillAdvanceLineageSegments(ctx context.Context, input lineage.BackfillAdvanceLineageSegmentsInput) error {
+func (l *externalStateMachineLineage) BackfillAdvanceLineageSegments(ctx context.Context, input legacylineage.BackfillAdvanceLineageSegmentsInput) error {
 	args := l.Called(ctx, input)
 	return args.Error(0)
 }
 
 var (
 	_ creditpurchase.Handler = (*externalStateMachineHandler)(nil)
-	_ lineage.Service        = (*externalStateMachineLineage)(nil)
+	_ legacylineage.Service  = (*externalStateMachineLineage)(nil)
 )
+
+func (*externalStateMachineLineage) LoadLineagesByCustomer(context.Context, legacylineage.LoadLineagesByCustomerInput) ([]legacylineage.Lineage, error) {
+	return nil, nil
+}

@@ -11,7 +11,7 @@ import (
 	"github.com/samber/mo"
 
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditreconciliation"
-	"github.com/openmeterio/openmeter/openmeter/billing/charges/lineage"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/creditrealization"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
@@ -27,7 +27,12 @@ func (s *Service) createCreditRealizationLineages(
 	currency currencies.Currency,
 	realizations creditrealization.Realizations,
 ) error {
-	if err := s.lineage.CreateInitialLineages(ctx, lineage.CreateInitialLineagesInput{
+	realizations = realizations.LegacyLineageRealizations()
+	if len(realizations) == 0 {
+		return nil
+	}
+
+	if err := s.lineage.CreateInitialLineages(ctx, legacylineage.CreateInitialLineagesInput{
 		Namespace:    charge.Namespace,
 		ChargeID:     charge.ID,
 		CustomerID:   charge.Intent.GetCustomerID(),
@@ -38,7 +43,7 @@ func (s *Service) createCreditRealizationLineages(
 		return fmt.Errorf("create initial credit realization lineages: %w", err)
 	}
 
-	if err := s.lineage.PersistCorrectionLineageSegments(ctx, lineage.PersistCorrectionLineageSegmentsInput{
+	if err := s.lineage.PersistCorrectionLineageSegments(ctx, legacylineage.PersistCorrectionLineageSegmentsInput{
 		Namespace:    charge.Namespace,
 		Realizations: realizations,
 	}); err != nil {
@@ -81,7 +86,7 @@ func (i CreditReconciliationHandlerInput) Validate() error {
 }
 
 // chargeCurrencyCreditReconciliationHandler reconciles a usage-based run's
-// allocations in the charge currency and preserves their realization lineage.
+// allocations in the charge currency and preserves their realization legacylineage.
 type chargeCurrencyCreditReconciliationHandler struct {
 	service *Service
 	CreditReconciliationHandlerInput
@@ -169,7 +174,7 @@ func (h *chargeCurrencyCreditReconciliationHandler) Create(
 }
 
 // fiatOverageCreditReconciliationHandler reconciles a custom-currency run's
-// overage allocations in settlement fiat and preserves their separate lineage.
+// overage allocations in settlement fiat and preserves their separate legacylineage.
 type fiatOverageCreditReconciliationHandler struct {
 	service *Service
 	CreditReconciliationHandlerInput
@@ -295,6 +300,9 @@ func (h *fiatOverageCreditReconciliationHandler) Create(
 type AllocateFiatOverageCreditsInput struct {
 	Charge usagebased.Charge
 	Run    usagebased.RealizationRun
+	// AllowFiatCredits controls whether charge orchestration may invoke the
+	// settlement-fiat allocation handler for this run.
+	AllowFiatCredits bool
 }
 
 func (i AllocateFiatOverageCreditsInput) Validate() error {
@@ -334,12 +342,12 @@ func (i AllocateFiatOverageCreditsInput) Validate() error {
 		))
 	}
 
-	if i.Run.InvoiceUsage != nil {
-		errs = append(errs, errors.New("run already has accrued invoice usage"))
+	if i.Run.InvoiceUsage == nil {
+		errs = append(errs, errors.New("run must have prepared invoice usage before fiat allocation"))
 	}
 
-	if len(i.Run.FiatOverageCreditRealizations) > 0 {
-		errs = append(errs, errors.New("run already has fiat overage credit realizations"))
+	if i.Run.FiatOverageCreditAllocationCompleted {
+		errs = append(errs, errors.New("fiat overage credit allocation already completed"))
 	}
 
 	return models.NewNillableGenericValidationError(errors.Join(errs...))
@@ -362,34 +370,48 @@ func (s *Service) AllocateFiatOverageCredits(
 		return AllocateFiatOverageCreditsResult{}, err
 	}
 
-	fiatOverage, err := in.Charge.ConvertCustomCurrencyOverageToFiat(in.Run.Totals)
+	fiatCurrency, err := in.Charge.GetInvoiceCurrency()
 	if err != nil {
-		return AllocateFiatOverageCreditsResult{}, fmt.Errorf("convert custom currency overage to fiat: %w", err)
+		return AllocateFiatOverageCreditsResult{}, fmt.Errorf("get invoice currency: %w", err)
 	}
+
+	grossFiatAmount := in.Run.InvoiceUsage.Totals.Total
 
 	run := in.Run
-	allocationResult, err := creditreconciliation.Allocate(ctx, creditreconciliation.AllocateInput{
-		Amount: fiatOverage.Amount,
-		Handler: s.NewFiatOverageCreditReconciliationHandler(CreditReconciliationHandlerInput{
-			Charge: in.Charge,
-			Run:    run,
-			// Fiat overage allocation is an invoice-finalization effect. Using the
-			// current time makes any outstanding settlement-fiat balance, such as
-			// USD credits, eligible for allocation when the invoice is finalized.
-			AllocateAt: clock.Now(),
-		}),
-	})
-	if err != nil {
-		return AllocateFiatOverageCreditsResult{}, fmt.Errorf("allocate fiat overage credits: %w", err)
+	if in.AllowFiatCredits && len(run.FiatOverageCreditRealizations) == 0 {
+		allocationResult, err := creditreconciliation.Allocate(ctx, creditreconciliation.AllocateInput{
+			Amount: grossFiatAmount,
+			Handler: s.NewFiatOverageCreditReconciliationHandler(CreditReconciliationHandlerInput{
+				Charge: in.Charge,
+				Run:    run,
+				// Fiat overage allocation is an invoice-finalization effect. Using the
+				// current time makes any outstanding settlement-fiat balance, such as
+				// USD credits, eligible for allocation when the invoice is finalized.
+				AllocateAt: clock.Now(),
+			}),
+		})
+		if err != nil {
+			return AllocateFiatOverageCreditsResult{}, fmt.Errorf("allocate fiat overage credits: %w", err)
+		}
+
+		run.FiatOverageCreditRealizations = allocationResult.Realizations
 	}
 
-	run.FiatOverageCreditRealizations = allocationResult.Realizations
+	fiatCurrencyCalculator, err := currencyx.NewFiatCurrency(fiatCurrency)
+	if err != nil {
+		return AllocateFiatOverageCreditsResult{}, fmt.Errorf("create invoice currency calculator: %w", err)
+	}
 
-	allocated := fiatOverage.Currency.RoundToPrecision(run.FiatOverageCreditRealizations.Sum())
-	remainingFiatOverage := fiatOverage.Currency.RoundToPrecision(fiatOverage.Amount.Sub(allocated))
+	allocated := fiatCurrencyCalculator.RoundToPrecision(run.FiatOverageCreditRealizations.Sum())
+	if allocated.GreaterThan(grossFiatAmount) {
+		return AllocateFiatOverageCreditsResult{}, fmt.Errorf("fiat overage credit allocations exceed prepared gross amount: %s > %s", allocated, grossFiatAmount)
+	}
+
+	remainingFiatOverage := fiatCurrencyCalculator.RoundToPrecision(grossFiatAmount.Sub(allocated))
 	runBase, err := s.adapter.UpdateRealizationRun(ctx, usagebased.UpdateRealizationRunInput{
-		ID:                        run.ID,
-		NoFiatTransactionRequired: mo.Some(remainingFiatOverage.IsZero()),
+		ID:                                   run.ID,
+		NoFiatTransactionRequired:            mo.Some(remainingFiatOverage.IsZero()),
+		FiatOverageCreditAllocationCompleted: mo.Some(true),
 	})
 	if err != nil {
 		return AllocateFiatOverageCreditsResult{}, fmt.Errorf("update realization run after fiat overage allocation: %w", err)
@@ -408,8 +430,7 @@ func (s *Service) AllocateFiatOverageCredits(
 }
 
 // CorrectAllCreditRealizations reverses every active credit allocation for a
-// usage-based run. Custom-currency credit-then-invoice runs unwind settlement
-// fiat before the charge currency from which that overage was derived.
+// usage-based run without changing its accrued invoice usage.
 func (s *Service) CorrectAllCreditRealizations(
 	ctx context.Context,
 	input CreditReconciliationHandlerInput,
@@ -418,15 +439,76 @@ func (s *Service) CorrectAllCreditRealizations(
 		return err
 	}
 
-	if input.Charge.Intent.GetSettlementMode() == productcatalog.CreditThenInvoiceSettlementMode &&
-		input.Charge.Intent.GetCurrency().IsCustom() {
-		if _, err := creditreconciliation.CorrectAll(ctx, creditreconciliation.CorrectAllInput{
-			Handler: s.NewFiatOverageCreditReconciliationHandler(input),
-		}); err != nil {
-			return fmt.Errorf("correct all fiat overage credit realizations: %w", err)
-		}
+	if err := s.correctFiatOverageCreditRealizations(ctx, input); err != nil {
+		return err
 	}
 
+	return s.correctChargeCurrencyCreditRealizations(ctx, input)
+}
+
+// CorrectPreparedCustomCurrencyInvoiceRealizations unwinds a prepared custom-
+// currency invoice run in reverse accounting order while keeping accrued-usage
+// correction separate from credit realization correction.
+func (s *Service) CorrectPreparedCustomCurrencyInvoiceRealizations(
+	ctx context.Context,
+	input CreditReconciliationHandlerInput,
+) (usagebased.RealizationRun, error) {
+	if err := input.Validate(); err != nil {
+		return usagebased.RealizationRun{}, err
+	}
+
+	accruedUsageInput := CorrectAccruedUsageInput{
+		Charge: input.Charge,
+		Run:    input.Run,
+	}
+	if err := accruedUsageInput.Validate(); err != nil {
+		return usagebased.RealizationRun{}, err
+	}
+
+	if err := s.correctFiatOverageCreditRealizations(ctx, input); err != nil {
+		return usagebased.RealizationRun{}, err
+	}
+
+	run, err := s.CorrectAccruedUsage(ctx, accruedUsageInput)
+	if err != nil {
+		return usagebased.RealizationRun{}, err
+	}
+
+	input.Run = run
+
+	if err := s.correctChargeCurrencyCreditRealizations(ctx, input); err != nil {
+		return usagebased.RealizationRun{}, err
+	}
+
+	runBase, err := s.adapter.UpdateRealizationRun(ctx, usagebased.UpdateRealizationRunInput{
+		ID:                                   input.Run.ID,
+		FiatOverageCreditAllocationCompleted: mo.Some(false),
+	})
+	if err != nil {
+		return usagebased.RealizationRun{}, fmt.Errorf("reset invoice preparation state: %w", err)
+	}
+
+	input.Run.RealizationRunBase = runBase
+
+	return input.Run, nil
+}
+
+func (s *Service) correctFiatOverageCreditRealizations(ctx context.Context, input CreditReconciliationHandlerInput) error {
+	if input.Charge.Intent.GetSettlementMode() != productcatalog.CreditThenInvoiceSettlementMode ||
+		!input.Charge.Intent.GetCurrency().IsCustom() {
+		return nil
+	}
+
+	if _, err := creditreconciliation.CorrectAll(ctx, creditreconciliation.CorrectAllInput{
+		Handler: s.NewFiatOverageCreditReconciliationHandler(input),
+	}); err != nil {
+		return fmt.Errorf("correct all fiat overage credit realizations: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) correctChargeCurrencyCreditRealizations(ctx context.Context, input CreditReconciliationHandlerInput) error {
 	if _, err := creditreconciliation.CorrectAll(ctx, creditreconciliation.CorrectAllInput{
 		Handler: s.NewChargeCurrencyCreditReconciliationHandler(input),
 	}); err != nil {
@@ -440,7 +522,12 @@ func (s *Service) loadActiveCreditRealizationLineageSegments(
 	ctx context.Context,
 	charge usagebased.Charge,
 	realizations creditrealization.Realizations,
-) (lineage.ActiveSegmentsByRealizationID, error) {
+) (legacylineage.ActiveSegmentsByRealizationID, error) {
+	realizations = realizations.LegacyLineageRealizations()
+	if len(realizations) == 0 {
+		return legacylineage.ActiveSegmentsByRealizationID{}, nil
+	}
+
 	realizationIDs := lo.Map(realizations, func(realization creditrealization.Realization, _ int) string {
 		return realization.ID
 	})

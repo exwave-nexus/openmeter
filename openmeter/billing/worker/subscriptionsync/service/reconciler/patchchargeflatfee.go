@@ -29,7 +29,7 @@ func (c *flatFeeChargeCollection) AddCreate(target targetstate.StateItem) error 
 		return err
 	}
 
-	return c.addCreate(intent)
+	return c.addCreate(intent, chargesmeta.CreateOptions{})
 }
 
 func (c *flatFeeChargeCollection) AddShrink(_ string, existing persistedstate.Item, target targetstate.StateItem) error {
@@ -74,6 +74,11 @@ func (c *flatFeeChargeCollection) AddExtend(existing persistedstate.Item, target
 
 func newFlatFeeChargeIntent(target targetstate.StateItem) (charges.ChargeIntent, error) {
 	rateCardMeta := target.Spec.RateCard.AsMeta()
+	var featureKey *string
+	if rateCardMeta.Feature != nil {
+		featureKey = rateCardMeta.Feature.Key
+	}
+
 	price := rateCardMeta.Price
 	if price == nil {
 		return charges.ChargeIntent{}, fmt.Errorf("price is required for flat fee charge")
@@ -89,8 +94,19 @@ func newFlatFeeChargeIntent(target targetstate.StateItem) (charges.ChargeIntent,
 		return charges.ChargeIntent{}, err
 	}
 
+	costBasis, err := newChargeCostBasisIntent(target)
+	if err != nil {
+		return charges.ChargeIntent{}, fmt.Errorf("mapping cost basis: %w", err)
+	}
+
+	var subscriptionPlan *chargesmeta.SubscriptionPlan
+	if ref := target.Subscription.PlanRef; ref != nil {
+		subscriptionPlan = &chargesmeta.SubscriptionPlan{Key: ref.Key, Version: ref.Version}
+	}
+
 	return charges.NewChargeIntent(chargesflatfee.Intent{
 		Intent: chargesmeta.Intent{
+			SubscriptionPlan:  subscriptionPlan,
 			ManagedBy:         billing.SubscriptionManagedLine,
 			CustomerID:        target.Subscription.CustomerId,
 			Annotations:       annotations,
@@ -124,7 +140,8 @@ func newFlatFeeChargeIntent(target targetstate.StateItem) (charges.ChargeIntent,
 			ProRating:             target.Subscription.ProRatingConfig,
 			AmountBeforeProration: flatPrice.Amount,
 		},
-		FeatureKey:     rateCardMeta.FeatureKey,
+		FeatureKey:     featureKey,
 		SettlementMode: target.Subscription.SettlementMode,
+		CostBasis:      costBasis,
 	}), nil
 }

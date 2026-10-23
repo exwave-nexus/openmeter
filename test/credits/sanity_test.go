@@ -18,6 +18,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/flatfee"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/legacylineage"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/creditrealization"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/payment"
@@ -333,7 +334,7 @@ func (s *SanitySuite) TestExpiringCreditBreakageImmediatelyReleasesAdvanceBackfi
 	)
 	chargeRes, err := s.Charges.Create(setup.ctx, charges.CreateInput{
 		Namespace: setup.namespace,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       customerID,
 				Currency:       USD,
@@ -347,7 +348,7 @@ func (s *SanitySuite) TestExpiringCreditBreakageImmediatelyReleasesAdvanceBackfi
 				UniqueReferenceID: "expiring-credit-breakage-advance-usage",
 				FeatureKey:        setup.featureKey,
 			}),
-		},
+		),
 	})
 	s.Require().NoError(err)
 	s.Require().Len(chargeRes, 1)
@@ -442,7 +443,7 @@ func (s *SanitySuite) TestExpiringCreditBreakageReopensAdvanceBackfillReleaseOnU
 	)
 	chargeRes, err := s.Charges.Create(setup.ctx, charges.CreateInput{
 		Namespace: setup.namespace,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       customerID,
 				Currency:       USD,
@@ -456,7 +457,7 @@ func (s *SanitySuite) TestExpiringCreditBreakageReopensAdvanceBackfillReleaseOnU
 				UniqueReferenceID: "expiring-credit-breakage-advance-correction-usage",
 				FeatureKey:        setup.featureKey,
 			}),
-		},
+		),
 	})
 	s.Require().NoError(err)
 	s.Require().Len(chargeRes, 1)
@@ -1007,13 +1008,13 @@ func (s *SanitySuite) TestFeatureRestrictedCreditCollectionCorrectionThenCollect
 
 	// Given feature-restricted credit and general-purpose credit are both available.
 	restrictedFunding := s.CreatePromotionalCreditFunding(ctx, CreatePromotionalCreditFundingInput{
-		Namespace:      ns,
-		Customer:       cust.GetID(),
-		Amount:         alpacadecimal.NewFromInt(4),
-		At:             grantAt,
-		CostBasis:      costBasis,
-		Priority:       &restrictedPriority,
-		FeatureFilters: creditpurchase.FeatureFilters{featureKey},
+		Namespace: ns,
+		Customer:  cust.GetID(),
+		Amount:    alpacadecimal.NewFromInt(4),
+		At:        grantAt,
+		CostBasis: costBasis,
+		Priority:  &restrictedPriority,
+		Filters:   ledger.CreditFilters{Version: ledger.CreditFiltersVersion1, Features: creditpurchase.FeatureFilters{featureKey}},
 	})
 	generalFunding := s.CreatePromotionalCreditFunding(ctx, CreatePromotionalCreditFundingInput{
 		Namespace: ns,
@@ -1473,6 +1474,7 @@ func (s *SanitySuite) assertBreakageRowsByExpiry(ctx context.Context, namespace 
 			s.Require().NotNil(releasePlanIDByExpiry[key])
 			s.Equal(planIDByExpiry[key], *releasePlanIDByExpiry[key])
 		}
+
 		if expectedItem.reopenAmount.IsPositive() {
 			s.Require().NotNil(reopenPlanIDByExpiry[key])
 			s.Require().NotNil(reopenReleaseIDByExpiry[key])
@@ -1514,6 +1516,7 @@ func (s *SanitySuite) setupExpiringCreditBreakage(namespaceSuffix string, opts .
 	for _, opt := range opts {
 		opt(&setup)
 	}
+
 	setup.unusedAmount = setup.grantAmount.Sub(setup.usedAmount)
 
 	return setup
@@ -1526,7 +1529,7 @@ func (s *SanitySuite) createAndAdvanceCreditOnlyFlatFeeCharge(input createCredit
 
 	res, err := s.Charges.Create(input.ctx, charges.CreateInput{
 		Namespace: input.namespace,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       input.customer,
 				Currency:       USD,
@@ -1541,7 +1544,7 @@ func (s *SanitySuite) createAndAdvanceCreditOnlyFlatFeeCharge(input createCredit
 				UniqueReferenceID: input.name,
 				FeatureKey:        input.featureKey,
 			}),
-		},
+		),
 	})
 	s.Require().NoError(err)
 	s.Require().Len(res, 1)
@@ -1572,18 +1575,18 @@ func (s *SanitySuite) createPromotionalCreditGrant(ctx context.Context, input Cr
 
 	res, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: input.Namespace,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateCreditPurchaseIntent(CreateCreditPurchaseIntentInput{
-				Customer:       input.Customer,
-				Currency:       USD,
-				Amount:         input.Amount,
-				ExpiresAt:      input.ExpiresAt,
-				Priority:       input.Priority,
-				ServicePeriod:  timeutil.ClosedPeriod{From: input.At, To: input.At},
-				Settlement:     creditpurchase.NewSettlement(creditpurchase.PromotionalSettlement{}),
-				FeatureFilters: input.FeatureFilters,
+				Customer:      input.Customer,
+				Currency:      USD,
+				Amount:        input.Amount,
+				ExpiresAt:     input.ExpiresAt,
+				Priority:      input.Priority,
+				ServicePeriod: timeutil.ClosedPeriod{From: input.At, To: input.At},
+				Settlement:    creditpurchase.NewSettlement(creditpurchase.PromotionalSettlement{}),
+				Filters:       input.Filters,
 			}),
-		},
+		),
 	})
 	s.Require().NoError(err)
 	s.Require().Len(res, 1)
@@ -1792,7 +1795,7 @@ func (s *SanitySuite) createFinalizedUsageBasedCreditOnlyCharge(setup creditOnly
 
 	res, err := s.Charges.Create(setup.ctx, charges.CreateInput{
 		Namespace: setup.namespace,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       setup.customer.GetID(),
 				Currency:       USD,
@@ -1806,7 +1809,7 @@ func (s *SanitySuite) createFinalizedUsageBasedCreditOnlyCharge(setup creditOnly
 				UniqueReferenceID: setup.namespace,
 				FeatureKey:        setup.featureKey,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 1)
@@ -1970,7 +1973,7 @@ func (s *SanitySuite) TestUsageBasedCreditOnlyDeleteCorrectionWithPartialBackfil
 
 	res, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       cust.GetID(),
 				Currency:       USD,
@@ -1984,7 +1987,7 @@ func (s *SanitySuite) TestUsageBasedCreditOnlyDeleteCorrectionWithPartialBackfil
 				UniqueReferenceID: "usage-based-credit-only-delete-partial-backfill",
 				FeatureKey:        apiRequestsTotal.Feature.Key,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 1)
@@ -2027,16 +2030,16 @@ func (s *SanitySuite) TestUsageBasedCreditOnlyDeleteCorrectionWithPartialBackfil
 		Settlement: creditpurchase.NewSettlement(creditpurchase.ExternalSettlement{
 			InitialStatus: creditpurchase.CreatedInitialPaymentSettlementStatus,
 		}),
-		CostBasis:      newFiatCreditPurchaseCostBasis(alpacadecimal.NewFromFloat(0.5)),
-		FeatureFilters: creditpurchase.FeatureFilters{apiRequestsTotal.Feature.Key},
+		CostBasis: newFiatCreditPurchaseCostBasis(alpacadecimal.NewFromFloat(0.5)),
+		Filters:   ledger.CreditFilters{Version: ledger.CreditFiltersVersion1, Features: creditpurchase.FeatureFilters{apiRequestsTotal.Feature.Key}},
 	})
 
 	// When a later external credit purchase backfills part of that earlier advance-backed usage.
 	creditPurchaseRes, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			creditPurchaseIntent,
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(creditPurchaseRes, 1)
@@ -2157,7 +2160,7 @@ func (s *SanitySuite) TestUsageBasedCreditOnlyDeleteCorrectionWithMixedFeatureAd
 
 	res, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       cust.GetID(),
 				Currency:       USD,
@@ -2184,7 +2187,7 @@ func (s *SanitySuite) TestUsageBasedCreditOnlyDeleteCorrectionWithMixedFeatureAd
 				UniqueReferenceID: "usage-based-credit-only-delete-mixed-feature-storage",
 				FeatureKey:        storageFeature.Key,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 2)
@@ -2212,7 +2215,7 @@ func (s *SanitySuite) TestUsageBasedCreditOnlyDeleteCorrectionWithMixedFeatureAd
 	// When feature-A restricted purchased credit is granted after the advances.
 	creditPurchaseRes, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateCreditPurchaseIntent(CreateCreditPurchaseIntentInput{
 				Customer: cust.GetID(),
 				Currency: USD,
@@ -2224,10 +2227,10 @@ func (s *SanitySuite) TestUsageBasedCreditOnlyDeleteCorrectionWithMixedFeatureAd
 				Settlement: creditpurchase.NewSettlement(creditpurchase.ExternalSettlement{
 					InitialStatus: creditpurchase.CreatedInitialPaymentSettlementStatus,
 				}),
-				CostBasis:      newFiatCreditPurchaseCostBasis(costBasis),
-				FeatureFilters: creditpurchase.FeatureFilters{apiRequestsFeature.Key},
+				CostBasis: newFiatCreditPurchaseCostBasis(costBasis),
+				Filters:   ledger.CreditFilters{Version: ledger.CreditFiltersVersion1, Features: creditpurchase.FeatureFilters{apiRequestsFeature.Key}},
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(creditPurchaseRes, 1)
@@ -2402,9 +2405,9 @@ func (s *SanitySuite) TestFlatFeeCreditThenInvoiceSanity() {
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				intent,
-			},
+			),
 		})
 		s.NoError(err)
 
@@ -2441,8 +2444,9 @@ func (s *SanitySuite) TestFlatFeeCreditThenInvoiceSanity() {
 
 		costBasis := alpacadecimal.NewFromFloat(0.5)
 		s.Equal(payment.StatusAuthorized, updatedCharge.Realizations.ExternalPaymentSettlement.Status)
+		s.Equal(float64(25), updatedCharge.Realizations.ExternalPaymentSettlement.FiatAmount.InexactFloat64())
 		s.Equal(float64(0), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis), ledger.TransactionAuthorizationStatusOpen).InexactFloat64())
-		s.Equal(float64(-25), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis), ledger.TransactionAuthorizationStatusAuthorized).InexactFloat64())
+		s.Equal(float64(-50), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis), ledger.TransactionAuthorizationStatusAuthorized).InexactFloat64())
 	})
 
 	s.Run("the customer settles the credit purchase payment", func() {
@@ -2457,6 +2461,7 @@ func (s *SanitySuite) TestFlatFeeCreditThenInvoiceSanity() {
 
 		costBasis := alpacadecimal.NewFromFloat(0.5)
 		s.Equal(payment.StatusSettled, updatedCharge.Realizations.ExternalPaymentSettlement.Status)
+		s.Equal(float64(25), updatedCharge.Realizations.ExternalPaymentSettlement.FiatAmount.InexactFloat64())
 		s.Equal(float64(0), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis), ledger.TransactionAuthorizationStatusOpen).InexactFloat64())
 	})
 
@@ -2498,7 +2503,7 @@ func (s *SanitySuite) TestFlatFeeCreditThenInvoiceSanity() {
 	s.Run("create new upcoming charge for flat fee", func() {
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -2512,7 +2517,7 @@ func (s *SanitySuite) TestFlatFeeCreditThenInvoiceSanity() {
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: flatFeeName,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 
@@ -2884,7 +2889,7 @@ func (s *SanitySuite) TestUsageBasedCreditThenInvoicePaymentLifecycle() {
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -2898,7 +2903,7 @@ func (s *SanitySuite) TestUsageBasedCreditThenInvoicePaymentLifecycle() {
 					UniqueReferenceID: "usage-based-credit-then-invoice-payment-lifecycle",
 					FeatureKey:        apiRequestsTotal.Feature.Key,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -3175,9 +3180,9 @@ func (s *SanitySuite) TestFlatFeeCreditOnlySanity() {
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				intent,
-			},
+			),
 		})
 		s.NoError(err)
 
@@ -3204,8 +3209,9 @@ func (s *SanitySuite) TestFlatFeeCreditOnlySanity() {
 
 		costBasis := alpacadecimal.NewFromFloat(0.5)
 		s.Equal(payment.StatusAuthorized, updatedCharge.Realizations.ExternalPaymentSettlement.Status)
+		s.Equal(float64(25), updatedCharge.Realizations.ExternalPaymentSettlement.FiatAmount.InexactFloat64())
 		s.Equal(float64(0), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis), ledger.TransactionAuthorizationStatusOpen).InexactFloat64())
-		s.Equal(float64(-25), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis), ledger.TransactionAuthorizationStatusAuthorized).InexactFloat64())
+		s.Equal(float64(-50), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis), ledger.TransactionAuthorizationStatusAuthorized).InexactFloat64())
 	})
 
 	s.Run("the customer settles the credit purchase payment", func() {
@@ -3217,6 +3223,7 @@ func (s *SanitySuite) TestFlatFeeCreditOnlySanity() {
 
 		costBasis := alpacadecimal.NewFromFloat(0.5)
 		s.Equal(payment.StatusSettled, updatedCharge.Realizations.ExternalPaymentSettlement.Status)
+		s.Equal(float64(25), updatedCharge.Realizations.ExternalPaymentSettlement.FiatAmount.InexactFloat64())
 		s.Equal(float64(0), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&costBasis), ledger.TransactionAuthorizationStatusOpen).InexactFloat64())
 	})
 
@@ -3258,7 +3265,7 @@ func (s *SanitySuite) TestFlatFeeCreditOnlySanity() {
 	s.Run("create new upcoming charge for flat fee", func() {
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -3272,7 +3279,7 @@ func (s *SanitySuite) TestFlatFeeCreditOnlySanity() {
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: flatFeeName,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 
@@ -3421,9 +3428,9 @@ func (s *SanitySuite) TestFlatFeeCreditOnlySanity() {
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				intent,
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -3461,12 +3468,13 @@ func (s *SanitySuite) TestFlatFeeCreditOnlySanity() {
 		})
 		s.NoError(err)
 		s.Equal(payment.StatusAuthorized, updatedCharge.Realizations.ExternalPaymentSettlement.Status)
+		s.Equal(float64(25), updatedCharge.Realizations.ExternalPaymentSettlement.FiatAmount.InexactFloat64())
 
-		// Authorization only moves the purchased receivable into the authorized bucket;
-		// attribution already happened during purchase initiation.
+		// Authorization only moves the nominal purchased receivable into the
+		// authorized bucket; attribution already happened during purchase initiation.
 		s.True(
-			s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&externalCostBasis), ledger.TransactionAuthorizationStatusAuthorized).Equal(alpacadecimal.NewFromInt(-25)),
-			"the cost-basis payment amount should be visible in the exact authorized receivable route before settlement",
+			s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some(&externalCostBasis), ledger.TransactionAuthorizationStatusAuthorized).Equal(alpacadecimal.NewFromInt(-50)),
+			"the nominal purchased amount should be visible in the exact authorized receivable route before settlement",
 		)
 		s.True(
 			s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil), ledger.TransactionAuthorizationStatusAuthorized).Equal(start.advanceAuthorized),
@@ -3479,9 +3487,11 @@ func (s *SanitySuite) TestFlatFeeCreditOnlySanity() {
 		})
 		s.NoError(err)
 		s.Equal(payment.StatusSettled, updatedCharge.Realizations.ExternalPaymentSettlement.Status)
+		s.Equal(float64(25), updatedCharge.Realizations.ExternalPaymentSettlement.FiatAmount.InexactFloat64())
 
-		// Settlement is the cash movement from wash that clears the authorized receivable.
-		// The earlier attribution stays intact, and the purchased receivable fully nets out here.
+		// Settlement clears the nominal authorized receivable through its
+		// cost-basis-qualified wash route. The payment realization separately
+		// retains the actual fiat amount paid.
 		s.True(
 			s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil), ledger.TransactionAuthorizationStatusOpen).Equal(alpacadecimal.Zero),
 			"the exact open advance receivable bucket should stay cleared after initiation-time attribution",
@@ -3514,7 +3524,7 @@ func (s *SanitySuite) TestFlatFeeCreditOnlySanity() {
 			s.MustCustomerAccruedBalance(cust.GetID(), USD, mo.None[*alpacadecimal.Decimal]()).Equal(start.totalAccrued),
 			"settlement should only translate accrued between buckets, not change the total accrued amount",
 		)
-		assertDelta("external wash after later purchase settlement", start.externalWash, alpacadecimal.NewFromInt(-25), s.MustWashBalance(ns, USD, mo.Some(&externalCostBasis)))
+		assertDelta("external wash after later purchase settlement", start.externalWash, alpacadecimal.NewFromInt(-50), s.MustWashBalance(ns, USD, mo.Some(&externalCostBasis)))
 		s.requireCustomerFBOSourceBalanceBuckets(cust.GetID(), ledger.RouteFilter{
 			Currency:  currencies.NewCurrencyReference(USD),
 			CostBasis: mo.Some(&externalCostBasis),
@@ -3586,7 +3596,7 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionAcrossTaxCodeBuckets()
 	} {
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -3604,7 +3614,7 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionAcrossTaxCodeBuckets()
 						Behavior:  lo.ToPtr(input.behavior),
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -3640,7 +3650,7 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionAcrossTaxCodeBuckets()
 	clock.FreezeTime(purchaseAt)
 	purchaseRes, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateCreditPurchaseIntent(CreateCreditPurchaseIntentInput{
 				Customer: cust.GetID(),
 				Currency: USD,
@@ -3658,7 +3668,7 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionAcrossTaxCodeBuckets()
 					Behavior:  lo.ToPtr(productcatalog.InclusiveTaxBehavior),
 				},
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(purchaseRes, 1)
@@ -3673,7 +3683,7 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionAcrossTaxCodeBuckets()
 	s.NoError(err)
 
 	// then:
-	// - partial attribution is split proportionally across TaxCode/TaxBehavior buckets
+	// - partial attribution funds the older tax-A advance while preserving its tax route
 	// - the purchased grant is fully consumed by advance backfill
 	templateCounts := map[string]int{}
 	for _, tx := range backingGroup.Transactions() {
@@ -3682,17 +3692,17 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionAcrossTaxCodeBuckets()
 		templateCounts[code]++
 	}
 
-	s.Equal(2, templateCounts[transactions.TemplateCode(transactions.AttributeCustomerAdvanceReceivableCostBasisTemplate{})])
-	s.Equal(2, templateCounts[transactions.TemplateCode(transactions.TranslateCustomerAccruedCostBasisTemplate{})])
+	s.Equal(1, templateCounts[transactions.TemplateCode(transactions.AttributeCustomerAdvanceReceivableCostBasisTemplate{})])
+	s.Equal(1, templateCounts[transactions.TemplateCode(transactions.TranslateCustomerAccruedCostBasisTemplate{})])
 	s.Equal(0, templateCounts[transactions.TemplateCode(transactions.IssueCustomerReceivableTemplate{})])
 
 	s.Equal(float64(-10), s.MustCustomerReceivableBalance(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil), ledger.TransactionAuthorizationStatusOpen).InexactFloat64())
-	s.Equal(float64(3.33), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&purchaseCostBasis), mo.Some(&taxA.ID), mo.Some(&taxABehavior)).InexactFloat64())
-	s.Equal(float64(1.67), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&purchaseCostBasis), mo.Some(&taxB.ID), mo.Some(&taxBBehavior)).InexactFloat64())
+	s.Equal(float64(5), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&purchaseCostBasis), mo.Some(&taxA.ID), mo.Some(&taxABehavior)).InexactFloat64())
+	s.Equal(float64(0), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&purchaseCostBasis), mo.Some(&taxB.ID), mo.Some(&taxBBehavior)).InexactFloat64())
 	s.Equal(float64(0), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&purchaseCostBasis), mo.Some(&taxA.ID), mo.Some[*ledger.TaxBehavior](nil)).InexactFloat64())
 	s.Equal(float64(0), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&purchaseCostBasis), mo.Some(&taxB.ID), mo.Some[*ledger.TaxBehavior](nil)).InexactFloat64())
-	s.Equal(float64(6.67), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil), mo.Some(&taxA.ID), mo.Some(&taxABehavior)).InexactFloat64())
-	s.Equal(float64(3.33), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil), mo.Some(&taxB.ID), mo.Some(&taxBBehavior)).InexactFloat64())
+	s.Equal(float64(5), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil), mo.Some(&taxA.ID), mo.Some(&taxABehavior)).InexactFloat64())
+	s.Equal(float64(5), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil), mo.Some(&taxB.ID), mo.Some(&taxBBehavior)).InexactFloat64())
 	s.Equal(float64(0), s.MustCustomerFBOBalanceWithPriority(cust.GetID(), USD, mo.Some(&purchaseCostBasis), ledger.DefaultCustomerFBOPriority).InexactFloat64())
 	s.requireCustomerAccruedSourceSpendBalanceBuckets(cust.GetID(), ledger.RouteFilter{
 		Currency:    currencies.NewCurrencyReference(USD),
@@ -3700,23 +3710,21 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionAcrossTaxCodeBuckets()
 		TaxCode:     mo.Some(&taxA.ID),
 		TaxBehavior: mo.Some(&taxABehavior),
 	}, map[string]float64{
-		sourceSpendChargeBucketKey(&sourceChargeID, &taxASpendChargeID): 3.33, // 3.33 = 5 purchase allocated proportionally to the 10/15 tax-A advance bucket.
+		sourceSpendChargeBucketKey(&sourceChargeID, &taxASpendChargeID): 5, // The older advance receives the entire partial purchase.
 	})
 	s.requireCustomerAccruedSourceSpendBalanceBuckets(cust.GetID(), ledger.RouteFilter{
 		Currency:    currencies.NewCurrencyReference(USD),
 		CostBasis:   mo.Some(&purchaseCostBasis),
 		TaxCode:     mo.Some(&taxB.ID),
 		TaxBehavior: mo.Some(&taxBBehavior),
-	}, map[string]float64{
-		sourceSpendChargeBucketKey(&sourceChargeID, &taxBSpendChargeID): 1.67, // 1.67 = 5 purchase allocated proportionally to the 5/15 tax-B advance bucket.
-	})
+	}, map[string]float64{})
 	s.requireCustomerAccruedSourceSpendBalanceBuckets(cust.GetID(), ledger.RouteFilter{
 		Currency:    currencies.NewCurrencyReference(USD),
 		CostBasis:   mo.Some[*alpacadecimal.Decimal](nil),
 		TaxCode:     mo.Some(&taxA.ID),
 		TaxBehavior: mo.Some(&taxABehavior),
 	}, map[string]float64{
-		sourceSpendChargeBucketKey(nil, &taxASpendChargeID): 6.67, // 6.67 = original tax-A advance less the purchased attribution.
+		sourceSpendChargeBucketKey(nil, &taxASpendChargeID): 5, // The remainder retains the original tax treatment.
 	})
 	s.requireCustomerAccruedSourceSpendBalanceBuckets(cust.GetID(), ledger.RouteFilter{
 		Currency:    currencies.NewCurrencyReference(USD),
@@ -3724,7 +3732,7 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionAcrossTaxCodeBuckets()
 		TaxCode:     mo.Some(&taxB.ID),
 		TaxBehavior: mo.Some(&taxBBehavior),
 	}, map[string]float64{
-		sourceSpendChargeBucketKey(nil, &taxBSpendChargeID): 3.33, // 3.33 = original tax-B advance less the purchased attribution.
+		sourceSpendChargeBucketKey(nil, &taxBSpendChargeID): 5, // The newer tax-B advance is still entirely uncovered.
 	})
 }
 
@@ -3763,12 +3771,19 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionClearsLegacyNilSpendFe
 		amount     int64
 		featureKey string
 	}{
-		{name: "legacy-unrestricted-advance", amount: 10},
-		{name: "legacy-api-requests-advance", amount: 5, featureKey: apiRequestsTotal.Feature.Key},
+		{
+			name:   "legacy-unrestricted-advance",
+			amount: 10,
+		},
+		{
+			name:       "legacy-api-requests-advance",
+			amount:     5,
+			featureKey: apiRequestsTotal.Feature.Key,
+		},
 	} {
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -3783,7 +3798,7 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionClearsLegacyNilSpendFe
 					ManagedBy:         billing.SubscriptionManagedLine,
 					UniqueReferenceID: input.name,
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -3806,6 +3821,31 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionClearsLegacyNilSpendFe
 
 	s.markLedgerEntriesLegacyBySpendChargeID(ctx, ns, unrestrictedSpendChargeID, apiRequestsSpendChargeID)
 
+	// Recreate the legacy lineage billing metadata too. Clearing origin columns
+	// alone no longer makes a new collection a legacy backfill candidate.
+	for _, result := range advancedCharges {
+		charge, err := result.AsFlatFeeCharge()
+		s.Require().NoError(err)
+
+		realizations := charge.Realizations.CurrentRun.CreditRealizations
+
+		for i := range realizations {
+			realizations[i].Annotations = creditrealization.LineageAnnotations(creditrealization.LineageOriginKindAdvance)
+			err := s.DBClient.ChargeFlatFeeRunCreditAllocations.UpdateOneID(realizations[i].ID).SetAnnotations(realizations[i].Annotations).Exec(ctx)
+			s.Require().NoError(err)
+		}
+
+		feature := charge.Intent.GetFeatureKey()
+		s.Require().NoError(s.LineageService.CreateInitialLineages(ctx, legacylineage.CreateInitialLineagesInput{
+			Namespace:    ns,
+			CustomerID:   cust.ID,
+			ChargeID:     charge.ID,
+			Currency:     charge.Intent.GetCurrency(),
+			Features:     lo.Ternary(feature == "", nil, []string{feature}),
+			Realizations: realizations,
+		}))
+	}
+
 	s.Equal(float64(-10), s.MustCustomerReceivableBalanceForFeatures(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil), ledger.TransactionAuthorizationStatusOpen, unrestrictedRoute).InexactFloat64(),
 		"-10 = unrestricted legacy advance receivable before creditpurchase backfill")
 	s.Equal(float64(-5), s.MustCustomerReceivableBalanceForFeatures(cust.GetID(), USD, mo.Some[*alpacadecimal.Decimal](nil), ledger.TransactionAuthorizationStatusOpen, apiRequestsRoute).InexactFloat64(),
@@ -3818,7 +3858,7 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionClearsLegacyNilSpendFe
 	clock.FreezeTime(purchaseAt)
 	purchaseRes, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateCreditPurchaseIntent(CreateCreditPurchaseIntentInput{
 				Customer: cust.GetID(),
 				Currency: USD,
@@ -3832,7 +3872,7 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionClearsLegacyNilSpendFe
 				}),
 				CostBasis: newFiatCreditPurchaseCostBasis(purchaseCostBasis),
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(purchaseRes, 1)
@@ -3850,12 +3890,16 @@ func (s *SanitySuite) TestCreditPurchaseAdvanceAttributionClearsLegacyNilSpendFe
 		"0 = 5 feature-routed legacy advance receivable fully attributed to the creditpurchase source")
 	s.Equal(float64(15), s.MustCustomerAccruedBalance(cust.GetID(), USD, mo.Some(&purchaseCostBasis)).InexactFloat64(),
 		"15 = 10 unrestricted + 5 feature-routed legacy accrued translated to the purchased cost basis")
-	s.requireCustomerAccruedSourceSpendBalanceBuckets(cust.GetID(), ledger.RouteFilter{
-		Currency:  currencies.NewCurrencyReference(USD),
-		CostBasis: mo.Some(&purchaseCostBasis),
-	}, map[string]float64{
-		sourceSpendChargeBucketKey(&sourceChargeID, nil): 15, // 15 = legacy spend provenance is unknowable, so only the new source is attributable.
-	})
+	s.requireCustomerAccruedSourceSpendBalanceBuckets(
+		cust.GetID(),
+		ledger.RouteFilter{
+			Currency:  currencies.NewCurrencyReference(USD),
+			CostBasis: mo.Some(&purchaseCostBasis),
+		},
+		map[string]float64{
+			sourceSpendChargeBucketKey(&sourceChargeID, nil): 15, // 15 = legacy spend provenance is unknowable, so only the new source is attributable.
+		},
+	)
 }
 
 func (s *SanitySuite) markLedgerEntriesLegacyBySpendChargeID(ctx context.Context, namespace string, spendChargeIDs ...string) {
@@ -3865,6 +3909,7 @@ func (s *SanitySuite) markLedgerEntriesLegacyBySpendChargeID(ctx context.Context
 		result, err := s.DBClient.ExecContext(ctx, `
 			UPDATE ledger_entries
 			SET schema_version = 1,
+                collection_origin_id = NULL,
 				source_charge_id = NULL,
 				spend_charge_id = NULL,
 				identity_key = ''
@@ -3910,7 +3955,7 @@ func (s *SanitySuite) TestFlatFeeCreditOnlyTaxConfigFlowsToEarnings() {
 	// - a charge is created before tax-configured credit is available
 	createdCharges, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       cust.GetID(),
 				Currency:       USD,
@@ -3925,7 +3970,7 @@ func (s *SanitySuite) TestFlatFeeCreditOnlyTaxConfigFlowsToEarnings() {
 				UniqueReferenceID: "flatfee-credit-taxconfig-earnings",
 				TaxConfig:         taxConfig,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(createdCharges, 1)
@@ -3999,7 +4044,7 @@ func (s *SanitySuite) TestFlatFeeCreditOnlyTaxConfigFlowsToEarnings() {
 	})
 }
 
-func (s *SanitySuite) TestFlatFeeCreditThenInvoiceTaxConfigFlowsToEarnings() {
+func (s *SanitySuite) TestFlatFeeCreditThenInvoiceTaxConfigFlowsThroughCreditBackedEarnings() {
 	ctx := s.T().Context()
 	ns := s.GetUniqueNamespace("flatfee-invoice-taxconfig-earnings")
 	s.ProvisionDefaultTaxCodes(ctx, ns)
@@ -4017,21 +4062,26 @@ func (s *SanitySuite) TestFlatFeeCreditThenInvoiceTaxConfigFlowsToEarnings() {
 		Behavior:  lo.ToPtr(productcatalog.InclusiveTaxBehavior),
 	}
 
-	const amount = 30
+	const (
+		amount              = 30
+		creditBackedAmount  = 10
+		invoiceBackedAmount = amount - creditBackedAmount
+	)
 	createAt := datetime.MustParseTimeInLocation(s.T(), "2025-12-31T00:00:00Z", time.UTC).AsTime()
 	servicePeriod := timeutil.ClosedPeriod{
 		From: datetime.MustParseTimeInLocation(s.T(), "2026-01-01T00:00:00Z", time.UTC).AsTime(),
 		To:   datetime.MustParseTimeInLocation(s.T(), "2026-02-01T00:00:00Z", time.UTC).AsTime(),
 	}
+	creditCostBasis := alpacadecimal.Zero
 	invoiceCostBasis := alpacadecimal.NewFromInt(1)
 	clock.FreezeTime(createAt)
 	defer clock.UnFreeze()
 
 	// given:
-	// - a tax-configured flat-fee charge starts the invoice flow
+	// - a tax-configured flat-fee charge has partial promotional-credit coverage
 	createdCharges, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       cust.GetID(),
 				Currency:       USD,
@@ -4046,15 +4096,27 @@ func (s *SanitySuite) TestFlatFeeCreditThenInvoiceTaxConfigFlowsToEarnings() {
 				UniqueReferenceID: "flatfee-invoice-taxconfig-earnings",
 				TaxConfig:         taxConfig,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(createdCharges, 1)
 	chargeID, err := createdCharges[0].GetChargeID()
 	s.NoError(err)
+	spendChargeID := chargeID.ID
+
+	funding := s.CreatePromotionalCreditFunding(ctx, CreatePromotionalCreditFundingInput{
+		Namespace: ns,
+		Customer:  cust.GetID(),
+		Amount:    alpacadecimal.NewFromInt(creditBackedAmount),
+		At:        createAt,
+		CostBasis: creditCostBasis,
+		TaxConfig: taxConfig,
+	})
+	sourceChargeID := funding.Charge.ID
 
 	// when:
-	// - the invoice is paid and the accrued usage is recognized
+	// - the invoice-backed remainder is paid
+	// - lineage-driven recognition processes the credit-backed slice
 	clock.FreezeTime(servicePeriod.From)
 	invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
 		Customer: cust.GetID(),
@@ -4083,20 +4145,56 @@ func (s *SanitySuite) TestFlatFeeCreditThenInvoiceTaxConfigFlowsToEarnings() {
 	s.NoError(err)
 	s.Equal(flatfee.StatusFinal, finalCharge.Status)
 	s.requireChargeTaxConfig(finalCharge.Intent.GetTaxConfig(), tc.ID, productcatalog.InclusiveTaxBehavior)
+	s.Require().NotNil(finalCharge.Realizations.CurrentRun)
+	s.Len(finalCharge.Realizations.CurrentRun.CreditRealizations, 1)
+	// Native-fiat CTI uses charge-currency credits directly; the second-stage
+	// settlement-fiat overage allocation is reserved for custom-currency CTI.
+	s.False(finalCharge.Realizations.CurrentRun.FiatOverageCreditAllocationCompleted)
+	s.Empty(finalCharge.Realizations.CurrentRun.FiatOverageCreditRealizations)
 
 	ledgerTaxBehavior := ledger.TaxBehaviorInclusive
-	s.Equal(float64(amount), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(creditBackedAmount), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(invoiceBackedAmount), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(0), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID), mo.Some[*ledger.TaxBehavior](nil)).InexactFloat64())
 	s.Equal(float64(0), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some[*ledger.TaxBehavior](nil)).InexactFloat64())
+	s.requireCustomerAccruedSourceSpendBalanceBuckets(cust.GetID(), ledger.RouteFilter{
+		Currency:    currencies.NewCurrencyReference(USD),
+		CostBasis:   mo.Some(&creditCostBasis),
+		TaxCode:     mo.Some(&tc.ID),
+		TaxBehavior: mo.Some(&ledgerTaxBehavior),
+	}, map[string]float64{
+		sourceSpendChargeBucketKey(&sourceChargeID, &spendChargeID): creditBackedAmount,
+	})
+	s.requireCustomerAccruedSourceSpendBalanceBuckets(cust.GetID(), ledger.RouteFilter{
+		Currency:    currencies.NewCurrencyReference(USD),
+		CostBasis:   mo.Some(&invoiceCostBasis),
+		TaxCode:     mo.Some(&tc.ID),
+		TaxBehavior: mo.Some(&ledgerTaxBehavior),
+	}, map[string]float64{
+		sourceSpendChargeBucketKey(nil, &spendChargeID): invoiceBackedAmount,
+	})
 
 	clock.FreezeTime(servicePeriod.To)
-	s.mustRecognizeAttributableAccrued(cust.GetID(), USD, alpacadecimal.NewFromInt(amount))
+	s.MustRecognizeRevenue(cust.GetID(), USD, alpacadecimal.NewFromInt(creditBackedAmount))
 
 	// then:
-	// - earnings keep the full tax route expected by the charge
-	s.Equal(float64(amount), s.MustEarningsBalanceForTaxCode(ns, USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID)).InexactFloat64())
-	s.Equal(float64(0), s.MustEarningsBalanceForTaxCode(ns, USD, mo.Some(&invoiceCostBasis), mo.Some[*string](nil)).InexactFloat64())
-	s.Equal(float64(amount), s.mustEarningsBalanceForTaxConfig(ns, USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
-	s.Equal(float64(0), s.mustEarningsBalanceForTaxConfig(ns, USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some[*ledger.TaxBehavior](nil)).InexactFloat64())
+	// - credit-backed earnings keep the charge tax route and source/spend provenance
+	// - invoice-backed value remains deferred on its accrued route
+	s.Equal(float64(0), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(invoiceBackedAmount), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(creditBackedAmount), s.MustEarningsBalanceForTaxCode(ns, USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID)).InexactFloat64())
+	s.Equal(float64(0), s.MustEarningsBalanceForTaxCode(ns, USD, mo.Some(&creditCostBasis), mo.Some[*string](nil)).InexactFloat64())
+	s.Equal(float64(creditBackedAmount), s.mustEarningsBalanceForTaxConfig(ns, USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(0), s.mustEarningsBalanceForTaxConfig(ns, USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID), mo.Some[*ledger.TaxBehavior](nil)).InexactFloat64())
+	s.Equal(float64(0), s.MustEarningsBalanceForTaxCode(ns, USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID)).InexactFloat64())
+	s.requireEarningsSourceSpendBalanceBuckets(ns, ledger.RouteFilter{
+		Currency:    currencies.NewCurrencyReference(USD),
+		CostBasis:   mo.Some(&creditCostBasis),
+		TaxCode:     mo.Some(&tc.ID),
+		TaxBehavior: mo.Some(&ledgerTaxBehavior),
+	}, map[string]float64{
+		sourceSpendChargeBucketKey(&sourceChargeID, &spendChargeID): creditBackedAmount,
+	})
 }
 
 func (s *SanitySuite) TestUsageBasedCreditOnlyTaxConfigFlowsToEarnings() {
@@ -4131,7 +4229,7 @@ func (s *SanitySuite) TestUsageBasedCreditOnlyTaxConfigFlowsToEarnings() {
 	// - a usage-based charge is created before credit funding and meter realization
 	createdCharges, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       cust.GetID(),
 				Currency:       USD,
@@ -4146,7 +4244,7 @@ func (s *SanitySuite) TestUsageBasedCreditOnlyTaxConfigFlowsToEarnings() {
 				FeatureKey:        apiRequestsTotal.Feature.Key,
 				TaxConfig:         taxConfig,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(createdCharges, 1)
@@ -4236,7 +4334,7 @@ func (s *SanitySuite) TestUsageBasedCreditOnlyTaxConfigFlowsToEarnings() {
 	})
 }
 
-func (s *SanitySuite) TestUsageBasedCreditThenInvoiceTaxConfigFlowsToEarnings() {
+func (s *SanitySuite) TestUsageBasedCreditThenInvoiceTaxConfigFlowsThroughCreditBackedEarnings() {
 	ctx := s.T().Context()
 	ns := s.GetUniqueNamespace("usage-invoice-taxconfig-earnings")
 	s.ProvisionDefaultTaxCodes(ctx, ns)
@@ -4255,18 +4353,23 @@ func (s *SanitySuite) TestUsageBasedCreditThenInvoiceTaxConfigFlowsToEarnings() 
 		Behavior:  lo.ToPtr(productcatalog.InclusiveTaxBehavior),
 	}
 
-	const amount = 10
+	const (
+		amount              = 10
+		creditBackedAmount  = 4
+		invoiceBackedAmount = amount - creditBackedAmount
+	)
 	createAt := datetime.MustParseTimeInLocation(s.T(), "2025-12-01T00:00:00Z", time.UTC).AsTime()
 	servicePeriod := timeutil.ClosedPeriod{
 		From: datetime.MustParseTimeInLocation(s.T(), "2026-01-01T00:00:00Z", time.UTC).AsTime(),
 		To:   datetime.MustParseTimeInLocation(s.T(), "2026-02-01T00:00:00Z", time.UTC).AsTime(),
 	}
+	creditCostBasis := alpacadecimal.Zero
 	invoiceCostBasis := alpacadecimal.NewFromInt(1)
 	clock.FreezeTime(createAt)
 	defer clock.UnFreeze()
 
 	// given:
-	// - a tax-configured usage-based charge starts the invoice flow
+	// - a tax-configured usage-based charge has partial promotional-credit coverage
 	s.MockStreamingConnector.AddSimpleEvent(
 		apiRequestsTotal.Feature.Key,
 		100,
@@ -4274,7 +4377,7 @@ func (s *SanitySuite) TestUsageBasedCreditThenInvoiceTaxConfigFlowsToEarnings() 
 	)
 	createdCharges, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       cust.GetID(),
 				Currency:       USD,
@@ -4289,15 +4392,27 @@ func (s *SanitySuite) TestUsageBasedCreditThenInvoiceTaxConfigFlowsToEarnings() 
 				FeatureKey:        apiRequestsTotal.Feature.Key,
 				TaxConfig:         taxConfig,
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(createdCharges, 1)
 	chargeID, err := createdCharges[0].GetChargeID()
 	s.NoError(err)
+	spendChargeID := chargeID.ID
+
+	funding := s.CreatePromotionalCreditFunding(ctx, CreatePromotionalCreditFundingInput{
+		Namespace: ns,
+		Customer:  cust.GetID(),
+		Amount:    alpacadecimal.NewFromInt(creditBackedAmount),
+		At:        createAt,
+		CostBasis: creditCostBasis,
+		TaxConfig: taxConfig,
+	})
+	sourceChargeID := funding.Charge.ID
 
 	// when:
-	// - the invoice is paid and the accrued usage is recognized
+	// - the invoice-backed remainder is paid
+	// - lineage-driven recognition processes the credit-backed slice
 	clock.FreezeTime(servicePeriod.To.Add(time.Second))
 	invoices, err := s.BillingService.InvoicePendingLines(ctx, billing.InvoicePendingLinesInput{
 		Customer: cust.GetID(),
@@ -4329,19 +4444,55 @@ func (s *SanitySuite) TestUsageBasedCreditThenInvoiceTaxConfigFlowsToEarnings() 
 	s.NoError(err)
 	s.Equal(usagebased.StatusFinal, finalCharge.Status)
 	s.requireChargeTaxConfig(finalCharge.Intent.GetTaxConfig(), tc.ID, productcatalog.InclusiveTaxBehavior)
+	s.Len(finalCharge.Realizations, 1)
+	s.Len(finalCharge.Realizations[0].CreditsAllocated, 1)
+	// Native-fiat CTI uses charge-currency credits directly; the second-stage
+	// settlement-fiat overage allocation is reserved for custom-currency CTI.
+	s.False(finalCharge.Realizations[0].FiatOverageCreditAllocationCompleted)
+	s.Empty(finalCharge.Realizations[0].FiatOverageCreditRealizations)
 
 	ledgerTaxBehavior := ledger.TaxBehaviorInclusive
-	s.Equal(float64(amount), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(creditBackedAmount), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(invoiceBackedAmount), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(0), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID), mo.Some[*ledger.TaxBehavior](nil)).InexactFloat64())
 	s.Equal(float64(0), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some[*ledger.TaxBehavior](nil)).InexactFloat64())
+	s.requireCustomerAccruedSourceSpendBalanceBuckets(cust.GetID(), ledger.RouteFilter{
+		Currency:    currencies.NewCurrencyReference(USD),
+		CostBasis:   mo.Some(&creditCostBasis),
+		TaxCode:     mo.Some(&tc.ID),
+		TaxBehavior: mo.Some(&ledgerTaxBehavior),
+	}, map[string]float64{
+		sourceSpendChargeBucketKey(&sourceChargeID, &spendChargeID): creditBackedAmount,
+	})
+	s.requireCustomerAccruedSourceSpendBalanceBuckets(cust.GetID(), ledger.RouteFilter{
+		Currency:    currencies.NewCurrencyReference(USD),
+		CostBasis:   mo.Some(&invoiceCostBasis),
+		TaxCode:     mo.Some(&tc.ID),
+		TaxBehavior: mo.Some(&ledgerTaxBehavior),
+	}, map[string]float64{
+		sourceSpendChargeBucketKey(nil, &spendChargeID): invoiceBackedAmount,
+	})
 
-	s.mustRecognizeAttributableAccrued(cust.GetID(), USD, alpacadecimal.NewFromInt(amount))
+	s.MustRecognizeRevenue(cust.GetID(), USD, alpacadecimal.NewFromInt(creditBackedAmount))
 
 	// then:
-	// - earnings keep the full tax route expected by the charge
-	s.Equal(float64(amount), s.MustEarningsBalanceForTaxCode(ns, USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID)).InexactFloat64())
-	s.Equal(float64(0), s.MustEarningsBalanceForTaxCode(ns, USD, mo.Some(&invoiceCostBasis), mo.Some[*string](nil)).InexactFloat64())
-	s.Equal(float64(amount), s.mustEarningsBalanceForTaxConfig(ns, USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
-	s.Equal(float64(0), s.mustEarningsBalanceForTaxConfig(ns, USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some[*ledger.TaxBehavior](nil)).InexactFloat64())
+	// - credit-backed earnings keep the charge tax route and source/spend provenance
+	// - invoice-backed value remains deferred on its accrued route
+	s.Equal(float64(0), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(invoiceBackedAmount), s.MustCustomerAccruedBalanceForTaxConfig(cust.GetID(), USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(creditBackedAmount), s.MustEarningsBalanceForTaxCode(ns, USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID)).InexactFloat64())
+	s.Equal(float64(0), s.MustEarningsBalanceForTaxCode(ns, USD, mo.Some(&creditCostBasis), mo.Some[*string](nil)).InexactFloat64())
+	s.Equal(float64(creditBackedAmount), s.mustEarningsBalanceForTaxConfig(ns, USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID), mo.Some(&ledgerTaxBehavior)).InexactFloat64())
+	s.Equal(float64(0), s.mustEarningsBalanceForTaxConfig(ns, USD, mo.Some(&creditCostBasis), mo.Some(&tc.ID), mo.Some[*ledger.TaxBehavior](nil)).InexactFloat64())
+	s.Equal(float64(0), s.MustEarningsBalanceForTaxCode(ns, USD, mo.Some(&invoiceCostBasis), mo.Some(&tc.ID)).InexactFloat64())
+	s.requireEarningsSourceSpendBalanceBuckets(ns, ledger.RouteFilter{
+		Currency:    currencies.NewCurrencyReference(USD),
+		CostBasis:   mo.Some(&creditCostBasis),
+		TaxCode:     mo.Some(&tc.ID),
+		TaxBehavior: mo.Some(&ledgerTaxBehavior),
+	}, map[string]float64{
+		sourceSpendChargeBucketKey(&sourceChargeID, &spendChargeID): creditBackedAmount,
+	})
 }
 
 func (s *SanitySuite) createTaxCodeForEarningsFlow(ctx context.Context, namespace string, key string, name string) taxcode.TaxCode {
@@ -4367,33 +4518,6 @@ func (s *SanitySuite) requireChargeTaxConfig(config productcatalog.TaxCodeConfig
 	s.Equal(taxCodeID, config.TaxCodeID)
 	s.Require().NotNil(config.Behavior)
 	s.Equal(behavior, *config.Behavior)
-}
-
-func (s *SanitySuite) mustRecognizeAttributableAccrued(customerID customer.CustomerID, currency currencyx.Code, amount alpacadecimal.Decimal) {
-	s.T().Helper()
-
-	inputs, err := transactions.ResolveTransactions(
-		s.T().Context(),
-		transactions.ResolverDependencies{
-			AccountService: s.LedgerResolver,
-			AccountCatalog: s.LedgerAccountService,
-			BalanceQuerier: s.BalanceQuerier,
-		},
-		transactions.ResolutionScope{
-			CustomerID: customerID,
-			Namespace:  customerID.Namespace,
-		},
-		transactions.RecognizeEarningsFromAttributableAccruedTemplate{
-			At:       clock.Now(),
-			Amount:   amount,
-			Currency: currencies.NewCurrencyReference(currency),
-		},
-	)
-	s.Require().NoError(err)
-	s.Require().NotEmpty(inputs)
-
-	_, err = s.Ledger.CommitGroup(s.T().Context(), transactions.GroupInputs(customerID.Namespace, nil, inputs...))
-	s.Require().NoError(err)
 }
 
 func (s *SanitySuite) mustEarningsBalanceForTaxConfig(namespace string, code currencyx.Code, costBasis mo.Option[*alpacadecimal.Decimal], taxCode mo.Option[*string], taxBehavior mo.Option[*ledger.TaxBehavior]) alpacadecimal.Decimal {
@@ -4472,7 +4596,7 @@ func (s *SanitySuite) TestTaxCodeFlowsFromCreditPurchaseToEarnings() {
 	s.Run("create and advance flat fee credit-only charge", func() {
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -4490,7 +4614,7 @@ func (s *SanitySuite) TestTaxCodeFlowsFromCreditPurchaseToEarnings() {
 						Behavior:  lo.ToPtr(productcatalog.InclusiveTaxBehavior),
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -4599,7 +4723,7 @@ func (s *SanitySuite) TestChargeIntentTaxConfigFlowsToEarnings() {
 	s.Run("create and advance flat-fee credit-only charge with matching TaxConfig on intent", func() {
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -4617,7 +4741,7 @@ func (s *SanitySuite) TestChargeIntentTaxConfigFlowsToEarnings() {
 						Behavior:  lo.ToPtr(productcatalog.InclusiveTaxBehavior),
 					}, // tax on the charge intent
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -4692,7 +4816,7 @@ func (s *SanitySuite) TestChargeIntentTaxBehaviorFlowsToAdvanceAccrualCreditOnly
 
 	res, err := s.Charges.Create(ctx, charges.CreateInput{
 		Namespace: ns,
-		Intents: charges.ChargeIntents{
+		Intents: charges.NewCreateChargeIntents(
 			s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 				Customer:       cust.GetID(),
 				Currency:       USD,
@@ -4710,7 +4834,7 @@ func (s *SanitySuite) TestChargeIntentTaxBehaviorFlowsToAdvanceAccrualCreditOnly
 					Behavior:  lo.ToPtr(productcatalog.InclusiveTaxBehavior),
 				},
 			}),
-		},
+		),
 	})
 	s.NoError(err)
 	s.Len(res, 1)
@@ -4804,7 +4928,7 @@ func (s *SanitySuite) TestChargeIntentTaxConfigOverridesFundingTaxCodeCreditOnly
 	s.Run("create and advance flat-fee credit-only charge with TaxConfig=B (different from funding)", func() {
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -4822,7 +4946,7 @@ func (s *SanitySuite) TestChargeIntentTaxConfigOverridesFundingTaxCodeCreditOnly
 						Behavior:  lo.ToPtr(productcatalog.ExclusiveTaxBehavior),
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)
@@ -4919,7 +5043,7 @@ func (s *SanitySuite) TestTaxCodeFlowsFromInvoicedChargeToAccrued() {
 
 		res, err := s.Charges.Create(ctx, charges.CreateInput{
 			Namespace: ns,
-			Intents: charges.ChargeIntents{
+			Intents: charges.NewCreateChargeIntents(
 				s.CreateMockChargeIntent(CreateMockChargeIntentInput{
 					Customer:       cust.GetID(),
 					Currency:       USD,
@@ -4937,7 +5061,7 @@ func (s *SanitySuite) TestTaxCodeFlowsFromInvoicedChargeToAccrued() {
 						Behavior:  lo.ToPtr(productcatalog.InclusiveTaxBehavior),
 					},
 				}),
-			},
+			),
 		})
 		s.NoError(err)
 		s.Len(res, 1)

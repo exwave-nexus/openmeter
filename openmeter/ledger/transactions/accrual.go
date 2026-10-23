@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/alpacahq/alpacadecimal"
-	"github.com/samber/lo"
+	"github.com/samber/mo"
 
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/customer"
@@ -90,14 +90,12 @@ func (t TransferCustomerFBOToAccruedTemplate) correct(scope CorrectionInput) ([]
 		}
 	}
 
-	slices.SortStableFunc(negativeFBOEntries, compareFBOAccrualCorrectionSourceEntries)
+	slices.SortStableFunc(negativeFBOEntries, compareFBOCollectionCorrectionSourceEntries)
 	postings, err := allocateCorrectionLegs(
 		negativeFBOEntries,
 		positiveAccruedEntries,
 		t.entryRoutePairingKey,
-		func(entry ledger.Entry) alpacadecimal.Decimal {
-			return entry.Amount().Abs()
-		},
+		scope.sourceEntryAmount,
 		scope.Amount,
 	)
 	if err != nil {
@@ -117,28 +115,30 @@ func (t TransferCustomerFBOToAccruedTemplate) routePairingKey(address ledger.Pos
 
 	return routePairingKey{
 		currency:          route.Currency.IdentityKey(),
-		costBasisCurrency: string(lo.FromPtrOr(route.CostBasisCurrency, currencyx.Code(""))),
+		costBasisCurrency: mo.PointerToOption(route.CostBasisCurrency),
 		costBasis:         costBasisKey(route.CostBasis),
 	}
 }
 
 func (t TransferCustomerFBOToAccruedTemplate) entryRoutePairingKey(entry ledger.Entry) routePairingKey {
 	key := t.routePairingKey(entry.PostingAddress())
-	key.sourceChargeID = lo.FromPtrOr(entry.SourceChargeID(), "null")
-	key.spendChargeID = lo.FromPtrOr(entry.SpendChargeID(), "null")
+	key.sourceChargeID = mo.PointerToOption(entry.Provenance().SourceChargeID)
+	key.spendChargeID = mo.PointerToOption(entry.Provenance().SpendChargeID)
+	key.collectionOriginID = mo.PointerToOption(entry.Provenance().CollectionOriginID)
 
 	return key
 }
 
 func (t TransferCustomerFBOToAccruedTemplate) sourceRoutePairingKey(source PostingAmount) routePairingKey {
 	key := t.routePairingKey(source.Address)
-	key.sourceChargeID = lo.FromPtrOr(source.Identity.SourceChargeID, "null")
-	key.spendChargeID = lo.FromPtrOr(source.Identity.SpendChargeID, "null")
+	key.sourceChargeID = mo.PointerToOption(source.Identity.SourceChargeID)
+	key.spendChargeID = mo.PointerToOption(source.Identity.SpendChargeID)
+	key.collectionOriginID = mo.PointerToOption(source.Identity.CollectionOriginID)
 
 	return key
 }
 
-func compareFBOAccrualCorrectionSourceEntries(left ledger.Entry, right ledger.Entry) int {
+func compareFBOCollectionCorrectionSourceEntries(left ledger.Entry, right ledger.Entry) int {
 	leftOrder, leftHasOrder := left.Annotations().GetInt(ledger.AnnotationCollectionSourceOrder)
 	rightOrder, rightHasOrder := right.Annotations().GetInt(ledger.AnnotationCollectionSourceOrder)
 	if leftHasOrder && rightHasOrder && leftOrder != rightOrder {
@@ -212,10 +212,10 @@ func (t TransferCustomerFBOToAccruedTemplate) resolveAccruedSubAccByRoutePairing
 			if err != nil {
 				return nil, fmt.Errorf("failed to get accrued sub-account: %w", err)
 			}
+
 			current.Address = accruedSubAccount.Address()
 			current.Identity = ledger.EntryIdentityParts{
-				SourceChargeID: source.Identity.SourceChargeID,
-				SpendChargeID:  source.Identity.SpendChargeID,
+				Provenance: source.Identity.Provenance,
 			}
 		}
 
@@ -260,26 +260,38 @@ func (t TransferCustomerFBOToAccruedTemplate) buildRoutePreservingAccrualEntries
 	return entryInputs
 }
 
-func costBasisKey(costBasis *alpacadecimal.Decimal) string {
+func costBasisKey(costBasis *alpacadecimal.Decimal) mo.Option[string] {
 	if costBasis == nil {
-		return "null"
+		return mo.None[string]()
 	}
 
-	return costBasis.String()
+	return mo.Some(costBasis.String())
 }
 
-// TransferCustomerFBOAdvanceToAccruedTemplate moves value from the synthetic advance-backed
-// customer FBO route into the matching accrued route.
+// TransferCustomerFBOAdvanceToAccruedTemplate moves value out of a customer FBO
+// route directly into the matching accrued route without going through the
+// prioritized multi-source collection path in the collector package.
+//
+// It has two callers with different cost-basis shapes:
+//   - credit_only's uncovered-shortfall advance: CostBasis and CostBasisCurrency
+//     are nil (the source is not yet attributed to a known rate).
+//   - immediate purchase-and-consumption of custom-currency overage: CostBasis
+//     and CostBasisCurrency are the charge's persisted, already-known rate, and
+//     SourceChargeID is set so the accrued leg keeps purchase provenance
+//     alongside the spend that consumed it.
 type TransferCustomerFBOAdvanceToAccruedTemplate struct {
-	At             time.Time
-	Amount         alpacadecimal.Decimal
-	Currency       currencies.CurrencyReference
-	TaxCode        *string
-	TaxBehavior    *ledger.TaxBehavior
-	CostBasis      *alpacadecimal.Decimal
-	Features       []string
-	SpendChargeID  *string
-	CreditPriority *int
+	At                 time.Time
+	Amount             alpacadecimal.Decimal
+	Currency           currencies.CurrencyReference
+	TaxCode            *string
+	TaxBehavior        *ledger.TaxBehavior
+	CostBasisCurrency  *currencyx.Code
+	CostBasis          *alpacadecimal.Decimal
+	Filters            ledger.CreditFilters
+	SourceChargeID     *string
+	SpendChargeID      *string
+	CollectionOriginID *string
+	CreditPriority     *int
 }
 
 func (t TransferCustomerFBOAdvanceToAccruedTemplate) Validate() error {
@@ -299,6 +311,10 @@ func (t TransferCustomerFBOAdvanceToAccruedTemplate) Validate() error {
 		if err := ledger.ValidateCostBasis(*t.CostBasis); err != nil {
 			return fmt.Errorf("cost basis: %w", err)
 		}
+	}
+
+	if err := ledger.ValidateCostBasisCurrency(t.Currency.Code, t.CostBasisCurrency, t.CostBasis); err != nil {
+		return fmt.Errorf("cost basis currency: %w", err)
 	}
 
 	if t.CreditPriority != nil {
@@ -340,14 +356,18 @@ func (t TransferCustomerFBOAdvanceToAccruedTemplate) correct(scope CorrectionInp
 			fboAddress = entry.PostingAddress()
 			fboAmount = fboAmount.Add(entry.Amount().Abs())
 			fboIdentity = ledger.EntryIdentityParts{
-				SourceChargeID: entry.SourceChargeID(),
+				Provenance: ledger.Provenance{
+					SourceChargeID: entry.Provenance().SourceChargeID,
+				},
 			}
 		case entry.PostingAddress().AccountType() == ledger.AccountTypeCustomerAccrued && entry.Amount().IsPositive():
 			accruedAddress = entry.PostingAddress()
 			accruedAmount = accruedAmount.Add(entry.Amount())
 			accruedIdentity = ledger.EntryIdentityParts{
-				SourceChargeID: entry.SourceChargeID(),
-				SpendChargeID:  entry.SpendChargeID(),
+				Provenance: ledger.Provenance{
+					SourceChargeID: entry.Provenance().SourceChargeID,
+					SpendChargeID:  entry.Provenance().SpendChargeID,
+				},
 			}
 		}
 	}
@@ -388,20 +408,22 @@ func (t TransferCustomerFBOAdvanceToAccruedTemplate) resolve(ctx context.Context
 	}
 
 	fbo, err := customerAccounts.FBOAccount.GetSubAccountForRoute(ctx, ledger.CustomerFBORouteParams{
-		Currency:       t.Currency,
-		CostBasis:      t.CostBasis,
-		Features:       t.Features,
-		CreditPriority: priority,
+		Currency:          t.Currency,
+		CostBasisCurrency: t.CostBasisCurrency,
+		CostBasis:         t.CostBasis,
+		Filters:           t.Filters,
+		CreditPriority:    priority,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get FBO sub-account: %w", err)
 	}
 
 	accrued, err := customerAccounts.AccruedAccount.GetSubAccountForRoute(ctx, ledger.CustomerAccruedRouteParams{
-		Currency:    t.Currency,
-		TaxCode:     t.TaxCode,
-		TaxBehavior: t.TaxBehavior,
-		CostBasis:   t.CostBasis,
+		Currency:          t.Currency,
+		CostBasisCurrency: t.CostBasisCurrency,
+		TaxCode:           t.TaxCode,
+		TaxBehavior:       t.TaxBehavior,
+		CostBasis:         t.CostBasis,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get accrued sub-account: %w", err)
@@ -414,14 +436,22 @@ func (t TransferCustomerFBOAdvanceToAccruedTemplate) resolve(ctx context.Context
 				address: fbo.Address(),
 				amount:  t.Amount.Neg(),
 				identity: ledger.EntryIdentityParts{
-					SpendChargeID: t.SpendChargeID,
+					Provenance: ledger.Provenance{
+						SourceChargeID:     t.SourceChargeID,
+						CollectionOriginID: t.CollectionOriginID,
+						SpendChargeID:      t.SpendChargeID,
+					},
 				},
 			},
 			{
 				address: accrued.Address(),
 				amount:  t.Amount,
 				identity: ledger.EntryIdentityParts{
-					SpendChargeID: t.SpendChargeID,
+					Provenance: ledger.Provenance{
+						SourceChargeID:     t.SourceChargeID,
+						CollectionOriginID: t.CollectionOriginID,
+						SpendChargeID:      t.SpendChargeID,
+					},
 				},
 			},
 		},
@@ -516,14 +546,18 @@ func (t TransferCustomerReceivableToAccruedTemplate) resolve(ctx context.Context
 				address: receivable.Address(),
 				amount:  t.Amount.Neg(),
 				identity: ledger.EntryIdentityParts{
-					SpendChargeID: t.SpendChargeID,
+					Provenance: ledger.Provenance{
+						SpendChargeID: t.SpendChargeID,
+					},
 				},
 			},
 			{
 				address: accrued.Address(),
 				amount:  t.Amount,
 				identity: ledger.EntryIdentityParts{
-					SpendChargeID: t.SpendChargeID,
+					Provenance: ledger.Provenance{
+						SpendChargeID: t.SpendChargeID,
+					},
 				},
 			},
 		},
@@ -532,6 +566,7 @@ func (t TransferCustomerReceivableToAccruedTemplate) resolve(ctx context.Context
 
 // TranslateCustomerAccruedCostBasisTemplate moves accrued balance between cost-basis buckets
 // without changing account type or currency.
+
 type TranslateCustomerAccruedCostBasisTemplate struct {
 	At            time.Time
 	Amount        alpacadecimal.Decimal
@@ -542,9 +577,10 @@ type TranslateCustomerAccruedCostBasisTemplate struct {
 	ToCostBasis   *alpacadecimal.Decimal
 	// CostBasisCurrency is the fiat currency the ToCostBasis leg was priced
 	// against. Nil when FromCostBasis is also nil (cost basis still unknown).
-	CostBasisCurrency *currencyx.Code
-	SourceChargeID    *string
-	SpendChargeID     *string
+	CostBasisCurrency  *currencyx.Code
+	SourceChargeID     *string
+	SpendChargeID      *string
+	CollectionOriginID *string
 }
 
 func (t TranslateCustomerAccruedCostBasisTemplate) Validate() error {
@@ -616,12 +652,12 @@ func (t TranslateCustomerAccruedCostBasisTemplate) correct(scope CorrectionInput
 		case entry.Amount().IsNegative():
 			fromAccruedAddress = entry.PostingAddress()
 			fromAccruedAmount = fromAccruedAmount.Add(entry.Amount().Abs())
-			spendChargeID = entry.SpendChargeID()
+			spendChargeID = entry.Provenance().SpendChargeID
 		case entry.Amount().IsPositive():
 			toAccruedAddress = entry.PostingAddress()
 			toAccruedAmount = toAccruedAmount.Add(entry.Amount())
-			sourceChargeID = entry.SourceChargeID()
-			spendChargeID = entry.SpendChargeID()
+			sourceChargeID = entry.Provenance().SourceChargeID
+			spendChargeID = entry.Provenance().SpendChargeID
 		}
 	}
 
@@ -641,15 +677,19 @@ func (t TranslateCustomerAccruedCostBasisTemplate) correct(scope CorrectionInput
 					address: fromAccruedAddress,
 					amount:  scope.Amount,
 					identity: ledger.EntryIdentityParts{
-						SpendChargeID: spendChargeID,
+						Provenance: ledger.Provenance{
+							SpendChargeID: spendChargeID,
+						},
 					},
 				},
 				{
 					address: toAccruedAddress,
 					amount:  scope.Amount.Neg(),
 					identity: ledger.EntryIdentityParts{
-						SourceChargeID: sourceChargeID,
-						SpendChargeID:  spendChargeID,
+						Provenance: ledger.Provenance{
+							SourceChargeID: sourceChargeID,
+							SpendChargeID:  spendChargeID,
+						},
 					},
 				},
 			},
@@ -691,15 +731,21 @@ func (t TranslateCustomerAccruedCostBasisTemplate) resolve(ctx context.Context, 
 				address: fromAccrued.Address(),
 				amount:  t.Amount.Neg(),
 				identity: ledger.EntryIdentityParts{
-					SpendChargeID: t.SpendChargeID,
+					Provenance: ledger.Provenance{
+						CollectionOriginID: t.CollectionOriginID,
+						SpendChargeID:      t.SpendChargeID,
+					},
 				},
 			},
 			{
 				address: toAccrued.Address(),
 				amount:  t.Amount,
 				identity: ledger.EntryIdentityParts{
-					SourceChargeID: t.SourceChargeID,
-					SpendChargeID:  t.SpendChargeID,
+					Provenance: ledger.Provenance{
+						SourceChargeID:     t.SourceChargeID,
+						CollectionOriginID: t.CollectionOriginID,
+						SpendChargeID:      t.SpendChargeID,
+					},
 				},
 			},
 		},

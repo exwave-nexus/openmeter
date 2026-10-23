@@ -4,25 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"slices"
-	"strings"
-
-	"github.com/samber/lo"
 
 	api "github.com/openmeterio/openmeter/api/v3"
 	"github.com/openmeterio/openmeter/api/v3/apierrors"
-	"github.com/openmeterio/openmeter/api/v3/request"
 	"github.com/openmeterio/openmeter/api/v3/response"
 	billingcharges "github.com/openmeterio/openmeter/openmeter/billing/charges"
-	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/pkg/framework/commonhttp"
 	"github.com/openmeterio/openmeter/pkg/framework/transport/httptransport"
-	"github.com/openmeterio/openmeter/pkg/pagination"
-	"github.com/openmeterio/openmeter/pkg/slicesx"
 )
 
 type (
-	ListCustomerChargesRequest  = billingcharges.ListChargesInput
+	ListCustomerChargesRequest  = billingcharges.ListCustomerChargesInput
 	ListCustomerChargesResponse = response.PagePaginationResponse[api.BillingCharge]
 	ListCustomerChargesParams   struct {
 		CustomerID api.ULID
@@ -39,95 +31,34 @@ func (h *handler) ListCustomerCharges() ListCustomerChargesHandler {
 				return ListCustomerChargesRequest{}, err
 			}
 
-			page := pagination.NewPage(1, 20)
-			if args.Params.Page != nil {
-				page = pagination.NewPage(
-					lo.FromPtrOr(args.Params.Page.Number, 1),
-					lo.FromPtrOr(args.Params.Page.Size, 20),
-				)
+			req, err := fromAPIListChargesParams(ctx, ns, args.Params.Page, args.Params.Sort, args.Params.Expand)
+			if err != nil {
+				return ListCustomerChargesRequest{}, err
 			}
 
-			if err := page.Validate(); err != nil {
-				return ListCustomerChargesRequest{}, apierrors.NewBadRequestError(ctx, err, apierrors.InvalidParameters{
-					{
-						Field:  "page",
-						Reason: err.Error(),
-						Source: apierrors.InvalidParamSourceQuery,
-					},
-				})
-			}
+			req.CustomerIDs = []string{args.CustomerID}
 
-			// Realization runs are always required to compute booked totals.
-			expands := meta.Expands{meta.ExpandRealizations}
-			if args.Params.Expand != nil && slices.Contains(*args.Params.Expand, api.BillingChargesExpandRealTimeUsage) {
-				expands = expands.With(meta.ExpandRealtimeUsage)
-			}
-
-			req := ListCustomerChargesRequest{
-				Page:        page,
-				Namespace:   ns,
-				CustomerIDs: []string{args.CustomerID},
-				// Credit purchases are served by the credit grants API; exclude them here.
-				ChargeTypes: []meta.ChargeType{meta.ChargeTypeFlatFee, meta.ChargeTypeUsageBased},
-				Expands:     expands,
-			}
-
-			// Parse sort. When omitted, the service defaults to created_at ascending
-			// with id as a tie-breaker (AIP-132 deterministic default order).
-			if args.Params.Sort != nil {
-				sort, err := request.ParseSortBy(*args.Params.Sort)
-				if err != nil {
-					return ListCustomerChargesRequest{}, apierrors.NewBadRequestError(ctx, err, apierrors.InvalidParameters{
-						{
-							Field:  "sort",
-							Reason: err.Error(),
-							Source: apierrors.InvalidParamSourceQuery,
-						},
-					})
-				}
-				orderBy, err := FromAPICustomerChargesSortField(ctx, sort.Field)
-				if err != nil {
+			if args.Params.Filter != nil {
+				if err := fromAPIListChargesParamsFilter(ctx, &api.ListChargesParamsFilter{
+					Status:            args.Params.Filter.Status,
+					FeatureId:         args.Params.Filter.FeatureId,
+					FeatureKey:        args.Params.Filter.FeatureKey,
+					ServicePeriodFrom: args.Params.Filter.ServicePeriodFrom,
+					ServicePeriodTo:   args.Params.Filter.ServicePeriodTo,
+				}, &req); err != nil {
 					return ListCustomerChargesRequest{}, err
 				}
-				req.OrderBy = orderBy
-				req.Order = sort.Order.ToSortxOrder()
-			}
-
-			// Parse status filter
-			if args.Params.Filter != nil && args.Params.Filter.Status != nil && len(args.Params.Filter.Status.Oeq) > 0 {
-				statuses, err := parseChargeStatusFilterSlice(args.Params.Filter.Status.Oeq)
-				if err != nil {
-					return ListCustomerChargesRequest{}, apierrors.NewBadRequestError(ctx, err, apierrors.InvalidParameters{
-						{
-							Field:  "filter[status][oeq]",
-							Reason: err.Error(),
-							Source: apierrors.InvalidParamSourceQuery,
-						},
-					})
-				}
-				req.StatusIn = statuses
-				// TODO: Also add a deleted_at filter
-				req.IncludeDeleted = slices.Contains(statuses, meta.ChargeStatusDeleted)
 			}
 
 			return req, nil
 		},
 		func(ctx context.Context, request ListCustomerChargesRequest) (ListCustomerChargesResponse, error) {
-			result, err := h.service.ListCharges(ctx, request)
+			result, err := h.service.ListCustomerCharges(ctx, request)
 			if err != nil {
 				return ListCustomerChargesResponse{}, fmt.Errorf("listing charges: %w", err)
 			}
 
-			charges, err := slicesx.MapWithErr(result.Items, convertChargeToAPI)
-			if err != nil {
-				return ListCustomerChargesResponse{}, fmt.Errorf("converting charge: %w", err)
-			}
-
-			return response.NewPagePaginationResponse(charges, response.PageMetaPage{
-				Size:   request.Page.PageSize,
-				Number: request.Page.PageNumber,
-				Total:  lo.ToPtr(result.TotalCount),
-			}), nil
+			return toAPIListChargesResponse(result, request.Page)
 		},
 		commonhttp.JSONResponseEncoderWithStatus[ListCustomerChargesResponse](http.StatusOK),
 		httptransport.AppendOptions(
@@ -136,25 +67,4 @@ func (h *handler) ListCustomerCharges() ListCustomerChargesHandler {
 			httptransport.WithErrorEncoder(apierrors.GenericErrorEncoder()),
 		)...,
 	)
-}
-
-// parseChargeStatusFilterSlice converts a slice of status strings to meta.ChargeStatus values.
-// Each token is validated with a type-safe switch so that unknown values are
-// rejected with an explicit error message rather than caught by a generic validator.
-func parseChargeStatusFilterSlice(values []string) ([]meta.ChargeStatus, error) {
-	statuses := make([]meta.ChargeStatus, 0, len(values))
-
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			return nil, fmt.Errorf("status filter value must not be empty or whitespace-only")
-		}
-		s, err := convertAPIChargeStatus(trimmed)
-		if err != nil {
-			return nil, err
-		}
-		statuses = append(statuses, s)
-	}
-
-	return statuses, nil
 }

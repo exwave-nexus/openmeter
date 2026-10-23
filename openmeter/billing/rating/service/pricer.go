@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/rating"
 	"github.com/openmeterio/openmeter/openmeter/billing/rating/service/mutator"
 	"github.com/openmeterio/openmeter/openmeter/billing/rating/service/rate"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
-	"github.com/openmeterio/openmeter/pkg/timeutil"
 )
 
 func getPricerFor(line rating.PriceAccessor, opts rating.GenerateDetailedLinesOptions, unitConfigEnabled bool) (*priceMutator, error) {
@@ -81,6 +81,7 @@ func getPricerFor(line rating.PriceAccessor, opts rating.GenerateDetailedLinesOp
 	} else {
 		preCalculationMutators = append(preCalculationMutators, &mutator.ForbidUnitConfig{})
 	}
+
 	preCalculationMutators = append(preCalculationMutators, &mutator.DiscountUsage{})
 
 	// This priceMutator captures the calculation flow for discounts and commitments:
@@ -129,6 +130,6 @@ func (p *priceMutator) GenerateDetailedLines(l rate.PricerCalculateInput) (ratin
 	}, nil
 }
 
-func (p *priceMutator) ResolveBillablePeriod(in rating.ResolveBillablePeriodInput) (*timeutil.ClosedPeriod, error) {
+func (p *priceMutator) ResolveBillablePeriod(in rating.ResolveBillablePeriodInput) (billing.IsLineBillableAsOfResult, error) {
 	return p.Pricer.ResolveBillablePeriod(in)
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/ent/db/subscriptionitem"
 	"github.com/openmeterio/openmeter/openmeter/ent/db/subscriptionphase"
 	dbtaxcode "github.com/openmeterio/openmeter/openmeter/ent/db/taxcode"
+	"github.com/openmeterio/openmeter/openmeter/ledger"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/models"
@@ -135,6 +136,12 @@ func (_c *ChargeCreditPurchaseCreate) SetNillableCustomCurrencyID(v *string) *Ch
 // SetManagedBy sets the "managed_by" field.
 func (_c *ChargeCreditPurchaseCreate) SetManagedBy(v billing.InvoiceLineManagedBy) *ChargeCreditPurchaseCreate {
 	_c.mutation.SetManagedBy(v)
+	return _c
+}
+
+// SetSubscriptionPlan sets the "subscription_plan" field.
+func (_c *ChargeCreditPurchaseCreate) SetSubscriptionPlan(v *meta.SubscriptionPlan) *ChargeCreditPurchaseCreate {
+	_c.mutation.SetSubscriptionPlan(v)
 	return _c
 }
 
@@ -294,6 +301,12 @@ func (_c *ChargeCreditPurchaseCreate) SetNillableDescription(v *string) *ChargeC
 	return _c
 }
 
+// SetValidationIssues sets the "validation_issues" field.
+func (_c *ChargeCreditPurchaseCreate) SetValidationIssues(v billing.ValidationIssues) *ChargeCreditPurchaseCreate {
+	_c.mutation.SetValidationIssues(v)
+	return _c
+}
+
 // SetSchemaLevel sets the "schema_level" field.
 func (_c *ChargeCreditPurchaseCreate) SetSchemaLevel(v int) *ChargeCreditPurchaseCreate {
 	_c.mutation.SetSchemaLevel(v)
@@ -395,6 +408,12 @@ func (_c *ChargeCreditPurchaseCreate) SetNillablePriority(v *int) *ChargeCreditP
 	if v != nil {
 		_c.SetPriority(*v)
 	}
+	return _c
+}
+
+// SetFilters sets the "filters" field.
+func (_c *ChargeCreditPurchaseCreate) SetFilters(v *ledger.CreditFilters) *ChargeCreditPurchaseCreate {
+	_c.mutation.SetFilters(v)
 	return _c
 }
 
@@ -638,6 +657,10 @@ func (_c *ChargeCreditPurchaseCreate) defaults() {
 		v := chargecreditpurchase.DefaultSchemaLevel
 		_c.mutation.SetSchemaLevel(v)
 	}
+	if _, ok := _c.mutation.Filters(); !ok {
+		v := chargecreditpurchase.DefaultFilters()
+		_c.mutation.SetFilters(v)
+	}
 	if _, ok := _c.mutation.ID(); !ok {
 		v := chargecreditpurchase.DefaultID()
 		_c.mutation.SetID(v)
@@ -698,6 +721,11 @@ func (_c *ChargeCreditPurchaseCreate) check() error {
 			return &ValidationError{Name: "managed_by", err: fmt.Errorf(`db: validator failed for field "ChargeCreditPurchase.managed_by": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.SubscriptionPlan(); ok {
+		if err := v.Validate(); err != nil {
+			return &ValidationError{Name: "subscription_plan", err: fmt.Errorf(`db: validator failed for field "ChargeCreditPurchase.subscription_plan": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.TaxCodeID(); !ok {
 		return &ValidationError{Name: "tax_code_id", err: errors.New(`db: missing required field "ChargeCreditPurchase.tax_code_id"`)}
 	}
@@ -744,6 +772,14 @@ func (_c *ChargeCreditPurchaseCreate) check() error {
 	if _, ok := _c.mutation.CreditAmount(); !ok {
 		return &ValidationError{Name: "credit_amount", err: errors.New(`db: missing required field "ChargeCreditPurchase.credit_amount"`)}
 	}
+	if _, ok := _c.mutation.Filters(); !ok {
+		return &ValidationError{Name: "filters", err: errors.New(`db: missing required field "ChargeCreditPurchase.filters"`)}
+	}
+	if v, ok := _c.mutation.Filters(); ok {
+		if err := v.Validate(); err != nil {
+			return &ValidationError{Name: "filters", err: fmt.Errorf(`db: validator failed for field "ChargeCreditPurchase.filters": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.StatusDetailed(); !ok {
 		return &ValidationError{Name: "status_detailed", err: errors.New(`db: missing required field "ChargeCreditPurchase.status_detailed"`)}
 	}
@@ -765,7 +801,10 @@ func (_c *ChargeCreditPurchaseCreate) sqlSave(ctx context.Context) (*ChargeCredi
 	if err := _c.check(); err != nil {
 		return nil, err
 	}
-	_node, _spec := _c.createSpec()
+	_node, _spec, err := _c.createSpec()
+	if err != nil {
+		return nil, err
+	}
 	if err := sqlgraph.CreateNode(ctx, _c.driver, _spec); err != nil {
 		if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}
@@ -784,7 +823,7 @@ func (_c *ChargeCreditPurchaseCreate) sqlSave(ctx context.Context) (*ChargeCredi
 	return _node, nil
 }
 
-func (_c *ChargeCreditPurchaseCreate) createSpec() (*ChargeCreditPurchase, *sqlgraph.CreateSpec) {
+func (_c *ChargeCreditPurchaseCreate) createSpec() (*ChargeCreditPurchase, *sqlgraph.CreateSpec, error) {
 	var (
 		_node = &ChargeCreditPurchase{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(chargecreditpurchase.Table, sqlgraph.NewFieldSpec(chargecreditpurchase.FieldID, field.TypeString))
@@ -834,6 +873,14 @@ func (_c *ChargeCreditPurchaseCreate) createSpec() (*ChargeCreditPurchase, *sqlg
 		_spec.SetField(chargecreditpurchase.FieldManagedBy, field.TypeEnum, value)
 		_node.ManagedBy = value
 	}
+	if value, ok := _c.mutation.SubscriptionPlan(); ok {
+		vv, err := chargecreditpurchase.ValueScanner.SubscriptionPlan.Value(value)
+		if err != nil {
+			return nil, nil, err
+		}
+		_spec.SetField(chargecreditpurchase.FieldSubscriptionPlan, field.TypeString, vv)
+		_node.SubscriptionPlan = value
+	}
 	if value, ok := _c.mutation.AdvanceAfter(); ok {
 		_spec.SetField(chargecreditpurchase.FieldAdvanceAfter, field.TypeTime, value)
 		_node.AdvanceAfter = &value
@@ -874,6 +921,10 @@ func (_c *ChargeCreditPurchaseCreate) createSpec() (*ChargeCreditPurchase, *sqlg
 		_spec.SetField(chargecreditpurchase.FieldDescription, field.TypeString, value)
 		_node.Description = &value
 	}
+	if value, ok := _c.mutation.ValidationIssues(); ok {
+		_spec.SetField(chargecreditpurchase.FieldValidationIssues, field.TypeJSON, value)
+		_node.ValidationIssues = value
+	}
 	if value, ok := _c.mutation.SchemaLevel(); ok {
 		_spec.SetField(chargecreditpurchase.FieldSchemaLevel, field.TypeInt, value)
 		_node.SchemaLevel = value
@@ -905,6 +956,14 @@ func (_c *ChargeCreditPurchaseCreate) createSpec() (*ChargeCreditPurchase, *sqlg
 	if value, ok := _c.mutation.Priority(); ok {
 		_spec.SetField(chargecreditpurchase.FieldPriority, field.TypeInt, value)
 		_node.Priority = &value
+	}
+	if value, ok := _c.mutation.Filters(); ok {
+		vv, err := chargecreditpurchase.ValueScanner.Filters.Value(value)
+		if err != nil {
+			return nil, nil, err
+		}
+		_spec.SetField(chargecreditpurchase.FieldFilters, field.TypeString, vv)
+		_node.Filters = value
 	}
 	if value, ok := _c.mutation.FeatureFilters(); ok {
 		_spec.SetField(chargecreditpurchase.FieldFeatureFilters, field.TypeOther, value)
@@ -1109,7 +1168,7 @@ func (_c *ChargeCreditPurchaseCreate) createSpec() (*ChargeCreditPurchase, *sqlg
 		_node.CustomCurrencyID = &nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
-	return _node, _spec
+	return _node, _spec, nil
 }
 
 // OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
@@ -1245,6 +1304,24 @@ func (u *ChargeCreditPurchaseUpsert) UpdateStatus() *ChargeCreditPurchaseUpsert 
 	return u
 }
 
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (u *ChargeCreditPurchaseUpsert) SetSubscriptionPhaseID(v string) *ChargeCreditPurchaseUpsert {
+	u.Set(chargecreditpurchase.FieldSubscriptionPhaseID, v)
+	return u
+}
+
+// UpdateSubscriptionPhaseID sets the "subscription_phase_id" field to the value that was provided on create.
+func (u *ChargeCreditPurchaseUpsert) UpdateSubscriptionPhaseID() *ChargeCreditPurchaseUpsert {
+	u.SetExcluded(chargecreditpurchase.FieldSubscriptionPhaseID)
+	return u
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (u *ChargeCreditPurchaseUpsert) ClearSubscriptionPhaseID() *ChargeCreditPurchaseUpsert {
+	u.SetNull(chargecreditpurchase.FieldSubscriptionPhaseID)
+	return u
+}
+
 // SetSubscriptionItemID sets the "subscription_item_id" field.
 func (u *ChargeCreditPurchaseUpsert) SetSubscriptionItemID(v string) *ChargeCreditPurchaseUpsert {
 	u.Set(chargecreditpurchase.FieldSubscriptionItemID, v)
@@ -1374,6 +1451,24 @@ func (u *ChargeCreditPurchaseUpsert) UpdateDescription() *ChargeCreditPurchaseUp
 // ClearDescription clears the value of the "description" field.
 func (u *ChargeCreditPurchaseUpsert) ClearDescription() *ChargeCreditPurchaseUpsert {
 	u.SetNull(chargecreditpurchase.FieldDescription)
+	return u
+}
+
+// SetValidationIssues sets the "validation_issues" field.
+func (u *ChargeCreditPurchaseUpsert) SetValidationIssues(v billing.ValidationIssues) *ChargeCreditPurchaseUpsert {
+	u.Set(chargecreditpurchase.FieldValidationIssues, v)
+	return u
+}
+
+// UpdateValidationIssues sets the "validation_issues" field to the value that was provided on create.
+func (u *ChargeCreditPurchaseUpsert) UpdateValidationIssues() *ChargeCreditPurchaseUpsert {
+	u.SetExcluded(chargecreditpurchase.FieldValidationIssues)
+	return u
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (u *ChargeCreditPurchaseUpsert) ClearValidationIssues() *ChargeCreditPurchaseUpsert {
+	u.SetNull(chargecreditpurchase.FieldValidationIssues)
 	return u
 }
 
@@ -1541,11 +1636,11 @@ func (u *ChargeCreditPurchaseUpsertOne) UpdateNewValues() *ChargeCreditPurchaseU
 		if _, exists := u.create.mutation.ManagedBy(); exists {
 			s.SetIgnore(chargecreditpurchase.FieldManagedBy)
 		}
+		if _, exists := u.create.mutation.SubscriptionPlan(); exists {
+			s.SetIgnore(chargecreditpurchase.FieldSubscriptionPlan)
+		}
 		if _, exists := u.create.mutation.SubscriptionID(); exists {
 			s.SetIgnore(chargecreditpurchase.FieldSubscriptionID)
-		}
-		if _, exists := u.create.mutation.SubscriptionPhaseID(); exists {
-			s.SetIgnore(chargecreditpurchase.FieldSubscriptionPhaseID)
 		}
 		if _, exists := u.create.mutation.TaxCodeID(); exists {
 			s.SetIgnore(chargecreditpurchase.FieldTaxCodeID)
@@ -1567,6 +1662,9 @@ func (u *ChargeCreditPurchaseUpsertOne) UpdateNewValues() *ChargeCreditPurchaseU
 		}
 		if _, exists := u.create.mutation.Priority(); exists {
 			s.SetIgnore(chargecreditpurchase.FieldPriority)
+		}
+		if _, exists := u.create.mutation.Filters(); exists {
+			s.SetIgnore(chargecreditpurchase.FieldFilters)
 		}
 		if _, exists := u.create.mutation.FeatureFilters(); exists {
 			s.SetIgnore(chargecreditpurchase.FieldFeatureFilters)
@@ -1703,6 +1801,27 @@ func (u *ChargeCreditPurchaseUpsertOne) SetStatus(v meta.ChargeStatus) *ChargeCr
 func (u *ChargeCreditPurchaseUpsertOne) UpdateStatus() *ChargeCreditPurchaseUpsertOne {
 	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (u *ChargeCreditPurchaseUpsertOne) SetSubscriptionPhaseID(v string) *ChargeCreditPurchaseUpsertOne {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.SetSubscriptionPhaseID(v)
+	})
+}
+
+// UpdateSubscriptionPhaseID sets the "subscription_phase_id" field to the value that was provided on create.
+func (u *ChargeCreditPurchaseUpsertOne) UpdateSubscriptionPhaseID() *ChargeCreditPurchaseUpsertOne {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.UpdateSubscriptionPhaseID()
+	})
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (u *ChargeCreditPurchaseUpsertOne) ClearSubscriptionPhaseID() *ChargeCreditPurchaseUpsertOne {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.ClearSubscriptionPhaseID()
 	})
 }
 
@@ -1857,6 +1976,27 @@ func (u *ChargeCreditPurchaseUpsertOne) UpdateDescription() *ChargeCreditPurchas
 func (u *ChargeCreditPurchaseUpsertOne) ClearDescription() *ChargeCreditPurchaseUpsertOne {
 	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
 		s.ClearDescription()
+	})
+}
+
+// SetValidationIssues sets the "validation_issues" field.
+func (u *ChargeCreditPurchaseUpsertOne) SetValidationIssues(v billing.ValidationIssues) *ChargeCreditPurchaseUpsertOne {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.SetValidationIssues(v)
+	})
+}
+
+// UpdateValidationIssues sets the "validation_issues" field to the value that was provided on create.
+func (u *ChargeCreditPurchaseUpsertOne) UpdateValidationIssues() *ChargeCreditPurchaseUpsertOne {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.UpdateValidationIssues()
+	})
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (u *ChargeCreditPurchaseUpsertOne) ClearValidationIssues() *ChargeCreditPurchaseUpsertOne {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.ClearValidationIssues()
 	})
 }
 
@@ -2082,7 +2222,10 @@ func (_c *ChargeCreditPurchaseCreateBulk) Save(ctx context.Context) ([]*ChargeCr
 				}
 				builder.mutation = mutation
 				var err error
-				nodes[i], specs[i] = builder.createSpec()
+				nodes[i], specs[i], err = builder.createSpec()
+				if err != nil {
+					return nil, err
+				}
 				if i < len(mutators)-1 {
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
@@ -2212,11 +2355,11 @@ func (u *ChargeCreditPurchaseUpsertBulk) UpdateNewValues() *ChargeCreditPurchase
 			if _, exists := b.mutation.ManagedBy(); exists {
 				s.SetIgnore(chargecreditpurchase.FieldManagedBy)
 			}
+			if _, exists := b.mutation.SubscriptionPlan(); exists {
+				s.SetIgnore(chargecreditpurchase.FieldSubscriptionPlan)
+			}
 			if _, exists := b.mutation.SubscriptionID(); exists {
 				s.SetIgnore(chargecreditpurchase.FieldSubscriptionID)
-			}
-			if _, exists := b.mutation.SubscriptionPhaseID(); exists {
-				s.SetIgnore(chargecreditpurchase.FieldSubscriptionPhaseID)
 			}
 			if _, exists := b.mutation.TaxCodeID(); exists {
 				s.SetIgnore(chargecreditpurchase.FieldTaxCodeID)
@@ -2238,6 +2381,9 @@ func (u *ChargeCreditPurchaseUpsertBulk) UpdateNewValues() *ChargeCreditPurchase
 			}
 			if _, exists := b.mutation.Priority(); exists {
 				s.SetIgnore(chargecreditpurchase.FieldPriority)
+			}
+			if _, exists := b.mutation.Filters(); exists {
+				s.SetIgnore(chargecreditpurchase.FieldFilters)
 			}
 			if _, exists := b.mutation.FeatureFilters(); exists {
 				s.SetIgnore(chargecreditpurchase.FieldFeatureFilters)
@@ -2375,6 +2521,27 @@ func (u *ChargeCreditPurchaseUpsertBulk) SetStatus(v meta.ChargeStatus) *ChargeC
 func (u *ChargeCreditPurchaseUpsertBulk) UpdateStatus() *ChargeCreditPurchaseUpsertBulk {
 	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetSubscriptionPhaseID sets the "subscription_phase_id" field.
+func (u *ChargeCreditPurchaseUpsertBulk) SetSubscriptionPhaseID(v string) *ChargeCreditPurchaseUpsertBulk {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.SetSubscriptionPhaseID(v)
+	})
+}
+
+// UpdateSubscriptionPhaseID sets the "subscription_phase_id" field to the value that was provided on create.
+func (u *ChargeCreditPurchaseUpsertBulk) UpdateSubscriptionPhaseID() *ChargeCreditPurchaseUpsertBulk {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.UpdateSubscriptionPhaseID()
+	})
+}
+
+// ClearSubscriptionPhaseID clears the value of the "subscription_phase_id" field.
+func (u *ChargeCreditPurchaseUpsertBulk) ClearSubscriptionPhaseID() *ChargeCreditPurchaseUpsertBulk {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.ClearSubscriptionPhaseID()
 	})
 }
 
@@ -2529,6 +2696,27 @@ func (u *ChargeCreditPurchaseUpsertBulk) UpdateDescription() *ChargeCreditPurcha
 func (u *ChargeCreditPurchaseUpsertBulk) ClearDescription() *ChargeCreditPurchaseUpsertBulk {
 	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
 		s.ClearDescription()
+	})
+}
+
+// SetValidationIssues sets the "validation_issues" field.
+func (u *ChargeCreditPurchaseUpsertBulk) SetValidationIssues(v billing.ValidationIssues) *ChargeCreditPurchaseUpsertBulk {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.SetValidationIssues(v)
+	})
+}
+
+// UpdateValidationIssues sets the "validation_issues" field to the value that was provided on create.
+func (u *ChargeCreditPurchaseUpsertBulk) UpdateValidationIssues() *ChargeCreditPurchaseUpsertBulk {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.UpdateValidationIssues()
+	})
+}
+
+// ClearValidationIssues clears the value of the "validation_issues" field.
+func (u *ChargeCreditPurchaseUpsertBulk) ClearValidationIssues() *ChargeCreditPurchaseUpsertBulk {
+	return u.Update(func(s *ChargeCreditPurchaseUpsert) {
+		s.ClearValidationIssues()
 	})
 }
 

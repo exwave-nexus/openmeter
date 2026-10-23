@@ -25,6 +25,7 @@ func (RateCard) Fields() []ent.Field {
 			GoType(productcatalog.RateCardType("")).
 			Immutable(),
 		field.String("feature_key").
+			NotEmpty().
 			Optional().
 			Nillable(),
 		field.JSON("annotations", models.Annotations{}).
@@ -40,6 +41,8 @@ func (RateCard) Fields() []ent.Field {
 			}).
 			Optional().
 			Nillable(),
+		// TODO: Remove the legacy tax_config JSON field after all rate-card read and
+		// write paths use tax_code_id and tax_behavior as the sole representation.
 		field.String("tax_config").
 			GoType(&productcatalog.TaxConfig{}).
 			ValueScanner(TaxConfigValueScanner).

@@ -13,19 +13,21 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/invoiceupdater"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
+	billingfeaturemeterservice "github.com/openmeterio/openmeter/openmeter/billing/featuremeter/service"
 	"github.com/openmeterio/openmeter/openmeter/currencies"
+	"github.com/openmeterio/openmeter/openmeter/customer"
 	"github.com/openmeterio/openmeter/openmeter/ledger/recognizer"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/openmeter/taxcode"
 )
 
 type service struct {
+	logger  *slog.Logger
 	adapter charges.Adapter
 	// Note: if meta has a service layer, we should use it here instead of the adapter
-	metaAdapter    meta.Adapter
-	billingService billing.Service
-	invoiceUpdater invoiceupdater.Updater
-	featureService feature.FeatureConnector
+	metaAdapter          meta.Adapter
+	billingService       billing.Service
+	invoiceUpdater       invoiceupdater.Updater
+	featureMeterResolver *billingfeaturemeterservice.Resolver
 
 	flatFeeService        flatfee.Service
 	creditPurchaseService creditpurchase.Service
@@ -33,6 +35,11 @@ type service struct {
 	recognizerService     recognizer.Service
 	taxCodeService        taxcode.Service
 	currencyResolver      currencies.CurrencyResolver
+
+	// customerService and subscriptionService side-load full entities for the
+	// customer-charge API facade's expands.
+	customerService     customer.Service
+	subscriptionService charges.SubscriptionService
 
 	fsNamespaceLockdown []string
 }
@@ -43,7 +50,7 @@ type Config struct {
 	Adapter     charges.Adapter
 	MetaAdapter meta.Adapter
 
-	FeatureService        feature.FeatureConnector
+	FeatureMeterResolver  *billingfeaturemeterservice.Resolver
 	FlatFeeService        flatfee.Service
 	CreditPurchaseService creditpurchase.Service
 	UsageBasedService     usagebased.Service
@@ -53,6 +60,9 @@ type Config struct {
 
 	TaxCodeService   taxcode.Service
 	CurrencyResolver currencies.CurrencyResolver
+
+	CustomerService     customer.Service
+	SubscriptionService charges.SubscriptionService
 
 	FSNamespaceLockdown []string
 }
@@ -72,8 +82,8 @@ func (c Config) Validate() error {
 		errs = append(errs, errors.New("billing service cannot be null"))
 	}
 
-	if c.FeatureService == nil {
-		errs = append(errs, errors.New("feature service cannot be null"))
+	if c.FeatureMeterResolver == nil {
+		errs = append(errs, errors.New("feature meter resolver cannot be null"))
 	}
 
 	if c.FlatFeeService == nil {
@@ -104,6 +114,14 @@ func (c Config) Validate() error {
 		errs = append(errs, errors.New("currency resolver cannot be null"))
 	}
 
+	if c.CustomerService == nil {
+		errs = append(errs, errors.New("customer service cannot be null"))
+	}
+
+	if c.SubscriptionService == nil {
+		errs = append(errs, errors.New("subscription service cannot be null"))
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -121,10 +139,11 @@ func New(config Config) (*service, error) {
 	}
 
 	svc := &service{
+		logger:                config.Logger,
 		adapter:               config.Adapter,
 		billingService:        config.BillingService,
 		invoiceUpdater:        invoiceUpdater,
-		featureService:        config.FeatureService,
+		featureMeterResolver:  config.FeatureMeterResolver,
 		metaAdapter:           config.MetaAdapter,
 		flatFeeService:        config.FlatFeeService,
 		creditPurchaseService: config.CreditPurchaseService,
@@ -132,6 +151,8 @@ func New(config Config) (*service, error) {
 		recognizerService:     config.RecognizerService,
 		taxCodeService:        config.TaxCodeService,
 		currencyResolver:      config.CurrencyResolver,
+		customerService:       config.CustomerService,
+		subscriptionService:   config.SubscriptionService,
 		fsNamespaceLockdown:   config.FSNamespaceLockdown,
 	}
 

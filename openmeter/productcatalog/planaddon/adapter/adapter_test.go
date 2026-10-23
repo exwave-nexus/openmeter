@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/openmeterio/openmeter/openmeter/app"
 	"github.com/openmeterio/openmeter/openmeter/meter"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/addon"
@@ -17,15 +18,95 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/plan"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/planaddon"
 	pctestutils "github.com/openmeterio/openmeter/openmeter/productcatalog/testutils"
+	"github.com/openmeterio/openmeter/openmeter/taxcode"
 	"github.com/openmeterio/openmeter/pkg/datetime"
+	"github.com/openmeterio/openmeter/pkg/filter"
 	"github.com/openmeterio/openmeter/pkg/models"
 	"github.com/openmeterio/openmeter/pkg/pagination"
 )
 
 var MonthPeriod = datetime.NewISODuration(0, 1, 0, 0, 0, 0, 0)
 
+func TestPlanAddonAdapterBackfillsTaxConfigFromTaxCode(t *testing.T) {
+	ctx := t.Context()
+	env := pctestutils.NewTestEnv(t)
+	t.Cleanup(func() { env.Close(t) })
+	namespace := pctestutils.NewTestNamespace(t)
+
+	const stripeCode = "txcd_10000000"
+	taxCode, err := env.TaxCode.CreateTaxCode(ctx, taxcode.CreateTaxCodeInput{
+		Namespace: namespace,
+		Key:       "stripe-tax-code",
+		Name:      "Stripe tax code",
+		AppMappings: taxcode.TaxCodeAppMappings{
+			{AppType: app.AppTypeStripe, TaxCode: stripeCode},
+		},
+	})
+	require.NoError(t, err)
+
+	planInput := pctestutils.NewTestPlan(t, namespace)
+	err = planInput.Phases[0].RateCards[0].ChangeMeta(func(meta productcatalog.RateCardMeta) (productcatalog.RateCardMeta, error) {
+		meta.TaxConfig = &productcatalog.TaxConfig{
+			TaxCodeID: lo.ToPtr(taxCode.ID),
+		}
+
+		return meta, nil
+	})
+	require.NoError(t, err)
+
+	createdPlan, err := env.PlanRepository.CreatePlan(ctx, planInput)
+	require.NoError(t, err)
+
+	addonInput := pctestutils.NewTestAddon(t, namespace, &productcatalog.FlatFeeRateCard{
+		RateCardMeta: productcatalog.RateCardMeta{
+			Key: "flat-fee",
+			TaxConfig: &productcatalog.TaxConfig{
+				TaxCodeID: lo.ToPtr(taxCode.ID),
+			},
+			Price: productcatalog.NewPriceFrom(productcatalog.FlatPrice{
+				Amount:      decimal.NewFromInt(10),
+				PaymentTerm: productcatalog.InAdvancePaymentTerm,
+			}),
+		},
+		BillingCadence: &MonthPeriod,
+	})
+	createdAddon, err := env.AddonRepository.CreateAddon(ctx, addonInput)
+	require.NoError(t, err)
+
+	createdPlanAddon, err := env.PlanAddonRepository.CreatePlanAddon(ctx, planaddon.CreatePlanAddonInput{
+		NamespacedModel: models.NamespacedModel{Namespace: namespace},
+		PlanID:          createdPlan.ID,
+		AddonID:         createdAddon.ID,
+		FromPlanPhase:   createdPlan.Phases[0].Key,
+	})
+	require.NoError(t, err)
+
+	got, err := env.PlanAddonRepository.GetPlanAddon(ctx, planaddon.GetPlanAddonInput{
+		NamespacedModel: models.NamespacedModel{Namespace: namespace},
+		ID:              createdPlanAddon.ID,
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Addon.RateCards, 1)
+
+	config := got.Addon.RateCards[0].AsMeta().TaxConfig
+	require.NotNil(t, config)
+	require.NotNil(t, config.TaxCodeID)
+	assert.Equal(t, taxCode.ID, *config.TaxCodeID)
+	require.NotNil(t, config.Stripe)
+	assert.Equal(t, stripeCode, config.Stripe.Code)
+
+	require.Len(t, got.Plan.Phases, 1)
+	require.Len(t, got.Plan.Phases[0].RateCards, 1)
+	config = got.Plan.Phases[0].RateCards[0].AsMeta().TaxConfig
+	require.NotNil(t, config)
+	require.NotNil(t, config.TaxCodeID)
+	assert.Equal(t, taxCode.ID, *config.TaxCodeID)
+	require.NotNil(t, config.Stripe)
+	assert.Equal(t, stripeCode, config.Stripe.Code)
+}
+
 func TestPostgresAdapter(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	env := pctestutils.NewTestEnv(t)
@@ -82,8 +163,7 @@ func TestPostgresAdapter(t *testing.T) {
 								Name:                features[0].Name,
 								Description:         lo.ToPtr("invalid RateCard 1"),
 								Metadata:            models.Metadata{"name": features[0].Name},
-								FeatureKey:          lo.ToPtr(features[0].Key),
-								FeatureID:           lo.ToPtr(features[0].ID),
+								Feature:             productcatalog.NewFeatureReference(lo.ToPtr(features[0].ID), lo.ToPtr(features[0].Key)),
 								EntitlementTemplate: productcatalog.NewEntitlementTemplateFrom(productcatalog.BooleanEntitlementTemplate{}),
 								TaxConfig: &productcatalog.TaxConfig{
 									Stripe: &productcatalog.StripeTaxConfig{
@@ -114,8 +194,7 @@ func TestPostgresAdapter(t *testing.T) {
 								Name:                features[0].Name,
 								Description:         lo.ToPtr("Trial RateCard 1"),
 								Metadata:            models.Metadata{"name": features[0].Name},
-								FeatureKey:          lo.ToPtr(features[0].Key),
-								FeatureID:           lo.ToPtr(features[0].ID),
+								Feature:             productcatalog.NewFeatureReference(lo.ToPtr(features[0].ID), lo.ToPtr(features[0].Key)),
 								EntitlementTemplate: productcatalog.NewEntitlementTemplateFrom(productcatalog.BooleanEntitlementTemplate{}),
 								TaxConfig: &productcatalog.TaxConfig{
 									Stripe: &productcatalog.StripeTaxConfig{
@@ -169,8 +248,7 @@ func TestPostgresAdapter(t *testing.T) {
 								Name:                features[0].Name,
 								Description:         lo.ToPtr("Pro RateCard 1"),
 								Metadata:            models.Metadata{"name": features[0].Name},
-								FeatureKey:          lo.ToPtr(features[0].Key),
-								FeatureID:           lo.ToPtr(features[0].ID),
+								Feature:             productcatalog.NewFeatureReference(lo.ToPtr(features[0].ID), lo.ToPtr(features[0].Key)),
 								EntitlementTemplate: productcatalog.NewEntitlementTemplateFrom(productcatalog.BooleanEntitlementTemplate{}),
 								TaxConfig: &productcatalog.TaxConfig{
 									Stripe: &productcatalog.StripeTaxConfig{
@@ -223,8 +301,7 @@ func TestPostgresAdapter(t *testing.T) {
 						Name:                features[0].Name,
 						Description:         lo.ToPtr(features[0].Name),
 						Metadata:            models.Metadata{"name": features[0].Name},
-						FeatureKey:          lo.ToPtr(features[0].Key),
-						FeatureID:           lo.ToPtr(features[0].ID),
+						Feature:             productcatalog.NewFeatureReference(lo.ToPtr(features[0].ID), lo.ToPtr(features[0].Key)),
 						EntitlementTemplate: productcatalog.NewEntitlementTemplateFrom(productcatalog.BooleanEntitlementTemplate{}),
 						TaxConfig: &productcatalog.TaxConfig{
 							Stripe: &productcatalog.StripeTaxConfig{
@@ -336,7 +413,7 @@ func TestPostgresAdapter(t *testing.T) {
 				t.Run("ById", func(t *testing.T) {
 					listPlanAddons, err := env.PlanAddonRepository.ListPlanAddons(ctx, planaddon.ListPlanAddonsInput{
 						Namespaces: []string{namespace},
-						IDs:        []string{planAddon.ID},
+						ID:         &filter.FilterULID{FilterString: filter.FilterString{Eq: lo.ToPtr(planAddon.ID)}},
 					})
 					assert.NoErrorf(t, err, "listing plan add-on assignment by id must not fail")
 
@@ -348,14 +425,72 @@ func TestPostgresAdapter(t *testing.T) {
 				t.Run("ByResourceKey", func(t *testing.T) {
 					listPlanAddons, err := env.PlanAddonRepository.ListPlanAddons(ctx, planaddon.ListPlanAddonsInput{
 						Namespaces: []string{namespace},
-						PlanKeys:   []string{planV1.Key},
-						AddonKeys:  []string{addonV1.Key},
+						PlanKey:    &filter.FilterString{Eq: lo.ToPtr(planV1.Key)},
+						AddonKey:   &filter.FilterString{Eq: lo.ToPtr(addonV1.Key)},
 					})
 					assert.NoErrorf(t, err, "listing plan add-on assignment by plan and add-on keys must not fail")
 
 					require.Lenf(t, listPlanAddons.Items, 1, "plan add-on assignments must not be empty")
 
 					planaddon.AssertPlanAddonEqual(t, *planAddon, listPlanAddons.Items[0])
+				})
+
+				t.Run("ByPlanID", func(t *testing.T) {
+					listPlanAddons, err := env.PlanAddonRepository.ListPlanAddons(ctx, planaddon.ListPlanAddonsInput{
+						Namespaces: []string{namespace},
+						PlanID:     &filter.FilterULID{FilterString: filter.FilterString{Eq: lo.ToPtr(planV1.ID)}},
+					})
+					assert.NoErrorf(t, err, "listing plan add-on assignment by plan id must not fail")
+
+					require.Lenf(t, listPlanAddons.Items, 1, "plan add-on assignments must not be empty")
+
+					planaddon.AssertPlanAddonEqual(t, *planAddon, listPlanAddons.Items[0])
+				})
+
+				t.Run("ByAddonID", func(t *testing.T) {
+					listPlanAddons, err := env.PlanAddonRepository.ListPlanAddons(ctx, planaddon.ListPlanAddonsInput{
+						Namespaces: []string{namespace},
+						AddonID:    &filter.FilterULID{FilterString: filter.FilterString{Eq: lo.ToPtr(addonV1.ID)}},
+					})
+					assert.NoErrorf(t, err, "listing plan add-on assignment by addon id must not fail")
+
+					require.Lenf(t, listPlanAddons.Items, 1, "plan add-on assignments must not be empty")
+
+					planaddon.AssertPlanAddonEqual(t, *planAddon, listPlanAddons.Items[0])
+				})
+
+				t.Run("ByAddonName", func(t *testing.T) {
+					listPlanAddons, err := env.PlanAddonRepository.ListPlanAddons(ctx, planaddon.ListPlanAddonsInput{
+						Namespaces: []string{namespace},
+						AddonName:  &filter.FilterString{Contains: lo.ToPtr("Addon")},
+					})
+					assert.NoErrorf(t, err, "listing plan add-on assignment by addon name must not fail")
+
+					require.Lenf(t, listPlanAddons.Items, 1, "plan add-on assignments must not be empty")
+
+					planaddon.AssertPlanAddonEqual(t, *planAddon, listPlanAddons.Items[0])
+				})
+
+				t.Run("ByCurrency", func(t *testing.T) {
+					listPlanAddons, err := env.PlanAddonRepository.ListPlanAddons(ctx, planaddon.ListPlanAddonsInput{
+						Namespaces:   []string{namespace},
+						PlanCurrency: &filter.FilterString{Eq: lo.ToPtr("USD")},
+					})
+					assert.NoErrorf(t, err, "listing plan add-on assignment by currency must not fail")
+
+					require.Lenf(t, listPlanAddons.Items, 1, "plan add-on assignments must not be empty")
+
+					planaddon.AssertPlanAddonEqual(t, *planAddon, listPlanAddons.Items[0])
+				})
+
+				t.Run("NoMatch", func(t *testing.T) {
+					listPlanAddons, err := env.PlanAddonRepository.ListPlanAddons(ctx, planaddon.ListPlanAddonsInput{
+						Namespaces:   []string{namespace},
+						PlanCurrency: &filter.FilterString{Eq: lo.ToPtr("EUR")},
+					})
+					assert.NoErrorf(t, err, "listing plan add-on assignments with non-matching currency must not fail")
+
+					require.Lenf(t, listPlanAddons.Items, 0, "plan add-on assignments must be empty for non-matching currency")
 				})
 			})
 

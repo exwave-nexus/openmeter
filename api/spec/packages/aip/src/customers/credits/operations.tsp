@@ -122,8 +122,7 @@ namespace Credits.Grants {
     @operationId("void-credit-grant")
     @summary("Void credit grant")
     @extension(Shared.UnstableExtension, true)
-    @extension(Shared.PrivateExtension, true)
-    @extension(Shared.InternalExtension, true)
+    @extension(Shared.RPCEndpointExtension, true)
     voidGrant(
       @path customerId: Shared.ULID,
       @path creditGrantId: Shared.ULID,
@@ -177,7 +176,8 @@ namespace Credits.Grants {
 @friendlyName("GetCreditBalanceParamsFilter")
 model GetCreditBalanceParamsFilter {
   /**
-   * Filter credit balance by currency.
+   * Filter credit balance by currency code. When historical custom currencies reuse
+   * a code, each managed currency is returned as a separate balance row.
    */
   currency?: Common.StringFieldFilterExact;
 
@@ -229,7 +229,8 @@ model ListCreditTransactionsParamsFilter {
   type?: CreditTransactionType;
 
   /**
-   * Filter credit transactions by currency.
+   * Filter credit transactions by currency code. Custom-currency rows retain their
+   * managed currency identifier.
    */
   currency?: Currencies.CurrencyCode;
 

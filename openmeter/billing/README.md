@@ -24,6 +24,14 @@ invoicing, and payment. A namespace has one default profile. A customer
 override may select another profile and replace supported parts of its
 workflow.
 
+Installing a Custom Invoicing app with automatic profile creation uses Cloud's
+initial Auto Collection preset: the installed app handles tax, invoicing, and
+payment, with the standard billing workflow and an OpenMeter supplier in the US
+(postal code 94114). This supplier is a placeholder that callers can edit. The
+profile is not made the namespace default, even when no default exists. App
+installation and profile creation commit together; profile creation failures
+roll back the installation.
+
 The merged customer configuration is resolved when a standard invoice is
 created. The invoice keeps the customer, supplier, workflow configuration, and
 app references needed to finish its lifecycle. Customer-visible invoice
@@ -49,14 +57,23 @@ the calculated price components beneath it, such as tier or flat-fee
 components. They are derived calculation output, not another source of
 subscription intent.
 
+Invoice amount discounts must be non-negative. Charge snapshots may carry signed
+corrections, but invoicing rejects negative discount amounts until credit-note
+handling is supported. Charge engines map discount facts into billing-managed
+resources and reuse their identities through stable child references.
+
 ## Time has distinct meanings
 
 - a line's service period is when the service was provided
-- `InvoiceAt` is when the line becomes eligible to be invoiced
+- `InvoiceAt` is when a gathering line becomes eligible to be invoiced. A
+  standard line retains the value only as historical metadata; standard-invoice
+  behavior and validation do not depend on it
 - a gathering invoice's next collection time is when the collector should
   reconsider its pending lines
 - a standard invoice's collection time is the cutoff used while snapshotting
-  quantities and completing collection
+  quantities and completing collection. Unless a line provides an explicit
+  collection deadline, metered standard lines use their service-period end plus
+  the configured collection interval
 
 Collection alignment may move the effective collection cutoff to an anchor.
 Do not use one of these timestamps as a substitute for another.
@@ -67,6 +84,12 @@ the portions materialized on individual invoices. Already immutable invoice
 history is not rewritten to make a later subscription change look as if it had
 always existed.
 
+Physical subscription attribution is the narrow exception: when a
+subscription-managed charge is rematerialized without changing its intent,
+reference repair updates the subscription, phase, and item IDs on every
+charge-linked gathering and standard line. This does not change the line's
+economic, lifecycle, or customer-authored state.
+
 ## Line ownership
 
 Billing owns the invoice aggregate, line IDs, and persistence. A line's engine
@@ -74,11 +97,112 @@ owns the line-specific calculations and lifecycle side effects for the lines
 routed to it. The built-in invoicing engine handles billing-native lines;
 charge engines handle charge-backed lines.
 
+Before splitting or materializing otherwise billable gathering lines, billing
+asks each line engine to gate their invoice assignment. Blocked lines remain on
+the gathering invoice and do not consume the invoice line limit. A gate may
+persist engine-owned state explaining its decision; when every candidate is
+blocked, collection succeeds without creating an invoice so those writes can
+commit. Gate errors abort collection and roll back its writes. Charge-backed
+usage lines whose required feature or meter is unavailable are blocked here;
+the charge records the dependency issue and a later collection attempt
+re-evaluates it.
+
+Billability is also engine-owned. Billing submits each engine's subset of one
+gathering invoice as an ordered batch. The engine resolves any feature or charge
+dependencies it needs before returning one eligibility decision and billable
+period per input in the same order. Missing feature or meter dependencies are
+reported as validation issues while billability falls back to non-progressive
+eligibility; operational dependency failures still abort collection.
+
 Engine callbacks operate on groups of lines. When a callback replaces lines,
 billing requires it to preserve the input line IDs before accepting the
 result. API-originated line edits and system-originated reconciliation are
 different change sources: API edits may change manual ownership, while system
 edits preserve the ownership contract of their source.
+
+Line owners return calculated details, discounts, and totals. Invoice
+calculation aggregates these totals and derives invoice dates, service periods,
+and tax metadata. The legacy engine rates at materialization, collection,
+standard API edits, and transient preview/simulation boundaries. Mutable
+subscription updates snapshot and rate through that engine; immutable
+comparisons only snapshot quantities. Repeated rating starts from raw metered
+usage and retains matching detail and discount identities.
+
+Snapshotting and rating run on clones so a failed collection attempt cannot
+modify the prior invoice lines. Complete snapshots follow the existing reuse
+timing policy.
+
+Legacy rating issues belong to the legacy engine component. Lifecycle rating
+uses billing's existing component-wide replacement; standard API edits append
+returned warnings for every line engine. Invoice-level issues retain the
+calculator's replacement lifecycle.
+
+Invoice-issued, payment-authorized, and payment-settled callbacks form one
+local transaction attempt across every live line and line engine. Warning-only
+results commit and remain attached to the invoice. A critical validation issue
+rolls back every line-engine write from that attempt before billing persists the
+retryable failed invoice state. A system error rolls back the attempt and aborts
+the invoice operation. When a payment provider reports a direct paid event,
+authorization and settlement share the same attempt, so a settlement failure
+also rolls back authorization created by that event. Facts committed by an
+earlier attempt remain available to idempotent retry handling.
+
+## Validation issues alongside successful results
+
+Typed validation issues can accompany usable results through an `error` return.
+Classify that error before discarding the result. Its meaning depends on the
+boundary:
+
+| Boundary | Successful result with warnings |
+| --- | --- |
+| Internal rating and rated-run operations | Preserve the result and propagate typed warnings through the existing `error` return. |
+| Charge lifecycle action | Extract warning-only issues, complete the operation, update charge-owned issues, and return nil so the transition succeeds. |
+| Charge line-engine callback | Return updated lines alongside the relevant charge rating issues through the existing callback contract. |
+| Public current-totals read | Return warnings in `result.ValidationIssues` with a nil Go error; consumers use the valid totals normally. |
+
+Gathering-invoice live previews accept line-engine validation issues of any
+severity and attach them to the projected standard invoice while preserving
+the usable lines. The projection is not persisted; system errors still fail
+the preview. The legacy preview builder currently returns no lines on snapshot
+failure, so its exact-ID check fails for missing snapshot dependencies.
+
+Standard API edits accept calculated output accompanied only by warnings and
+persist those issues on the invoice. Critical callback issues and system errors
+reject the whole edit, including mixed-engine writes. Gathering edits and
+invoice-deletion cleanup keep their rejection semantics for every callback error.
+Simulation validates feature/meter references and explicitly rates supplied
+legacy quantities on clones without persisting the transient result.
+Charge simulation is unsupported; supplied charge projections are not rerated.
+
+`ValidationIssueRecorder.Record` collects validation issues of any severity;
+successful extraction alone does not mean an operation may advance. Where only
+warnings permit continuation, use `RecordWarnings`. For example, a rating
+wrapper preserves the successful result and warning channel:
+
+```go
+recorder := billing.ValidationIssueRecorder{}
+result, err := rater.GenerateDetailedLines(input)
+if err := recorder.RecordWarnings(err); err != nil {
+    return rating.GenerateDetailedLinesResult{}, fmt.Errorf("rating line: %w", err)
+}
+
+return result, recorder.ErrorsOrNil()
+```
+
+Callers needing an issue slice use
+`ToValidationIssues(err, RequireWarningsOnly())`. Both warning-only helpers
+accept nil; any critical issue or system error rejects the entire supplied
+error tree. The recorder records no part of that rejected tree, and the caller
+keeps its existing failure path. Component, path, and attribute wrappers add
+context without converting system errors into validation issues; that conversion
+requires explicit `WrapAsValidationIssue` intent.
+
+At collection completion, warnings permit replacement lines and do not block
+advancement. Critical validation issues retain the previous lines and prevent
+completion; system errors abort the operation, including when joined with
+warnings. The [collection severity tests](../../test/billing/lineengine_test.go)
+cover these distinct outcomes. Charge persistence and read-time issue lifetimes
+are defined in [Charges](charges/README.md#validation-issues-alongside-successful-results).
 
 ## Invoice lifecycle and failure
 
@@ -102,23 +226,52 @@ be retried without replaying stable lifecycle states. Issuing and payment
 booking therefore happen in retryable intermediary states; authorization is
 booked before settlement when a payment provider reports both at once.
 
+Simulation is read-only but still validates its lines' feature and meter
+dependencies. Critical validation issues are returned on the simulated invoice
+and mark it invalid instead of failing the simulation request.
+
+If quantity snapshotting on an existing standard invoice cannot resolve a
+persisted feature or discovers that the feature no longer has its required
+meter association, collection records the critical validation code
+`invoice_line_feature_not_found` or
+`invoice_line_feature_has_no_meters`. The affected quantities stay
+unsnapshotted. Retry re-enters calculation and validation so the repaired
+dependency is resolved again. Post-collection validation failures use
+`draft.invalid` and retry validation instead. Operational snapshot failures
+abort collection instead of persisting an incomplete invoice.
+
 Before external invoice finalization, billing invokes each line engine's line
 finalization callback. Engines return fully calculated lines with unchanged
 line IDs; billing replaces those lines, sums their totals, and persists the
 invoice before sending it to the invoicing app. Line finalization has its own
 retryable failure state, so an external app retry does not repeat stable
-engine-owned effects.
+engine-owned effects. Custom-currency `credit_then_invoice` flat-fee and
+usage-based charges complete their reversible gross-overage and fiat-credit
+preparation at this boundary because those effects determine the final line.
+Their later external-issued callback validates and seals the prepared charge
+history. Regular-fiat invoice accrual remains in that issued callback, after
+external synchronization succeeds.
+
+A line-finalization failure is retry-only. If invoicing app synchronization
+fails after durable custom-currency preparation, the invoice may be retried or
+deleted. Deletion first runs charge-owned cleanup to correct the preparation;
+failed cleanup rolls back and remains retryable.
 
 A deleted app keeps its historical identity and can still be expanded on
 invoices. Its generic app operations return `app.ErrAppDeleted`, while its
 invoicing operations return billing-owned validation issues. Critical issues
-move the invoice into the failed state for that step. Invoice deletion remains
-available and returns a warning when provider cleanup has to be skipped.
+move the invoice into the failed state for that step. Before issuing, invoice
+deletion returns a warning when provider cleanup has to be skipped.
 
 Retrying and deleting are separate domain actions. Use the billing service's
 retry operation for a retryable failure and its delete operation for the
 delete lifecycle; firing a generic state-machine trigger bypasses preparation
 and audit semantics owned by those operations.
+
+Deleting a standard invoice is idempotent within the billing service. Once it
+reaches the terminal `deleted` state, another service-level delete returns the
+existing invoice without repeating line-engine cleanup or invoicing-app
+synchronization. The AIP API treats a terminal deleted invoice as not found.
 
 Billing publishes created and updated standard-invoice snapshots for
 downstream consumers. [Notifications](../notification/README.md) maps those
@@ -135,9 +288,16 @@ the lifecycle operation.
   transaction and customer update lock
 - invoice listing appends the unique invoice ID to the requested sort, so an
   unchanged result set has stable pages even when timestamps are equal
+- product-catalog discounts describe commercial configuration without billing
+  identity; once attached to a charge or invoice line, billing owns a stable,
+  non-empty correlation ID for every present discount
 - every invoice contains one fiat currency
 - a customer cannot have two active gathering invoices for the same currency
-- pending-line creation resolves every supplied feature; metered prices require the feature's meter
+- pending-line creation resolves every supplied feature, and metered prices
+  require the feature's meter. Legacy invoice-backed subscription reconciliation
+  may preserve an unresolved feature reference so stale subscription state can
+  still converge; charge-backed usage collection keeps unresolved work in
+  gathering and records the missing dependency on the charge
 - gathering-to-standard conversion preserves line IDs
 - line engines cannot silently change the identity or count of callback output
 - immutable invoice drift is recorded as validation issues rather than

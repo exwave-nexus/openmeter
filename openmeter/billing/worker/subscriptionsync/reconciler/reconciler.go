@@ -211,7 +211,7 @@ func (r *Reconciler) mapToSubscriptionWithSyncState(ctx context.Context, subs []
 }
 
 func (r *Reconciler) ReconcileSubscription(ctx context.Context, subsID models.NamespacedID) error {
-	return r.subscriptionSync.SyncByID(ctx, subsID, clock.Now(), subscriptionsync.SkipCustomCurrencySubscriptions())
+	return r.subscriptionSync.SyncByID(ctx, subsID, clock.Now())
 }
 
 type ReconcilerAllInput struct {

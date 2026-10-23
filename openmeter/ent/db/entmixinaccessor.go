@@ -1044,6 +1044,10 @@ func (e *ChargeCreditPurchase) GetManagedBy() billing.InvoiceLineManagedBy {
 	return e.ManagedBy
 }
 
+func (e *ChargeCreditPurchase) GetSubscriptionPlan() *meta.SubscriptionPlan {
+	return e.SubscriptionPlan
+}
+
 func (e *ChargeCreditPurchase) GetSubscriptionID() *string {
 	return e.SubscriptionID
 }
@@ -1098,6 +1102,10 @@ func (e *ChargeCreditPurchase) GetName() string {
 
 func (e *ChargeCreditPurchase) GetDescription() *string {
 	return e.Description
+}
+
+func (e *ChargeCreditPurchase) GetValidationIssues() billing.ValidationIssues {
+	return e.ValidationIssues
 }
 
 func (e *ChargeCreditPurchaseCostBasis) GetID() string {
@@ -1344,6 +1352,10 @@ func (e *ChargeFlatFee) GetManagedBy() billing.InvoiceLineManagedBy {
 	return e.ManagedBy
 }
 
+func (e *ChargeFlatFee) GetSubscriptionPlan() *meta.SubscriptionPlan {
+	return e.SubscriptionPlan
+}
+
 func (e *ChargeFlatFee) GetSubscriptionID() *string {
 	return e.SubscriptionID
 }
@@ -1398,6 +1410,10 @@ func (e *ChargeFlatFee) GetName() string {
 
 func (e *ChargeFlatFee) GetDescription() *string {
 	return e.Description
+}
+
+func (e *ChargeFlatFee) GetValidationIssues() billing.ValidationIssues {
+	return e.ValidationIssues
 }
 
 func (e *ChargeFlatFeeCostBasis) GetID() string {
@@ -1924,6 +1940,10 @@ func (e *ChargeUsageBased) GetManagedBy() billing.InvoiceLineManagedBy {
 	return e.ManagedBy
 }
 
+func (e *ChargeUsageBased) GetSubscriptionPlan() *meta.SubscriptionPlan {
+	return e.SubscriptionPlan
+}
+
 func (e *ChargeUsageBased) GetSubscriptionID() *string {
 	return e.SubscriptionID
 }
@@ -1978,6 +1998,10 @@ func (e *ChargeUsageBased) GetName() string {
 
 func (e *ChargeUsageBased) GetDescription() *string {
 	return e.Description
+}
+
+func (e *ChargeUsageBased) GetValidationIssues() billing.ValidationIssues {
+	return e.ValidationIssues
 }
 
 func (e *ChargeUsageBasedCostBasis) GetID() string {

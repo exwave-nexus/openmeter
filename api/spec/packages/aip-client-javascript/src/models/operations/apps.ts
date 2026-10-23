@@ -5,17 +5,36 @@ import * as schemas from '../schemas.js'
 import type { AcceptDateStrings } from '../../lib/wire.js'
 import type {
   App,
+  AppActionRequest,
   AppCatalogItem,
   AppCatalogItemPagePaginatedResponse,
   AppPagePaginatedResponse,
   BillingInstallAppResponse,
   InstallAppRequest as InstallAppRequestBody,
+  ListAppsParamsFilter,
+  SortQueryInput,
   UpdateAppRequest as UpdateAppRequestBody,
 } from '../types.js'
 
 export interface ListAppsQuery {
   /** Determines which page of the collection to retrieve. */
   page?: { size?: number; number?: number }
+  /**
+   * Sort apps returned in the response. Supported sort attributes are:
+   *
+   * - `id`
+   * - `created_at` (default)
+   *
+   * The `asc` suffix is optional as the default sort order is ascending. The `desc`
+   * suffix is used to specify a descending order.
+   */
+  sort?: SortQueryInput
+  /**
+   * Filter apps returned in the response.
+   *
+   * To filter apps by name add the following query param: filter[name]=my-app
+   */
+  filter?: ListAppsParamsFilter
 }
 
 export type ListAppsRequest = AcceptDateStrings<ListAppsQuery>
@@ -36,6 +55,12 @@ export type UpdateAppRequest = AcceptDateStrings<{
   body: UpdateAppRequestBody
 }>
 export type UpdateAppResponse = App
+
+export type ExecuteAppActionRequest = AcceptDateStrings<{
+  appId: string
+  body: AppActionRequest
+}>
+export type ExecuteAppActionResponse = App
 
 export interface ListAppCatalogQuery {
   /** Determines which page of the collection to retrieve. */

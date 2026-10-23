@@ -8,13 +8,11 @@ import (
 
 	"github.com/openmeterio/openmeter/openmeter/app"
 	"github.com/openmeterio/openmeter/openmeter/billing"
+	billingfeaturemeterservice "github.com/openmeterio/openmeter/openmeter/billing/featuremeter/service"
 	billinglineengine "github.com/openmeterio/openmeter/openmeter/billing/lineengine"
-	"github.com/openmeterio/openmeter/openmeter/billing/rating"
 	"github.com/openmeterio/openmeter/openmeter/billing/sequence"
 	"github.com/openmeterio/openmeter/openmeter/billing/service/invoicecalc"
 	"github.com/openmeterio/openmeter/openmeter/customer"
-	"github.com/openmeterio/openmeter/openmeter/meter"
-	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
 	"github.com/openmeterio/openmeter/openmeter/taxcode"
 	"github.com/openmeterio/openmeter/openmeter/watermill/eventbus"
 	"github.com/openmeterio/openmeter/pkg/framework/transaction"
@@ -24,17 +22,15 @@ import (
 var _ billing.Service = (*Service)(nil)
 
 type Service struct {
-	adapter           billing.Adapter
-	sequenceService   sequence.Service
-	customerService   customer.Service
-	appService        app.Service
-	taxCodeService    taxcode.Service
-	logger            *slog.Logger
-	invoiceCalculator invoicecalc.Calculator
-	lineEngines       *engineRegistry
-	ratingService     rating.Service
-	featureService    feature.FeatureConnector
-	meterService      meter.Service
+	adapter              billing.Adapter
+	sequenceService      sequence.Service
+	customerService      customer.Service
+	appService           app.Service
+	taxCodeService       taxcode.Service
+	logger               *slog.Logger
+	invoiceCalculator    invoicecalc.Calculator
+	lineEngines          *engineRegistry
+	featureMeterResolver *billingfeaturemeterservice.Resolver
 
 	publisher eventbus.Publisher
 
@@ -50,11 +46,9 @@ type Config struct {
 	CustomerService         customer.Service
 	AppService              app.Service
 	TaxCodeService          taxcode.Service
-	RatingService           rating.Service
 	LegacyBillingLineEngine *billinglineengine.Engine
 	Logger                  *slog.Logger
-	FeatureService          feature.FeatureConnector
-	MeterService            meter.Service
+	FeatureMeterResolver    *billingfeaturemeterservice.Resolver
 	Publisher               eventbus.Publisher
 	AdvancementStrategy     billing.AdvancementStrategy
 	FSNamespaceLockdown     []string
@@ -81,10 +75,6 @@ func (c Config) Validate() error {
 		return errors.New("tax code service cannot be null")
 	}
 
-	if c.RatingService == nil {
-		return errors.New("rating service cannot be null")
-	}
-
 	if c.LegacyBillingLineEngine == nil {
 		return errors.New("legacy billing line engine cannot be null")
 	}
@@ -93,12 +83,8 @@ func (c Config) Validate() error {
 		return errors.New("logger cannot be null")
 	}
 
-	if c.FeatureService == nil {
-		return errors.New("feature connector cannot be null")
-	}
-
-	if c.MeterService == nil {
-		return errors.New("meter repo cannot be null")
+	if c.FeatureMeterResolver == nil {
+		return errors.New("feature meter resolver cannot be null")
 	}
 
 	if c.Publisher == nil {
@@ -124,9 +110,7 @@ func New(config Config) (*Service, error) {
 		appService:           config.AppService,
 		taxCodeService:       config.TaxCodeService,
 		logger:               config.Logger,
-		ratingService:        config.RatingService,
-		featureService:       config.FeatureService,
-		meterService:         config.MeterService,
+		featureMeterResolver: config.FeatureMeterResolver,
 		publisher:            config.Publisher,
 		advancementStrategy:  config.AdvancementStrategy,
 		fsNamespaceLockdown:  config.FSNamespaceLockdown,

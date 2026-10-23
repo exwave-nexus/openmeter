@@ -66,6 +66,7 @@ func TestV3CustomCurrencyProductCatalogLifecycle(t *testing.T) {
 				break
 			}
 		}
+
 		require.NotNil(t, returnedAddonCustomRateCard)
 		assert.Equal(t, &customCode, returnedAddonCustomRateCard.Currency)
 	})
@@ -197,6 +198,7 @@ func TestV3CustomCurrencyProductCatalogValidation(t *testing.T) {
 		for _, validationError := range addon.ValidationErrors {
 			codes = append(codes, validationError.Code)
 		}
+
 		assert.Contains(t, codes, "rate_card_currency_override_not_allowed")
 
 		_, err = c.Addons.Publish(t.Context(), addon.ID)
@@ -235,7 +237,7 @@ func TestV3CustomCurrencyProductCatalogValidation(t *testing.T) {
 
 		subscription, err := c.Subscriptions.Create(t.Context(), v3sdk.SubscriptionCreate{
 			Customer: v3sdk.SubscriptionChangeCustomer{ID: &customer.ID},
-			Plan:     v3sdk.SubscriptionChangePlan{ID: &resources.Plan.ID},
+			Plan:     &v3sdk.SubscriptionChangePlan{ID: &resources.Plan.ID},
 		})
 		c.requireStatus(http.StatusCreated, err)
 		require.NotNil(t, subscription)

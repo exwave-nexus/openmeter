@@ -15,7 +15,6 @@ import (
 	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/plan"
-	"github.com/openmeterio/openmeter/openmeter/taxcode"
 	"github.com/openmeterio/openmeter/pkg/clock"
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/datetime"
@@ -310,6 +309,19 @@ func TestFromPlanWithPhases(t *testing.T) {
 }
 
 func TestFromRateCard(t *testing.T) {
+	t.Run("unknown price type is a validation error", func(t *testing.T) {
+		var price api.BillingPrice
+		require.NoError(t, json.Unmarshal([]byte(`{"type":"bogus"}`), &price))
+
+		_, err := FromAPIBillingRateCard(api.BillingRateCard{
+			Key:   "storage",
+			Name:  "Storage",
+			Price: price,
+		})
+		require.Error(t, err)
+		assert.True(t, models.IsGenericValidationError(err))
+	})
+
 	t.Run("custom currency override round trips", func(t *testing.T) {
 		custom := currencyx.Code("CREDITS")
 		reference := currencies.NewCurrencyReference(custom)
@@ -437,9 +449,9 @@ func TestFromRateCard(t *testing.T) {
 		featureID := "01J8FEATURE000000000000000"
 		rc := &productcatalog.UsageBasedRateCard{
 			RateCardMeta: productcatalog.RateCardMeta{
-				Key:       "tokens",
-				Name:      "Tokens",
-				FeatureID: &featureID,
+				Key:     "tokens",
+				Name:    "Tokens",
+				Feature: productcatalog.NewFeatureReference(&featureID, nil),
 			},
 			BillingCadence: cadence,
 		}
@@ -588,9 +600,56 @@ func TestFromBillingPrice(t *testing.T) {
 	})
 }
 
-func TestToAPIBillingRateCardUnitConfig(t *testing.T) {
+func TestBillingPriceUsageBasedConversions(t *testing.T) {
+	t.Run("legacy dynamic price maps to usage-based unit price", func(t *testing.T) {
+		price := productcatalog.NewPriceFrom(productcatalog.DynamicPrice{
+			Multiplier: decimal.NewFromFloat(1.2),
+		})
+
+		result, err := ToAPIBillingPriceUsageBased(price)
+		require.NoError(t, err)
+
+		unit, err := result.AsBillingPriceUnit()
+		require.NoError(t, err)
+		assert.Equal(t, api.Numeric("1"), unit.Amount)
+	})
+
+	t.Run("flat price is outside the usage-based union", func(t *testing.T) {
+		price := productcatalog.NewPriceFrom(productcatalog.FlatPrice{
+			Amount: decimal.NewFromInt(10),
+		})
+
+		_, err := ToAPIBillingPriceUsageBased(price)
+
+		require.ErrorContains(t, err, "unsupported usage-based price type: flat")
+	})
+
+	t.Run("API unit price preserves commitments", func(t *testing.T) {
+		var price api.BillingPriceUsageBased
+		require.NoError(t, price.FromBillingPriceUnit(api.BillingPriceUnit{
+			Amount: "0.25",
+			Type:   api.BillingPriceUnitTypeUnit,
+		}))
+
+		result, err := FromAPIBillingPriceUsageBased(price, &api.BillingSpendCommitments{
+			MinimumAmount: lo.ToPtr(api.Numeric("5")),
+			MaximumAmount: lo.ToPtr(api.Numeric("50")),
+		})
+		require.NoError(t, err)
+
+		unit, err := result.AsUnit()
+		require.NoError(t, err)
+		assert.Equal(t, "0.25", unit.Amount.String())
+		require.NotNil(t, unit.MinimumAmount)
+		assert.Equal(t, "5", unit.MinimumAmount.String())
+		require.NotNil(t, unit.MaximumAmount)
+		assert.Equal(t, "50", unit.MaximumAmount.String())
+	})
+}
+
+func TestToAPIBillingUnitConfigFromLegacyPrice(t *testing.T) {
 	t.Run("nil price has no unit config", func(t *testing.T) {
-		result, err := ToAPIBillingRateCardUnitConfig(nil)
+		result, err := ToAPIBillingUnitConfigFromLegacyPrice(nil)
 		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
@@ -598,7 +657,7 @@ func TestToAPIBillingRateCardUnitConfig(t *testing.T) {
 	t.Run("flat price has no unit config", func(t *testing.T) {
 		p := productcatalog.NewPriceFrom(productcatalog.FlatPrice{Amount: decimal.NewFromFloat(5)})
 
-		result, err := ToAPIBillingRateCardUnitConfig(p)
+		result, err := ToAPIBillingUnitConfigFromLegacyPrice(p)
 		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
@@ -606,7 +665,7 @@ func TestToAPIBillingRateCardUnitConfig(t *testing.T) {
 	t.Run("unit price has no unit config", func(t *testing.T) {
 		p := productcatalog.NewPriceFrom(productcatalog.UnitPrice{Amount: decimal.NewFromFloat(0.05)})
 
-		result, err := ToAPIBillingRateCardUnitConfig(p)
+		result, err := ToAPIBillingUnitConfigFromLegacyPrice(p)
 		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
@@ -616,7 +675,7 @@ func TestToAPIBillingRateCardUnitConfig(t *testing.T) {
 			Multiplier: decimal.NewFromFloat(1.2),
 		})
 
-		result, err := ToAPIBillingRateCardUnitConfig(p)
+		result, err := ToAPIBillingUnitConfigFromLegacyPrice(p)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, api.BillingUnitConfigOperationMultiply, result.Operation)
@@ -632,7 +691,7 @@ func TestToAPIBillingRateCardUnitConfig(t *testing.T) {
 			QuantityPerPackage: decimal.NewFromInt(1000),
 		})
 
-		result, err := ToAPIBillingRateCardUnitConfig(p)
+		result, err := ToAPIBillingUnitConfigFromLegacyPrice(p)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, api.BillingUnitConfigOperationDivide, result.Operation)
@@ -977,34 +1036,49 @@ func TestFromBillingCommitments(t *testing.T) {
 	})
 }
 
-func TestFromBillingTaxConfig(t *testing.T) {
+func TestToAPITaxCodeConfig(t *testing.T) {
 	t.Run("nil when tax config is nil", func(t *testing.T) {
-		result := ToAPIBillingRateCardTaxConfig(nil, &taxcode.TaxCode{NamespacedID: models.NamespacedID{ID: "01TAXCODE"}})
+		result := ToAPITaxCodeConfig(nil)
 		assert.Nil(t, result)
 	})
 
-	t.Run("nil when tax code is nil", func(t *testing.T) {
-		result := ToAPIBillingRateCardTaxConfig(&productcatalog.TaxConfig{}, nil)
+	t.Run("nil when tax config has no shared fields", func(t *testing.T) {
+		result := ToAPITaxCodeConfig(&productcatalog.TaxConfig{})
 		assert.Nil(t, result)
 	})
 
-	t.Run("maps tax code ID", func(t *testing.T) {
-		tc := &taxcode.TaxCode{NamespacedID: models.NamespacedID{ID: "01TAXCODE000000000000000000"}}
-		result := ToAPIBillingRateCardTaxConfig(&productcatalog.TaxConfig{}, tc)
+	t.Run("maps normalized tax code ID", func(t *testing.T) {
+		c := &productcatalog.TaxConfig{
+			TaxCodeID: lo.ToPtr("01TAXCODE000000000000000001"),
+		}
 
+		result := ToAPITaxCodeConfig(c)
 		require.NotNil(t, result)
-		assert.Equal(t, api.ULID("01TAXCODE000000000000000000"), result.Code.Id)
+		require.NotNil(t, result.Code)
+		assert.Equal(t, "01TAXCODE000000000000000001", result.Code.Id)
 		assert.Nil(t, result.Behavior)
 	})
 
 	t.Run("maps behavior", func(t *testing.T) {
-		tc := &taxcode.TaxCode{NamespacedID: models.NamespacedID{ID: "01TAXCODE000000000000000000"}}
 		cfg := &productcatalog.TaxConfig{
+			Behavior:  lo.ToPtr(productcatalog.InclusiveTaxBehavior),
+			TaxCodeID: lo.ToPtr("01TAXCODE000000000000000000"),
+		}
+
+		result := ToAPITaxCodeConfig(cfg)
+		require.NotNil(t, result)
+		require.NotNil(t, result.Behavior)
+		assert.Equal(t, api.BillingTaxBehavior("inclusive"), *result.Behavior)
+	})
+
+	t.Run("maps behavior-only config without code", func(t *testing.T) {
+		c := &productcatalog.TaxConfig{
 			Behavior: lo.ToPtr(productcatalog.InclusiveTaxBehavior),
 		}
 
-		result := ToAPIBillingRateCardTaxConfig(cfg, tc)
+		result := ToAPITaxCodeConfig(c)
 		require.NotNil(t, result)
+		assert.Nil(t, result.Code)
 		require.NotNil(t, result.Behavior)
 		assert.Equal(t, api.BillingTaxBehavior("inclusive"), *result.Behavior)
 	})
@@ -1116,6 +1190,30 @@ func TestToUpdatePlanInput(t *testing.T) {
 		assert.Equal(t, "p1", (*result.Phases)[0].Key)
 		require.Len(t, (*result.Phases)[0].RateCards, 1)
 		assert.Equal(t, productcatalog.UsageBasedRateCardType, (*result.Phases)[0].RateCards[0].Type())
+	})
+
+	t.Run("settlement mode maps correctly", func(t *testing.T) {
+		body := api.UpsertPlanRequest{
+			Name:           "Plan",
+			Phases:         []api.BillingPlanPhase{},
+			SettlementMode: lo.ToPtr(api.BillingSettlementModeCreditOnly),
+		}
+
+		result, err := FromAPIUpsertPlanRequest("ns", "id", body)
+		require.NoError(t, err)
+		require.NotNil(t, result.SettlementMode)
+		assert.Equal(t, productcatalog.CreditOnlySettlementMode, *result.SettlementMode)
+	})
+
+	t.Run("nil settlement mode leaves it unchanged", func(t *testing.T) {
+		body := api.UpsertPlanRequest{
+			Name:   "Plan",
+			Phases: []api.BillingPlanPhase{},
+		}
+
+		result, err := FromAPIUpsertPlanRequest("ns", "id", body)
+		require.NoError(t, err)
+		assert.Nil(t, result.SettlementMode)
 	})
 }
 
@@ -1240,6 +1338,33 @@ func TestToCreatePlanInput(t *testing.T) {
 		require.Len(t, result.Phases, 2)
 		assert.Equal(t, "p1", result.Phases[0].Key)
 		assert.Equal(t, "p2", result.Phases[1].Key)
+	})
+
+	t.Run("settlement mode maps correctly", func(t *testing.T) {
+		body := api.CreatePlanRequest{
+			Key:            "pro",
+			Name:           "Pro",
+			Currency:       "USD",
+			BillingCadence: "P1M",
+			SettlementMode: lo.ToPtr(api.BillingSettlementModeCreditOnly),
+		}
+
+		result, err := FromAPICreatePlanRequest("ns", body)
+		require.NoError(t, err)
+		assert.Equal(t, productcatalog.CreditOnlySettlementMode, result.SettlementMode)
+	})
+
+	t.Run("nil settlement mode maps to empty for service default", func(t *testing.T) {
+		body := api.CreatePlanRequest{
+			Key:            "pro",
+			Name:           "Pro",
+			Currency:       "USD",
+			BillingCadence: "P1M",
+		}
+
+		result, err := FromAPICreatePlanRequest("ns", body)
+		require.NoError(t, err)
+		assert.Equal(t, productcatalog.SettlementMode(""), result.SettlementMode)
 	})
 }
 
@@ -1416,8 +1541,9 @@ func TestToRateCard(t *testing.T) {
 
 		result, err := FromAPIBillingRateCard(rc)
 		require.NoError(t, err)
-		require.NotNil(t, result.AsMeta().FeatureID)
-		assert.Equal(t, "01FEATURE00000000", *result.AsMeta().FeatureID)
+		require.NotNil(t, result.AsMeta().Feature)
+		require.NotNil(t, result.AsMeta().Feature.ID)
+		assert.Equal(t, "01FEATURE00000000", *result.AsMeta().Feature.ID)
 	})
 
 	t.Run("graduated price creates usage based rate card", func(t *testing.T) {
@@ -1547,13 +1673,14 @@ func TestToBillingPriceTiers(t *testing.T) {
 	})
 }
 
-func TestToBillingTaxConfig(t *testing.T) {
+func TestFromAPITaxCodeConfig(t *testing.T) {
 	t.Run("maps code ID", func(t *testing.T) {
-		tc := api.BillingRateCardTaxConfig{
-			Code: api.TaxCodeReference{Id: "01TAXCODE000"},
+		tc := api.TaxCodeConfig{
+			Code: &api.TaxCodeReference{Id: "01TAXCODE000"},
 		}
 
-		result := FromAPIBillingRateCardTaxConfig(tc)
+		result, err := FromAPITaxCodeConfig(tc)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.TaxCodeID)
 		assert.Equal(t, "01TAXCODE000", *result.TaxCodeID)
@@ -1561,15 +1688,59 @@ func TestToBillingTaxConfig(t *testing.T) {
 	})
 
 	t.Run("maps behavior", func(t *testing.T) {
-		tc := api.BillingRateCardTaxConfig{
-			Code:     api.TaxCodeReference{Id: "01TAXCODE000"},
+		tc := api.TaxCodeConfig{
+			Code:     &api.TaxCodeReference{Id: "01TAXCODE000"},
 			Behavior: lo.ToPtr(api.BillingTaxBehavior("inclusive")),
 		}
 
-		result := FromAPIBillingRateCardTaxConfig(tc)
+		result, err := FromAPITaxCodeConfig(tc)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.NotNil(t, result.Behavior)
 		assert.Equal(t, productcatalog.InclusiveTaxBehavior, *result.Behavior)
+	})
+
+	t.Run("maps behavior-only config", func(t *testing.T) {
+		tc := api.TaxCodeConfig{
+			Behavior: lo.ToPtr(api.BillingTaxBehavior("inclusive")),
+		}
+
+		result, err := FromAPITaxCodeConfig(tc)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Nil(t, result.TaxCodeID)
+		require.NotNil(t, result.Behavior)
+		assert.Equal(t, productcatalog.InclusiveTaxBehavior, *result.Behavior)
+	})
+
+	t.Run("rejects empty code ID", func(t *testing.T) {
+		tc := api.TaxCodeConfig{
+			Code: &api.TaxCodeReference{Id: ""},
+		}
+
+		result, err := FromAPITaxCodeConfig(tc)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.True(t, models.IsGenericValidationError(err), "an explicit code reference without an id must surface as a validation error")
+	})
+
+	t.Run("rejects empty code ID even with behavior", func(t *testing.T) {
+		tc := api.TaxCodeConfig{
+			Code:     &api.TaxCodeReference{Id: ""},
+			Behavior: lo.ToPtr(api.BillingTaxBehavior("inclusive")),
+		}
+
+		result, err := FromAPITaxCodeConfig(tc)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.True(t, models.IsGenericValidationError(err), "an explicit code reference without an id must surface as a validation error")
+	})
+
+	t.Run("rejects empty tax config", func(t *testing.T) {
+		result, err := FromAPITaxCodeConfig(api.TaxCodeConfig{})
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.True(t, models.IsGenericValidationError(err), "tax config without code or behavior must surface as a validation error")
 	})
 }
 
@@ -1773,18 +1944,6 @@ func TestFromToAPIBillingRateCardEntitlement(t *testing.T) {
 		metered, err := domain.AsMetered()
 		require.NoError(t, err)
 		assert.Equal(t, "P3M", metered.UsagePeriod.ISOString().String())
-	})
-
-	t.Run("metered — missing usage period with no billing cadence is a validation error", func(t *testing.T) {
-		var apiEnt api.BillingRateCardEntitlement
-		require.NoError(t, apiEnt.FromBillingRateCardMeteredEntitlement(api.BillingRateCardMeteredEntitlement{
-			Type: "metered",
-		}))
-
-		// No usage_period on the entitlement and no billing cadence to default from.
-		domain, err := FromAPIBillingRateCardEntitlement(apiEnt, nil)
-		require.Error(t, err)
-		assert.Nil(t, domain)
 	})
 
 	t.Run("metered — malformed usage period is a validation error", func(t *testing.T) {

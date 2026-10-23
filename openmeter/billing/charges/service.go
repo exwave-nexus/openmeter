@@ -6,9 +6,15 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/samber/lo"
+
 	"github.com/openmeterio/openmeter/openmeter/billing"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/flatfee"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/meta"
+	"github.com/openmeterio/openmeter/openmeter/billing/charges/usagebased"
 	"github.com/openmeterio/openmeter/openmeter/customer"
+	"github.com/openmeterio/openmeter/pkg/filter"
 	"github.com/openmeterio/openmeter/pkg/models"
 	"github.com/openmeterio/openmeter/pkg/pagination"
 	"github.com/openmeterio/openmeter/pkg/sortx"
@@ -27,8 +33,6 @@ type ChargeService interface {
 	GetByIDs(ctx context.Context, input GetByIDsInput) (Charges, error)
 	Create(ctx context.Context, input CreateInput) (Charges, error)
 	CreatePendingInvoiceLines(ctx context.Context, input CreatePendingInvoiceLinesInput) (*CreatePendingInvoiceLinesResult, error)
-	UpdateSubscriptionItemID(ctx context.Context, charge Charge, newSubscriptionItemID string) (Charge, error)
-
 	AdvanceCharges(ctx context.Context, input AdvanceChargesInput) (Charges, error)
 	ListCustomersToAdvance(ctx context.Context, input ListCustomersToAdvanceInput) (pagination.Result[customer.CustomerID], error)
 	// ApplyPatches currently returns no affected-charge payload. If exact post-apply
@@ -40,7 +44,75 @@ type ChargeService interface {
 
 type CreateInput struct {
 	Namespace string
-	Intents   ChargeIntents
+	Intents   CreateChargeIntents
+}
+
+type CreateChargeIntent struct {
+	ChargeIntent
+	Options meta.CreateOptions
+}
+
+// WithTaxCodeID returns a copy of the create intent with TaxCodeID set to id.
+func (i CreateChargeIntent) WithTaxCodeID(id string) (CreateChargeIntent, error) {
+	switch i.t {
+	case meta.ChargeTypeFlatFee:
+		if i.flatFee == nil {
+			return CreateChargeIntent{}, fmt.Errorf("flat fee is nil")
+		}
+
+		intent := *i.flatFee
+		intent.TaxConfig.TaxCodeID = id
+		i.ChargeIntent = NewChargeIntent(intent)
+	case meta.ChargeTypeUsageBased:
+		if i.usageBased == nil {
+			return CreateChargeIntent{}, fmt.Errorf("usage based is nil")
+		}
+
+		intent := *i.usageBased
+		intent.TaxConfig.TaxCodeID = id
+		i.ChargeIntent = NewChargeIntent(intent)
+	case meta.ChargeTypeCreditPurchase:
+		if i.creditPurchase == nil {
+			return CreateChargeIntent{}, fmt.Errorf("credit purchase is nil")
+		}
+
+		intent := *i.creditPurchase
+		intent.TaxConfig.TaxCodeID = id
+		i.ChargeIntent = NewChargeIntent(intent)
+	default:
+		return CreateChargeIntent{}, fmt.Errorf("unsupported charge type: %s", i.t)
+	}
+
+	return i, nil
+}
+
+type CreateChargeIntents []CreateChargeIntent
+
+func NewCreateChargeIntents[T flatfee.Intent | usagebased.Intent | creditpurchase.Intent | ChargeIntent](intents ...T) CreateChargeIntents {
+	return lo.Map(intents, func(intent T, _ int) CreateChargeIntent {
+		switch intent := any(intent).(type) {
+		case ChargeIntent:
+			return CreateChargeIntent{ChargeIntent: intent}
+		case flatfee.Intent:
+			return CreateChargeIntent{ChargeIntent: NewChargeIntent(intent)}
+		case usagebased.Intent:
+			return CreateChargeIntent{ChargeIntent: NewChargeIntent(intent)}
+		case creditpurchase.Intent:
+			return CreateChargeIntent{ChargeIntent: NewChargeIntent(intent)}
+		default:
+			return CreateChargeIntent{}
+		}
+	})
+}
+
+func (i CreateChargeIntents) Validate() error {
+	return i.AsChargeIntents().Validate()
+}
+
+func (i CreateChargeIntents) AsChargeIntents() ChargeIntents {
+	return lo.Map(i, func(intent CreateChargeIntent, _ int) ChargeIntent {
+		return intent.ChargeIntent
+	})
 }
 
 type (
@@ -139,13 +211,24 @@ func (f ListChargesDeletedAtFilter) Validate() error {
 type ListChargesInput struct {
 	pagination.Page
 
-	Namespace       string
+	Namespace string
+	// CustomerIDs and CustomerID both narrow the listing and apply together;
+	// empty lists the whole namespace.
 	CustomerIDs     []string
+	CustomerID      *filter.FilterULID
 	SubscriptionIDs []string
 	ChargeTypes     []meta.ChargeType
-	StatusIn        []meta.ChargeStatus
-	StatusNotIn     []meta.ChargeStatus
-	IncludeDeleted  bool
+	Status          *filter.FilterString
+	// FeatureID and FeatureKey filter on the charge's feature reference;
+	// credit purchase charges carry no feature reference and never match.
+	FeatureID  *filter.FilterULID
+	FeatureKey *filter.FilterString
+	// ServicePeriodFrom and ServicePeriodTo filter on the charge's service
+	// period bounds independently, with the full operator set; the caller
+	// composes them into containment, overlap, or one-sided queries.
+	ServicePeriodFrom *filter.FilterTime
+	ServicePeriodTo   *filter.FilterTime
+	IncludeDeleted    bool
 	// DeletedAtFilter selects which deleted-at field is used when IncludeDeleted is false.
 	// Empty defaults to effective charge deletion.
 	DeletedAtFilter ListChargesDeletedAtFilter
@@ -184,20 +267,40 @@ func (i ListChargesInput) Validate() error {
 		}
 	}
 
-	for _, status := range i.StatusIn {
-		if err := status.Validate(); err != nil {
-			errs = append(errs, fmt.Errorf("status: %w", err))
+	if i.CustomerID != nil {
+		if err := i.CustomerID.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("customer id filter: %w", err))
 		}
 	}
 
-	for _, status := range i.StatusNotIn {
-		if err := status.Validate(); err != nil {
-			errs = append(errs, fmt.Errorf("status: %w", err))
+	if i.Status != nil {
+		if err := i.Status.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("status filter: %w", err))
 		}
 	}
 
-	if len(i.StatusIn) > 0 && len(i.StatusNotIn) > 0 {
-		errs = append(errs, errors.New("status_in and status_not_in cannot be set at the same time"))
+	if i.FeatureID != nil {
+		if err := i.FeatureID.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("feature id filter: %w", err))
+		}
+	}
+
+	if i.FeatureKey != nil {
+		if err := i.FeatureKey.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("feature key filter: %w", err))
+		}
+	}
+
+	if i.ServicePeriodFrom != nil {
+		if err := i.ServicePeriodFrom.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("service period from filter: %w", err))
+		}
+	}
+
+	if i.ServicePeriodTo != nil {
+		if err := i.ServicePeriodTo.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("service period to filter: %w", err))
+		}
 	}
 
 	if err := i.DeletedAtFilter.Validate(); err != nil {

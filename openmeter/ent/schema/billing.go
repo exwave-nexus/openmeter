@@ -19,6 +19,7 @@ import (
 	"github.com/openmeterio/openmeter/pkg/currencyx"
 	"github.com/openmeterio/openmeter/pkg/datetime"
 	"github.com/openmeterio/openmeter/pkg/framework/entutils"
+	"github.com/openmeterio/openmeter/pkg/models"
 )
 
 var (
@@ -150,6 +151,8 @@ func (BillingWorkflowConfig) Fields() []ent.Field {
 			GoType(billing.SubscriptionEndProrationMode("")).
 			Default(string(billing.SubscriptionEndProrationModeBillActualPeriod)),
 
+		// TODO: remove this legacy JSON field after all workflow-config read and write
+		// paths use the normalized tax columns as the sole representation.
 		field.JSON("invoice_default_tax_settings", productcatalog.TaxConfig{}).
 			Optional(),
 
@@ -164,6 +167,18 @@ func (BillingWorkflowConfig) Fields() []ent.Field {
 func (BillingWorkflowConfig) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("namespace", "id"),
+	}
+}
+
+func (BillingWorkflowConfig) Annotations() []schema.Annotation {
+	return []schema.Annotation{
+		entsql.Checks(map[string]string{
+			// invoice_default_tax_settings remains optional. These checks require
+			// null-safe equality with the normalized columns, and a nonblank Stripe
+			// code additionally requires a resolved tax code reference.
+			"billing_workflow_config_tax_code_consistency":     `(tax_code_id::text IS NOT DISTINCT FROM invoice_default_tax_settings ->> 'tax_code_id') AND (NULLIF(btrim(invoice_default_tax_settings -> 'stripe' ->> 'code'), '') IS NULL OR tax_code_id IS NOT NULL)`,
+			"billing_workflow_config_tax_behavior_consistency": `tax_behavior IS NOT DISTINCT FROM invoice_default_tax_settings ->> 'behavior'`,
+		}),
 	}
 }
 
@@ -517,8 +532,30 @@ func (BillingInvoiceLine) Fields() []ent.Field {
 	}
 }
 
+func (BillingInvoiceLine) Annotations() []schema.Annotation {
+	return []schema.Annotation{
+		entsql.Checks(map[string]string{
+			// tax_config remains optional. These checks require null-safe equality with
+			// the normalized columns, and a nonblank Stripe code additionally requires a
+			// resolved tax code reference so the snapshot stays aligned with them.
+			"billing_invoice_line_tax_code_consistency":     `(tax_code_id::text IS NOT DISTINCT FROM tax_config ->> 'tax_code_id') AND (NULLIF(btrim(tax_config -> 'stripe' ->> 'code'), '') IS NULL OR tax_code_id IS NOT NULL)`,
+			"billing_invoice_line_tax_behavior_consistency": `tax_behavior IS NOT DISTINCT FROM tax_config ->> 'behavior'`,
+		}),
+	}
+}
+
 func (BillingInvoiceLine) Indexes() []ent.Index {
 	return []ent.Index{
+		// PostgreSQL looks up child rows by the foreign-key column alone when a line
+		// config is deleted, so these indexes prevent a scan of all invoice lines.
+		index.Edges("flat_fee_line").
+			StorageKey("billing_invoice_lines_fee_config_id_idx"),
+		index.Edges("usage_based_line").
+			StorageKey("billing_invoice_lines_usage_config_id_idx"),
+		// Self-referencing foreign-key actions filter by parent_line_id without the
+		// namespace, so the namespace-prefixed index below cannot serve them.
+		index.Fields("parent_line_id").
+			StorageKey("billing_invoice_lines_parent_id_idx"),
 		index.Fields("namespace", "invoice_id"),
 		index.Fields("namespace", "parent_line_id"),
 		index.Fields("namespace", "parent_line_id", "child_unique_reference_id").
@@ -959,6 +996,10 @@ func (BillingInvoiceLineDiscount) Fields() []ent.Field {
 
 func (BillingInvoiceLineDiscount) Indexes() []ent.Index {
 	return []ent.Index{
+		// Invoice-line deletion cascades by line_id alone, so the namespace-prefixed
+		// indexes below cannot prevent a scan of all amount discounts.
+		index.Fields("line_id").
+			StorageKey("billing_invoice_line_discounts_line_id_idx"),
 		index.Fields("namespace", "line_id"),
 		index.Fields("namespace", "line_id", "child_unique_reference_id").
 			Annotations(
@@ -1019,6 +1060,10 @@ func (BillingInvoiceLineUsageDiscount) Fields() []ent.Field {
 
 func (BillingInvoiceLineUsageDiscount) Indexes() []ent.Index {
 	return []ent.Index{
+		// Invoice-line deletion cascades by line_id alone, so the namespace-prefixed
+		// indexes below cannot prevent a scan of all usage discounts.
+		index.Fields("line_id").
+			StorageKey("billing_invoice_line_usage_discounts_line_id_idx"),
 		index.Fields("namespace", "line_id"),
 		index.Fields("namespace", "line_id", "child_unique_reference_id").
 			Annotations(
@@ -1064,6 +1109,10 @@ func (BillingStandardInvoiceDetailedLine) Fields() []ent.Field {
 
 func (BillingStandardInvoiceDetailedLine) Indexes() []ent.Index {
 	return []ent.Index{
+		// Invoice-line deletion cascades by parent_line_id alone, so the
+		// namespace-prefixed indexes below cannot prevent a scan of detailed lines.
+		index.Fields("parent_line_id").
+			StorageKey("billing_std_invoice_detailed_lines_parent_id_idx"),
 		index.Fields("namespace", "invoice_id"),
 		index.Fields("namespace", "parent_line_id"),
 		index.Fields("namespace", "parent_line_id", "child_unique_reference_id").
@@ -1134,6 +1183,10 @@ func (BillingStandardInvoiceDetailedLineAmountDiscount) Fields() []ent.Field {
 
 func (BillingStandardInvoiceDetailedLineAmountDiscount) Indexes() []ent.Index {
 	return []ent.Index{
+		// Detailed-line deletion cascades by line_id alone, so the namespace-prefixed
+		// indexes below cannot prevent a scan of all amount discounts.
+		index.Fields("line_id").
+			StorageKey("billing_std_invoice_detail_amount_discounts_line_id_idx"),
 		index.Fields("namespace", "line_id"),
 		index.Fields("namespace", "line_id", "child_unique_reference_id").
 			Annotations(
@@ -1429,6 +1482,12 @@ func (BillingInvoiceValidationIssue) Fields() []ent.Field {
 			Nillable(),
 
 		field.String("component"),
+
+		field.JSON("attributes", models.Annotations{}).
+			SchemaType(map[string]string{
+				dialect.Postgres: "jsonb",
+			}).
+			Optional(),
 
 		field.Bytes("dedupe_hash").
 			MinLen(32).

@@ -1,19 +1,20 @@
 package rating
 
 import (
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/alpacahq/alpacadecimal"
 
 	"github.com/openmeterio/openmeter/openmeter/billing"
 	"github.com/openmeterio/openmeter/openmeter/billing/models/totals"
+	"github.com/openmeterio/openmeter/openmeter/meter"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog/feature"
-	"github.com/openmeterio/openmeter/pkg/timeutil"
+	"github.com/openmeterio/openmeter/pkg/models"
 )
 
 type Service interface {
-	ResolveBillablePeriod(in ResolveBillablePeriodInput) (*timeutil.ClosedPeriod, error)
+	ResolveBillablePeriod(in ResolveBillablePeriodInput) (billing.IsLineBillableAsOfResult, error)
 	GenerateDetailedLines(in StandardLineAccessor, opts ...GenerateDetailedLinesOption) (GenerateDetailedLinesResult, error)
 }
 
@@ -66,21 +67,25 @@ type ResolveBillablePeriodInput struct {
 	AsOf               time.Time
 	ProgressiveBilling bool
 	Line               GatheringLineAccessor
-	FeatureMeters      feature.FeatureMeters
+	Feature            *feature.Feature
+	Meter              *meter.Meter
 }
 
 func (i ResolveBillablePeriodInput) Validate() error {
-	if i.Line == nil {
-		return fmt.Errorf("line is required")
-	}
+	var errs []error
 
-	if i.FeatureMeters == nil {
-		return fmt.Errorf("feature meters are required")
+	if i.Line == nil {
+		errs = append(errs, errors.New("line is required"))
+	} else {
+		price := i.Line.GetPrice()
+		if price == nil {
+			errs = append(errs, errors.New("line price is required"))
+		}
 	}
 
 	if i.AsOf.IsZero() {
-		return fmt.Errorf("as of is required")
+		errs = append(errs, errors.New("as of is required"))
 	}
 
-	return nil
+	return models.NewNillableGenericValidationError(errors.Join(errs...))
 }

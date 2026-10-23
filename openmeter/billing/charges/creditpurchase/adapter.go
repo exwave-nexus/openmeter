@@ -34,7 +34,6 @@ type ChargeAdapter interface {
 	GetByIDs(ctx context.Context, ids GetByIDsInput) ([]Charge, error)
 	GetByID(ctx context.Context, id GetByIDInput) (Charge, error)
 	ListCharges(ctx context.Context, input ListChargesInput) (pagination.Result[Charge], error)
-	ListFundedCreditActivities(ctx context.Context, input ListFundedCreditActivitiesInput) (ListFundedCreditActivitiesResult, error)
 }
 
 type SetResolvedCostBasisAdapterInput struct {
@@ -179,6 +178,7 @@ func (i MarkVoidedInput) Validate() error {
 	if err := i.ChargeID.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("charge ID: %w", err))
 	}
+
 	if i.VoidedAt.IsZero() {
 		errs = append(errs, errors.New("voided at is required"))
 	}
@@ -197,6 +197,7 @@ func (i MarkVoidedAdapterInput) Validate() error {
 	if err := i.Charge.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("charge: %w", err))
 	}
+
 	if i.VoidedAt.IsZero() {
 		errs = append(errs, errors.New("voided at is required"))
 	}

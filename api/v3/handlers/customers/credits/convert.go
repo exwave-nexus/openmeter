@@ -10,10 +10,12 @@ import (
 	"github.com/samber/lo"
 
 	api "github.com/openmeterio/openmeter/api/v3"
+	"github.com/openmeterio/openmeter/api/v3/handlers/billingcommon"
 	"github.com/openmeterio/openmeter/api/v3/labels"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/creditpurchase"
 	"github.com/openmeterio/openmeter/openmeter/billing/charges/models/payment"
 	"github.com/openmeterio/openmeter/openmeter/billing/creditgrant"
+	"github.com/openmeterio/openmeter/openmeter/currencies"
 	"github.com/openmeterio/openmeter/openmeter/ledger"
 	"github.com/openmeterio/openmeter/openmeter/ledger/customerbalance"
 	"github.com/openmeterio/openmeter/openmeter/productcatalog"
@@ -41,8 +43,9 @@ func toAPIBillingCreditGrant(charge creditpurchase.Charge) (api.BillingCreditGra
 		Labels:        labels.FromMetadata(charge.Intent.Metadata),
 		Key:           charge.Intent.Key,
 	}
+	grant.ValidationIssues = billingcommon.ToAPIValidationIssues(charge.ValidationIssues)
 
-	grant.Filters = toAPIBillingCreditGrantFilters(charge.Intent.FeatureFilters)
+	grant.Filters = toAPIBillingCreditGrantFilters(charge.Intent.Filters)
 
 	if charge.Intent.Priority != nil {
 		p := int16(*charge.Intent.Priority)
@@ -53,8 +56,9 @@ func toAPIBillingCreditGrant(charge creditpurchase.Charge) (api.BillingCreditGra
 	if err != nil {
 		return grant, fmt.Errorf("converting purchase: %w", err)
 	}
+
 	grant.Purchase = purchase
-	grant.TaxConfig = toAPIBillingCreditGrantTaxConfig(charge)
+	grant.TaxConfig = toAPITaxCodeConfig(charge)
 
 	return grant, nil
 }
@@ -74,6 +78,7 @@ func toAPIBillingCreditGrantStatus(charge creditpurchase.Charge) api.BillingCred
 	if charge.State.VoidedAt != nil {
 		return api.BillingCreditGrantStatusVoided
 	}
+
 	if charge.Intent.ExpiresAt != nil && !charge.Intent.ExpiresAt.After(clock.Now()) {
 		return api.BillingCreditGrantStatusExpired
 	}
@@ -91,77 +96,72 @@ func toAPIBillingCreditGrantStatus(charge creditpurchase.Charge) api.BillingCred
 }
 
 // toAPICreditGrantPurchase builds the purchase block for funded grants (invoice or external).
-// Returns nil for promotional grants (funding_method=none).
+// Returns nil for promotional grants (funding_method=none). Amount and the resolved
+// cost basis are omitted while a dynamic cost basis is still unresolved.
 func toAPICreditGrantPurchase(charge creditpurchase.Charge) (*api.BillingCreditGrantPurchase, error) {
 	settlement := charge.Intent.Settlement
 
+	var availabilityPolicy *api.BillingCreditAvailabilityPolicy
+	settlementStatus := api.BillingCreditPurchasePaymentSettlementStatusPending
+
 	switch settlement.Type() {
 	case creditpurchase.SettlementTypeInvoice:
-		purchaseAmount, err := charge.GetFiatSettlementAmount()
-		if err != nil {
-			return nil, fmt.Errorf("getting fiat settlement amount: %w", err)
-		}
-
-		fiatCurrency, err := charge.Intent.GetSettlementFiatCurrency()
-		if err != nil {
-			return nil, fmt.Errorf("getting settlement fiat currency: %w", err)
-		}
-
-		costBasis := charge.State.ResolvedCostBasis.CostBasis.String()
-		settlementStatus := api.BillingCreditPurchasePaymentSettlementStatusPending
-
 		if charge.Realizations.InvoiceSettlement != nil {
 			settlementStatus = toAPIBillingCreditPurchasePaymentSettlementStatus(charge.Realizations.InvoiceSettlement.Status)
 		}
-
-		return &api.BillingCreditGrantPurchase{
-			Amount:           purchaseAmount.String(),
-			Currency:         api.CurrencyCode(fiatCurrency.GetFiatCode()),
-			PerUnitCostBasis: &costBasis,
-			SettlementStatus: &settlementStatus,
-		}, nil
-
 	case creditpurchase.SettlementTypeExternal:
 		ext, err := settlement.AsExternalSettlement()
 		if err != nil {
 			return nil, fmt.Errorf("getting external settlement: %w", err)
 		}
 
+		policy, err := toAPIBillingCreditAvailabilityPolicy(ext.InitialStatus)
+		if err != nil {
+			return nil, fmt.Errorf("converting availability policy: %w", err)
+		}
+
+		availabilityPolicy = &policy
+
+		if charge.Realizations.ExternalPaymentSettlement != nil {
+			settlementStatus = toAPIBillingCreditPurchasePaymentSettlementStatus(charge.Realizations.ExternalPaymentSettlement.Status)
+		}
+	case creditpurchase.SettlementTypePromotional:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("invalid settlement type: %s", settlement.Type())
+	}
+
+	fiatCurrency, err := charge.Intent.GetSettlementFiatCurrency()
+	if err != nil {
+		return nil, fmt.Errorf("getting settlement fiat currency: %w", err)
+	}
+
+	resolvedCostBasis, err := billingcommon.ToAPIChargeResolvedCostBasis(fiatCurrency, charge.State.ResolvedCostBasis)
+	if err != nil {
+		return nil, fmt.Errorf("converting resolved cost basis: %w", err)
+	}
+
+	purchase := &api.BillingCreditGrantPurchase{
+		Currency:           api.CurrencyCode(fiatCurrency.GetFiatCode()),
+		ResolvedCostBasis:  resolvedCostBasis,
+		AvailabilityPolicy: availabilityPolicy,
+		SettlementStatus:   &settlementStatus,
+	}
+
+	if resolvedCostBasis != nil {
 		purchaseAmount, err := charge.GetFiatSettlementAmount()
 		if err != nil {
 			return nil, fmt.Errorf("getting fiat settlement amount: %w", err)
 		}
 
-		fiatCurrency, err := charge.Intent.GetSettlementFiatCurrency()
-		if err != nil {
-			return nil, fmt.Errorf("getting settlement fiat currency: %w", err)
+		purchase.Amount = lo.ToPtr(purchaseAmount.String())
+
+		if charge.Intent.Currency.IsFiat() {
+			purchase.PerUnitCostBasis = &resolvedCostBasis.Rate
 		}
-
-		costBasis := charge.State.ResolvedCostBasis.CostBasis.String()
-		availPolicy, err := toAPIBillingCreditAvailabilityPolicy(ext.InitialStatus)
-		if err != nil {
-			return nil, fmt.Errorf("converting availability policy: %w", err)
-		}
-		settlementStatus := api.BillingCreditPurchasePaymentSettlementStatusPending
-
-		if charge.Realizations.ExternalPaymentSettlement != nil {
-			settlementStatus = toAPIBillingCreditPurchasePaymentSettlementStatus(charge.Realizations.ExternalPaymentSettlement.Status)
-		}
-
-		return &api.BillingCreditGrantPurchase{
-			Amount:             purchaseAmount.String(),
-			Currency:           api.CurrencyCode(fiatCurrency.GetFiatCode()),
-			PerUnitCostBasis:   &costBasis,
-			AvailabilityPolicy: &availPolicy,
-			SettlementStatus:   &settlementStatus,
-		}, nil
-
-	case creditpurchase.SettlementTypePromotional:
-		return nil, nil
-
-	default:
-		return nil, fmt.Errorf("invalid settlement type: %s", settlement.Type())
 	}
+
+	return purchase, nil
 }
 
 func toAPIBillingCreditPurchasePaymentSettlementStatus(status payment.Status) api.BillingCreditPurchasePaymentSettlementStatus {
@@ -184,13 +184,13 @@ func toAPIBillingCreditAvailabilityPolicy(status creditpurchase.InitialPaymentSe
 	}
 }
 
-func toAPIBillingCreditGrantTaxConfig(charge creditpurchase.Charge) *api.BillingCreditGrantTaxConfig {
+func toAPITaxCodeConfig(charge creditpurchase.Charge) *api.TaxCodeConfig {
 	cfg := charge.Intent.TaxConfig
 	if lo.IsEmpty(cfg) {
 		return nil
 	}
 
-	tc := &api.BillingCreditGrantTaxConfig{}
+	tc := &api.TaxCodeConfig{}
 
 	if cfg.Behavior != nil {
 		behavior := api.BillingTaxBehavior(*cfg.Behavior)
@@ -198,24 +198,50 @@ func toAPIBillingCreditGrantTaxConfig(charge creditpurchase.Charge) *api.Billing
 	}
 
 	if cfg.TaxCodeID != "" {
-		tc.TaxCode = &api.TaxCodeReference{Id: cfg.TaxCodeID}
+		tc.Code = &api.TaxCodeReference{Id: cfg.TaxCodeID}
 	}
 
 	return tc
 }
 
-func toAPIBillingCreditGrantFilters(filters creditpurchase.FeatureFilters) *api.BillingCreditGrantFilters {
-	if len(filters) == 0 {
+func toAPIBillingCreditGrantFilters(filters ledger.CreditFilters) *api.BillingCreditGrantFilters {
+	if filters.IsEmpty() {
 		return nil
 	}
 
-	apiFeatures := lo.Map(filters.Normalize(), func(key string, _ int) api.ResourceKey {
-		return key
-	})
-
-	return &api.BillingCreditGrantFilters{
-		Features: &apiFeatures,
+	filters = filters.Normalize()
+	result := &api.BillingCreditGrantFilters{}
+	if len(filters.Features) > 0 {
+		result.Features = lo.ToPtr(filters.Features)
 	}
+
+	if len(filters.Plans) > 0 {
+		result.Plans = lo.ToPtr(lo.Map(filters.Plans, func(plan ledger.PlanFilter, _ int) api.BillingCreditGrantPlanFilter {
+			mapped := api.BillingCreditGrantPlanFilter{Key: plan.Key}
+			if v := plan.Version; v != nil {
+				mapped.Version = &api.VersionFilter{}
+				if v.Eq != nil {
+					mapped.Version.Eq = lo.ToPtr(int32(*v.Eq))
+				}
+
+				if v.Gte != nil {
+					mapped.Version.Gte = lo.ToPtr(int32(*v.Gte))
+				}
+
+				if v.Lte != nil {
+					mapped.Version.Lte = lo.ToPtr(int32(*v.Lte))
+				}
+
+				if v.In != nil {
+					mapped.Version.Oeq = lo.ToPtr(lo.Map(v.In, func(n int, _ int) int32 { return int32(n) }))
+				}
+			}
+
+			return mapped
+		}))
+	}
+
+	return result
 }
 
 func fromAPIBillingCreditFundingMethod(fm api.BillingCreditFundingMethod) creditgrant.FundingMethod {
@@ -238,7 +264,7 @@ func fromAPIBillingCreditAvailabilityPolicy(policy api.BillingCreditAvailability
 	}
 }
 
-func fromAPIBillingCreditGrantTaxConfig(tc *api.CreateCreditGrantTaxConfig) *productcatalog.TaxConfig {
+func fromAPITaxCodeConfig(tc *api.CreateTaxCodeConfig) *productcatalog.TaxConfig {
 	if tc == nil {
 		return nil
 	}
@@ -250,29 +276,49 @@ func fromAPIBillingCreditGrantTaxConfig(tc *api.CreateCreditGrantTaxConfig) *pro
 		config.Behavior = &behavior
 	}
 
-	if tc.TaxCode != nil {
-		config.TaxCodeID = &tc.TaxCode.Id
+	if tc.Code != nil {
+		config.TaxCodeID = &tc.Code.Id
 	}
 
 	return config
 }
 
 func fromAPIBillingCreditGrantFilters(filters *api.CreateCreditGrantFilters) (*creditgrant.GrantFilters, error) {
-	if filters == nil || filters.Features == nil || len(*filters.Features) == 0 {
+	if filters == nil {
 		return nil, nil
 	}
 
-	featureFilters := creditpurchase.FeatureFilters(lo.Map(*filters.Features, func(key api.ResourceKey, _ int) string {
-		return key
-	}))
+	result := &creditgrant.GrantFilters{Features: lo.FromPtr(filters.Features)}
+	if filters.Plans != nil {
+		result.Plans = lo.Map(*filters.Plans, func(plan api.CreateCreditGrantPlanFilter, _ int) ledger.PlanFilter {
+			mapped := ledger.PlanFilter{Key: plan.Key}
+			if v := plan.Version; v != nil {
+				mapped.Version = &ledger.VersionFilter{}
+				if v.Eq != nil {
+					mapped.Version.Eq = lo.ToPtr(int(*v.Eq))
+				}
 
-	if err := featureFilters.Validate(); err != nil {
-		return nil, err
+				if v.Gte != nil {
+					mapped.Version.Gte = lo.ToPtr(int(*v.Gte))
+				}
+
+				if v.Lte != nil {
+					mapped.Version.Lte = lo.ToPtr(int(*v.Lte))
+				}
+
+				if v.Oeq != nil {
+					mapped.Version.In = make([]int, len(*v.Oeq))
+					for i, n := range *v.Oeq {
+						mapped.Version.In[i] = int(n)
+					}
+				}
+			}
+
+			return mapped
+		})
 	}
 
-	return &creditgrant.GrantFilters{
-		Features: featureFilters.Normalize(),
-	}, nil
+	return result, nil
 }
 
 func fromAPIBillingCreditGrantStatus(status api.BillingCreditGrantStatus) (creditgrant.GrantStatus, error) {
@@ -381,11 +427,17 @@ func fromAPICreateCreditGrantRequest(ns string, customerID api.ULID, body api.Cr
 			purchase.PerUnitCostBasis = &costBasis
 		}
 
+		purchase.CostBasis, err = fromAPICreateChargeCostBasis(body.Purchase.CostBasis)
+		if err != nil {
+			return creditgrant.CreateInput{}, fmt.Errorf("invalid cost_basis: %w", err)
+		}
+
 		if body.Purchase.AvailabilityPolicy != nil {
 			policy, err := fromAPIBillingCreditAvailabilityPolicy(*body.Purchase.AvailabilityPolicy)
 			if err != nil {
 				return creditgrant.CreateInput{}, err
 			}
+
 			purchase.AvailabilityPolicy = &policy
 		}
 
@@ -393,16 +445,53 @@ func fromAPICreateCreditGrantRequest(ns string, customerID api.ULID, body api.Cr
 	}
 
 	if body.TaxConfig != nil {
-		req.TaxConfig = fromAPIBillingCreditGrantTaxConfig(body.TaxConfig)
+		req.TaxConfig = fromAPITaxCodeConfig(body.TaxConfig)
 	}
 
 	filters, err := fromAPIBillingCreditGrantFilters(body.Filters)
 	if err != nil {
 		return creditgrant.CreateInput{}, fmt.Errorf("invalid filters: %w", err)
 	}
+
 	req.Filters = filters
 
 	return req, nil
+}
+
+func fromAPICreateChargeCostBasis(in *api.CreateChargeCostBasis) (*creditpurchase.CostBasis, error) {
+	if in == nil {
+		return nil, nil
+	}
+
+	costBasisType, err := in.Discriminator()
+	if err != nil {
+		return nil, fmt.Errorf("invalid cost basis: %w", err)
+	}
+
+	if costBasisType == string(api.BillingChargeCostBasisManualTypeManual) {
+		manual, err := in.AsCreateChargeCostBasisManual()
+		if err != nil {
+			return nil, fmt.Errorf("invalid manual cost basis: %w", err)
+		}
+
+		rate, err := alpacadecimal.NewFromString(manual.Rate)
+		if err != nil {
+			return nil, fmt.Errorf("invalid cost basis rate: %w", err)
+		}
+
+		if manual.FiatCurrency == nil {
+			return new(creditpurchase.NewCostBasis(creditpurchase.FiatCostBasis{
+				Rate: rate,
+			})), nil
+		}
+	}
+
+	costBasis, err := billingcommon.FromAPIChargeCostBasis(new(api.BillingChargeCostBasis(*in)))
+	if err != nil {
+		return nil, err
+	}
+
+	return new(creditpurchase.NewCostBasis(*costBasis)), nil
 }
 
 func fromAPIVoidCreditGrantRequest(
@@ -467,13 +556,18 @@ func fromAPIBillingCreditPurchasePaymentSettlementStatus(status api.BillingCredi
 	}
 }
 
-func toAPICreditBalance(currency currencyx.Code, balance customerbalance.Balance) api.CreditBalance {
-	return api.CreditBalance{
-		Currency: api.BillingCurrencyCode(currency),
+func toAPICreditBalance(currency currencies.CurrencyReference, balance customerbalance.Balance) api.CreditBalance {
+	result := api.CreditBalance{
+		Currency: api.BillingCurrencyCode(currency.GetCode()),
 		Settled:  balance.Settled().String(),
 		Live:     balance.Live().String(),
 		Pending:  balance.Pending().String(),
 	}
+	if currency.CustomCurrencyID != nil {
+		result.CustomCurrency = &api.CurrencyCustomReference{Id: *currency.CustomCurrencyID}
+	}
+
+	return result
 }
 
 func fromAPIBillingCreditTransactionType(filter *api.BillingCreditTransactionType) *customerbalance.CreditTransactionType {
@@ -509,6 +603,7 @@ func toAPIBillingCreditTransactions(items []customerbalance.CreditTransaction) [
 }
 
 func toAPIBillingCreditTransaction(tx customerbalance.CreditTransaction) api.BillingCreditTransaction {
+	currency := tx.CurrencyReference()
 	apiTx := api.BillingCreditTransaction{
 		Id:          tx.ID.ID,
 		CreatedAt:   tx.CreatedAt,
@@ -526,8 +621,15 @@ func toAPIBillingCreditTransaction(tx customerbalance.CreditTransaction) api.Bil
 			After:  tx.Balance.After.String(),
 		},
 	}
+	if currency.CustomCurrencyID != nil {
+		apiTx.CustomCurrency = &api.CurrencyCustomReference{Id: *currency.CustomCurrencyID}
+	}
 
 	labels := creditTransactionLabels(tx.Annotations)
+	if tx.Type == customerbalance.CreditTransactionTypeFunded && tx.GrantVoided {
+		labels["voided"] = "true"
+	}
+
 	if len(labels) > 0 {
 		apiLabels := api.Labels(labels)
 		apiTx.Labels = &apiLabels

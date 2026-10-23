@@ -92,7 +92,7 @@ func (s *DiscountsTestSuite) TestCorrelationIDHandling() {
 			billing.CreatePendingInvoiceLinesInput{
 				Customer: customerEntity.GetID(),
 				Currency: currencyx.FiatCode(currency.USD),
-				Lines: []billing.GatheringLine{
+				Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 					{
 						GatheringLineBase: billing.GatheringLineBase{
 							ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -119,7 +119,7 @@ func (s *DiscountsTestSuite) TestCorrelationIDHandling() {
 							})),
 						},
 					},
-				},
+				}),
 			})
 		s.NoError(err)
 		s.Len(res.Lines, 1)
@@ -189,6 +189,7 @@ func (s *DiscountsTestSuite) TestCorrelationIDHandling() {
 						Quantity: alpacadecimal.NewFromFloat(10),
 					},
 				}
+
 				return nil
 			},
 		})
@@ -222,7 +223,7 @@ func (s *DiscountsTestSuite) TestFlatPriceUsageDiscountIsNotPersisted() {
 	_, err := s.BillingService.CreatePendingInvoiceLines(ctx, billing.CreatePendingInvoiceLinesInput{
 		Customer: customerEntity.GetID(),
 		Currency: currencyx.FiatCode(currency.USD),
-		Lines: []billing.GatheringLine{
+		Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 			{
 				GatheringLineBase: billing.GatheringLineBase{
 					ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -246,7 +247,7 @@ func (s *DiscountsTestSuite) TestFlatPriceUsageDiscountIsNotPersisted() {
 					})),
 				},
 			},
-		},
+		}),
 	})
 
 	// then:
@@ -289,7 +290,6 @@ func (s *DiscountsTestSuite) TestUnitDiscountProgressiveBilling() {
 	// Then:
 	// - The line in the draft invoice will have 30 quantity, 30 metered quantity
 	// - The line will not have an unit line discount
-
 	namespace := "ns-discounts-usage-progressive"
 	ctx := context.Background()
 
@@ -345,7 +345,7 @@ func (s *DiscountsTestSuite) TestUnitDiscountProgressiveBilling() {
 		billing.CreatePendingInvoiceLinesInput{
 			Customer: customerEntity.GetID(),
 			Currency: currencyx.FiatCode(currency.USD),
-			Lines: []billing.GatheringLine{
+			Lines: billing.NewCreatePendingInvoiceLines([]billing.GatheringLine{
 				{
 					GatheringLineBase: billing.GatheringLineBase{
 						ManagedResource: models.NewManagedResource(models.ManagedResourceInput{
@@ -372,7 +372,7 @@ func (s *DiscountsTestSuite) TestUnitDiscountProgressiveBilling() {
 						})),
 					},
 				},
-			},
+			}),
 		})
 	s.NoError(err)
 	s.Len(res.Lines, 1)

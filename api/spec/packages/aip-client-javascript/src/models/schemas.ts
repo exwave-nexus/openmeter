@@ -499,32 +499,11 @@ export const entitlementType = z
   .enum(['metered', 'static', 'boolean'])
   .describe('The type of the entitlement.')
 
-export const createLabels = z
-  .record(z.string(), z.string())
+export const entitlementAccessExpand = z
+  .enum(['value'])
 
   .describe(
-    'Labels store metadata of an entity that can be used for filtering an entity list or for searching across entity types. Keys must be of length 1-63 characters, and cannot start with "kong", "konnect", "mesh", "kic", or "\\_".',
-  )
-
-export const creditFundingMethod = z
-  .enum(['none', 'invoice', 'external'])
-
-  .describe(
-    'The funding method describes how the grant is funded. - `none`: No funding workflow applies, for example promotional grants - `invoice`: The grant is funded by an in-system invoice flow - `external`: The grant is funded outside the system (e.g., wire transfer, external invoice, or manual reconciliation)',
-  )
-
-export const creditAvailabilityPolicy = z
-  .enum(['on_creation'])
-
-  .describe(
-    'When credits become available for consumption. - `on_creation`: Credits are available as soon as the grant is created. - `on_authorization`: Credits are available once the payment is authorized. - `on_settlement`: Credits are available once the payment is settled.',
-  )
-
-export const taxBehavior = z
-  .enum(['inclusive', 'exclusive'])
-
-  .describe(
-    'Tax behavior. This enum is used to specify whether tax is included in the price or excluded from the price.',
+    'Expands for customer entitlement access. Values: - `value`: The balance details of a metered entitlement; it sets the `value` field.',
   )
 
 export const iso8601Duration = z
@@ -540,18 +519,18 @@ export const iso8601Duration = z
     '[ISO 8601 Duration](https://docs.digi.com/resources/documentation/digidocs/90001488-13/reference/r_iso_8601_duration_format.htm) string.',
   )
 
-export const creditPurchasePaymentSettlementStatus = z
-  .enum(['pending', 'authorized', 'settled'])
+export const entitlementMeasureUsageFromPreset = z
+  .enum(['current_period_start', 'now'])
 
   .describe(
-    'Credit purchase payment settlement status. - `pending`: Payment has been initiated and is not yet authorized. - `authorized`: Payment has been authorized. - `settled`: Payment has been settled.',
+    'Preset for the time from which usage is measured. - `current_period_start`: the start of the current usage period. - `now`: the entitlement creation time.',
   )
 
-export const creditGrantStatus = z
-  .enum(['pending', 'active', 'expired', 'voided'])
+export const entitlementHistoryWindowSize = z
+  .union([z.literal('PT1H'), z.literal('P1D')])
 
   .describe(
-    'Credit grant lifecycle status. - `pending`: The credit block has been created but is not yet valid. (`effective_at` is in the future or availability_policy is not met) - `active`: The credit block is currently valid and eligible for consumption. (`effective_at` is in the past, `expires_at` is in the future and availability_policy is met) - `expired`: The credit block expired with remaining unused balance, `expires_at` time has passed. - `voided`: The credit block was voided. Remaining balance is forfeited.',
+    'The meter query granularities the usage history can be grouped into. Sub-hour windows are too expensive to compute and monthly windows are not supported.',
   )
 
 export const stringFieldFilterExact = z
@@ -580,6 +559,122 @@ export const stringFieldFilterExact = z
     'Filters on the given string field value by exact match. All properties are optional; provide exactly one to specify the comparison.',
   )
 
+export const createLabels = z
+  .record(z.string(), z.string())
+
+  .describe(
+    'Labels store metadata of an entity that can be used for filtering an entity list or for searching across entity types. Keys must be of length 1-63 characters, and cannot start with "kong", "konnect", "mesh", "kic", or "\\_".',
+  )
+
+export const creditFundingMethod = z
+  .enum(['none', 'invoice', 'external'])
+
+  .describe(
+    'The funding method describes how the grant is funded. - `none`: No funding workflow applies, for example promotional grants - `invoice`: The grant is funded by an in-system invoice flow - `external`: The grant is funded outside the system (e.g., wire transfer, external invoice, or manual reconciliation)',
+  )
+
+export const creditAvailabilityPolicy = z
+  .enum(['on_creation'])
+
+  .describe(
+    'When credits become available for consumption. - `on_creation`: Credits are available as soon as the grant is created. - `on_authorization`: Credits are available once the payment is authorized. - `on_settlement`: Credits are available once the payment is settled.',
+  )
+
+export const taxBehavior = z
+  .enum(['inclusive', 'exclusive'])
+
+  .describe(
+    'Tax behavior. This enum is used to specify whether tax is included in the price or excluded from the price.',
+  )
+
+export const createVersionFilter = z
+  .object({
+    eq: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this exact version.'),
+    oeq: z
+      .array(z.number().int().gte(-2147483648).lte(2147483647))
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('Match one of these versions.'),
+    gte: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this version and later versions.'),
+    lte: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this version and earlier versions.'),
+  })
+
+  .describe(
+    'An integer version comparison. Exactly one operator must be provided.',
+  )
+
+export const creditPurchasePaymentSettlementStatus = z
+  .enum(['pending', 'authorized', 'settled'])
+
+  .describe(
+    'Credit purchase payment settlement status. - `pending`: Payment has been initiated and is not yet authorized. - `authorized`: Payment has been authorized. - `settled`: Payment has been settled.',
+  )
+
+export const versionFilter = z
+  .object({
+    eq: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this exact version.'),
+    oeq: z
+      .array(z.number().int().gte(-2147483648).lte(2147483647))
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('Match one of these versions.'),
+    gte: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this version and later versions.'),
+    lte: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this version and earlier versions.'),
+  })
+
+  .describe(
+    'An integer version comparison. Exactly one operator must be provided.',
+  )
+
+export const creditGrantStatus = z
+  .enum(['pending', 'active', 'expired', 'voided'])
+
+  .describe(
+    'Credit grant lifecycle status. - `pending`: The credit block has been created but is not yet valid. (`effective_at` is in the future or availability_policy is not met) - `active`: The credit block is currently valid and eligible for consumption. (`effective_at` is in the past, `expires_at` is in the future and availability_policy is met) - `expired`: The credit block expired with remaining unused balance, `expires_at` time has passed. - `voided`: The credit block was voided. Remaining balance is forfeited.',
+  )
+
+export const validationIssueSeverity = z
+  .enum(['critical', 'warning'])
+  .describe('Severity level of a billing validation issue.')
+
 export const creditGrantVoidPaymentAdjustment = z
   .enum(['none'])
 
@@ -595,10 +690,18 @@ export const creditTransactionType = z
   )
 
 export const chargesExpand = z
-  .enum(['real_time_usage'])
+  .enum([
+    'real_time_usage',
+    'customer',
+    'feature',
+    'subscription',
+    'realization.invoice',
+    'realization.totals',
+    'realization.detailed_lines',
+  ])
 
   .describe(
-    "Expands for customer charges. Values: - `real_time_usage`: The charge's real-time usage.",
+    "Expands for customer charges. Values: - `real_time_usage`: The charge's real-time usage; it sets the `usage` and the `totals.realtime` fields, and fills the `outstanding` realization's `usage` with the not-yet-booked remainder of the live read. - `customer`: The complete customer entity of the charge. - `feature`: The complete feature entity of the charge. - `subscription`: The complete subscription of the charge, when present. - `realization.invoice`: The invoice header of each realization (the invoice entity without its `lines` and `customer` snapshot), in place of the ID reference. - `realization.totals`: The `totals` of each realization run, including credit allocations. - `realization.detailed_lines`: The `detailed_lines` of each realization run.",
   )
 
 export const lifecycleController = z
@@ -608,18 +711,80 @@ export const lifecycleController = z
     'Identifies whether a resource lifecycle is controlled by OpenMeter or manually overridden by the API user. Values: - `system`: The resource lifecycle is controlled by OpenMeter. - `manual`: The resource lifecycle was manually overridden by the API user.',
   )
 
-export const chargeStatus = z
-  .enum(['created', 'active', 'final', 'deleted'])
+export const subscriptionCostBasisMode = z
+  .enum(['dynamic', 'pinned'])
 
   .describe(
-    'Lifecycle status of a charge. Values: - `created`: The charge has been created but is not active yet. - `active`: The charge is active. - `final`: The charge is fully finalized and no further changes are expected. - `deleted`: The charge has been deleted.',
+    'Controls how custom-currency cost bases are selected for the subscription.',
   )
+
+export const rateCardProrationMode = z
+  .enum(['no_proration', 'prorate_prices'])
+
+  .describe(
+    'The proration mode of the rate card. Values: - `no_proration`: No proration. - `prorate_prices`: Prorate the price based on the time remaining in the billing period.',
+  )
+
+export const subscriptionStatus = z
+  .enum(['active', 'inactive', 'canceled', 'scheduled'])
+  .describe('Subscription status.')
 
 export const settlementMode = z
   .enum(['credit_then_invoice', 'credit_only'])
 
   .describe(
     'Settlement mode for billing. Values: - `credit_then_invoice`: Credits are applied first, then any remainder is invoiced. - `credit_only`: Usage is settled exclusively against credits.',
+  )
+
+export const priceFree = z
+  .object({
+    type: z.literal('free').describe('The type of the price.'),
+  })
+  .describe('Free price.')
+
+export const unitConfigOperation = z
+  .enum(['divide', 'multiply'])
+
+  .describe(
+    'The arithmetic operation used to convert raw metered units into billing units. - `divide`: Divide the metered quantity by the conversion factor (e.g., bytes ÷ 1e9 = GB). - `multiply`: Multiply the metered quantity by the conversion factor (e.g., cost × 1.2 = cost + 20% margin).',
+  )
+
+export const unitConfigRoundingMode = z
+  .enum(['ceiling', 'floor', 'half_up', 'none'])
+
+  .describe(
+    'The rounding mode applied to the converted quantity for invoicing. Rounding is applied only to the invoiced quantity. Entitlement balance checks use the precise decimal value after conversion. - `ceiling`: Round up to the next integer (typical for package-style billing). - `floor`: Round down to the previous integer. - `half_up`: Round to the nearest integer, with 0.5 rounding up. - `none`: No rounding; the converted value is used as-is.',
+  )
+
+export const pricePaymentTerm = z
+  .union([z.literal('in_advance'), z.literal('in_arrears')])
+  .describe('The payment term of a flat price.')
+
+export const rateCardStaticEntitlement = z
+  .object({
+    type: z.literal('static').describe('The type of the entitlement template.'),
+    config: z
+      .unknown()
+
+      .describe(
+        'The entitlement config as a JSON object. Returned when checking entitlement access; useful for configuring fine-grained access settings implemented in your own system.',
+      ),
+  })
+  .describe('The entitlement template of a static entitlement.')
+
+export const rateCardBooleanEntitlement = z
+  .object({
+    type: z
+      .literal('boolean')
+      .describe('The type of the entitlement template.'),
+  })
+  .describe('The entitlement template of a boolean entitlement.')
+
+export const chargeStatus = z
+  .enum(['created', 'active', 'final', 'deleted'])
+
+  .describe(
+    'Lifecycle status of a charge. Values: - `created`: The charge has been created but is not active yet. - `active`: The charge is active. - `final`: The charge is fully finalized and no further changes are expected. - `deleted`: The charge has been deleted.',
   )
 
 export const taxConfigStripe = z
@@ -643,213 +808,6 @@ export const taxConfigExternalInvoicing = z
   })
   .describe('External invoicing tax config.')
 
-export const pricePaymentTerm = z
-  .union([z.literal('in_advance'), z.literal('in_arrears')])
-  .describe('The payment term of a flat price.')
-
-export const chargeFlatFeeDiscounts = z
-  .object({
-    percentage: z
-      .number()
-      .nonnegative()
-      .lte(100)
-      .optional()
-      .describe('Percentage discount applied to the price (0–100).'),
-  })
-
-  .describe(
-    'Discounts applicable to flat fee charges. This is the same as `ProductCatalog.Discounts` but without the `usage` field, which is not applicable to flat fee charges.',
-  )
-
-export const rateCardProrationMode = z
-  .enum(['no_proration', 'prorate_prices'])
-
-  .describe(
-    'The proration mode of the rate card. Values: - `no_proration`: No proration. - `prorate_prices`: Prorate the price based on the time remaining in the billing period.',
-  )
-
-export const priceFree = z
-  .object({
-    type: z.literal('free').describe('The type of the price.'),
-  })
-  .describe('Free price.')
-
-export const subscriptionCostBasisMode = z
-  .enum(['dynamic', 'pinned'])
-
-  .describe(
-    'Controls how custom-currency cost bases are selected for the subscription.',
-  )
-
-export const subscriptionStatus = z
-  .enum(['active', 'inactive', 'canceled', 'scheduled'])
-  .describe('Subscription status.')
-
-export const subscriptionEditTimingEnum = z
-  .enum(['immediate', 'next_billing_cycle'])
-
-  .describe(
-    'Subscription edit timing. When immediate, the requested changes take effect immediately. When next_billing_cycle, the requested changes take effect at the next billing cycle.',
-  )
-
-export const unitConfigOperation = z
-  .enum(['divide', 'multiply'])
-
-  .describe(
-    'The arithmetic operation used to convert raw metered units into billing units. - `divide`: Divide the metered quantity by the conversion factor (e.g., bytes ÷ 1e9 = GB). - `multiply`: Multiply the metered quantity by the conversion factor (e.g., cost × 1.2 = cost + 20% margin).',
-  )
-
-export const unitConfigRoundingMode = z
-  .enum(['ceiling', 'floor', 'half_up', 'none'])
-
-  .describe(
-    'The rounding mode applied to the converted quantity for invoicing. Rounding is applied only to the invoiced quantity. Entitlement balance checks use the precise decimal value after conversion. - `ceiling`: Round up to the next integer (typical for package-style billing). - `floor`: Round down to the previous integer. - `half_up`: Round to the nearest integer, with 0.5 rounding up. - `none`: No rounding; the converted value is used as-is.',
-  )
-
-export const rateCardStaticEntitlement = z
-  .object({
-    type: z.literal('static').describe('The type of the entitlement template.'),
-    config: z
-      .unknown()
-
-      .describe(
-        'The entitlement config as a JSON object. Returned when checking entitlement access; useful for configuring fine-grained access settings implemented in your own system.',
-      ),
-  })
-  .describe('The entitlement template of a static entitlement.')
-
-export const rateCardBooleanEntitlement = z
-  .object({
-    type: z
-      .literal('boolean')
-      .describe('The type of the entitlement template.'),
-  })
-  .describe('The entitlement template of a boolean entitlement.')
-
-export const appType = z
-  .enum(['sandbox', 'stripe', 'external_invoicing'])
-  .describe('The type of the app.')
-
-export const appCapabilityType = z
-  .enum([
-    'report_usage',
-    'report_events',
-    'calculate_tax',
-    'invoice_customers',
-    'collect_payments',
-  ])
-
-  .describe(
-    'Supported capability types for an App. Each capability defines an integration function that an App can perform.',
-  )
-
-export const appInstallMethods = z
-  .enum(['with_oauth2', 'with_api_key', 'no_credentials_required'])
-  .describe('Supported installation methods for an app.')
-
-export const appStatus = z
-  .enum(['ready', 'unauthorized'])
-  .describe('Connection status of an installed app.')
-
-export const updateLabels = z
-  .record(z.string(), z.string())
-
-  .describe(
-    'Labels store metadata of an entity that can be used for filtering an entity list or for searching across entity types. Keys must be of length 1-63 characters, and cannot start with "kong", "konnect", "mesh", "kic", or "\\_".',
-  )
-
-export const installAppStripeWithApiKey = z
-  .object({
-    type: z.literal('stripe').describe('Type of the app.'),
-    name: z.string().describe('Name of the app.'),
-    createBillingProfile: z
-      .boolean()
-
-      .describe(
-        'If true, a billing profile will be created for the app. The Stripe app will be also set as the default billing profile if the current default is a Sandbox app.',
-      ),
-    apiKey: z.string().describe('API key for the app.'),
-  })
-  .describe('Model for installing an app from the catalog with an API key.')
-
-export const installAppSandbox = z
-  .object({
-    type: z.literal('sandbox').describe('Type of the app.'),
-    name: z.string().describe('Name of the app.'),
-    createBillingProfile: z
-      .boolean()
-
-      .describe(
-        'If true, a billing profile will be created for the app. The Stripe app will be also set as the default billing profile if the current default is a Sandbox app.',
-      ),
-  })
-  .describe('Base model for installing an app from the catalog.')
-
-export const installAppExternalInvoicing = z
-  .object({
-    type: z.literal('external_invoicing').describe('Type of the app.'),
-    name: z.string().describe('Name of the app.'),
-    createBillingProfile: z
-      .boolean()
-
-      .describe(
-        'If true, a billing profile will be created for the app. The Stripe app will be also set as the default billing profile if the current default is a Sandbox app.',
-      ),
-  })
-  .describe('Base model for installing an app from the catalog.')
-
-export const taxIdentificationCode = z
-  .string()
-  .min(1)
-  .max(32)
-
-  .describe(
-    'Tax identifier code is a normalized tax code shown on the original identity document.',
-  )
-
-export const workflowCollectionAlignmentSubscription = z
-  .object({
-    type: z.literal('subscription').describe('The type of alignment.'),
-  })
-
-  .describe(
-    'BillingWorkflowCollectionAlignmentSubscription specifies the alignment for collecting the pending line items into an invoice.',
-  )
-
-export const workflowInvoicingSubscriptionEndProrationMode = z
-  .enum(['bill_full_period', 'bill_actual_period'])
-  .describe('Billing workflow subscription end proration mode.')
-
-export const workflowPaymentChargeAutomaticallySettings = z
-  .object({
-    collectionMethod: z
-      .literal('charge_automatically')
-      .describe('The collection method for the invoice.'),
-  })
-
-  .describe(
-    'Payment settings for a billing workflow when the collection method is charge automatically.',
-  )
-
-export const workflowPaymentSendInvoiceSettings = z
-  .object({
-    collectionMethod: z
-      .literal('send_invoice')
-      .describe('The collection method for the invoice.'),
-    dueAfter: z
-      .string()
-      .optional()
-      .default('P30D')
-
-      .describe(
-        "The period after which the invoice is due. With some payment solutions it's only applicable for manual collection method.",
-      ),
-  })
-
-  .describe(
-    'Payment settings for a billing workflow when the collection method is send invoice.',
-  )
-
 export const invoiceNumber = z
   .string()
   .min(1)
@@ -859,9 +817,14 @@ export const invoiceNumber = z
     'InvoiceNumber is a unique identifier for the invoice, generated by the invoicing app. The uniqueness depends on a lot of factors: - app setting (unique per app or unique per customer) - multiple app scenarios (multiple apps generating invoices with the same prefix)',
   )
 
-export const invoiceValidationIssueSeverity = z
-  .enum(['critical', 'warning'])
-  .describe('Severity level of an invoice validation issue.')
+export const taxIdentificationCode = z
+  .string()
+  .min(1)
+  .max(32)
+
+  .describe(
+    'Tax identifier code is a normalized tax code shown on the original identity document.',
+  )
 
 export const invoiceExternalReferences = z
   .object({
@@ -942,6 +905,227 @@ export const invoiceWorkflowInvoicingSettings = z
   .describe(
     'Invoice-level invoicing settings. A subset of BillingWorkflowInvoicingSettings limited to fields that are meaningful per-invoice. progressive_billing is omitted as it is a gather-time / profile-level decision.',
   )
+
+export const workflowPaymentChargeAutomaticallySettings = z
+  .object({
+    collectionMethod: z
+      .literal('charge_automatically')
+      .describe('The collection method for the invoice.'),
+  })
+
+  .describe(
+    'Payment settings for a billing workflow when the collection method is charge automatically.',
+  )
+
+export const workflowPaymentSendInvoiceSettings = z
+  .object({
+    collectionMethod: z
+      .literal('send_invoice')
+      .describe('The collection method for the invoice.'),
+    dueAfter: z
+      .string()
+      .optional()
+      .default('P30D')
+
+      .describe(
+        "The period after which the invoice is due. With some payment solutions it's only applicable for manual collection method.",
+      ),
+  })
+
+  .describe(
+    'Payment settings for a billing workflow when the collection method is send invoice.',
+  )
+
+export const chargeRealizationType = z
+  .enum(['final_realization', 'partial_invoice', 'outstanding', 'voided'])
+
+  .describe(
+    "Type of a charge realization run. Values: - `final_realization`: The run is the final realization of the charge for its service period; no further runs are expected to correct it. - `partial_invoice`: The run only realizes part of the charge, because the remainder is not yet due to be invoiced. - `outstanding`: The type an outstanding (not-yet-realized) projection would carry if it were realized now. Never returned on a booked realization run. - `voided`: The run's billing effect was undone (for example the charge's service period was extended while its invoice was still mutable); it is retained as audit history and excluded from aggregate and live calculations.",
+  )
+
+export const chargeRealizationPaymentStatus = z
+  .enum(['authorized', 'settled'])
+
+  .describe(
+    "Settlement status of a charge realization's payment. Values: - `authorized`: The payment has been authorized against the customer's ledger but has not settled yet. - `settled`: The payment has settled.",
+  )
+
+export const chargeRealizationDetailedLineCategory = z
+  .enum(['regular', 'commitment'])
+
+  .describe(
+    'Cost category of a charge realization detailed line. Values: - `regular`: A regular charge line, based on usage or subscription pricing. - `commitment`: A commitment-derived line, such as minimum spend.',
+  )
+
+export const chargeFlatFeeDiscounts = z
+  .object({
+    percentage: z
+      .number()
+      .nonnegative()
+      .lte(100)
+      .optional()
+      .describe('Percentage discount applied to the price (0–100).'),
+  })
+
+  .describe(
+    'Discounts applicable to flat fee charges. This is the same as `ProductCatalog.Discounts` but without the `usage` field, which is not applicable to flat fee charges.',
+  )
+
+export const featureLlmTokenType = z
+  .enum([
+    'input',
+    'output',
+    'cache_read',
+    'cache_write',
+    'reasoning',
+    'request',
+    'response',
+  ])
+  .describe('Token type for LLM cost lookup.')
+
+export const subscriptionCreateTimingEnum = z
+  .enum(['immediate'])
+
+  .describe(
+    'Subscription create timing. Only immediate is supported as an enum value — unlike edit timing, next_billing_cycle is not accepted on create, since a new subscription has no current billing cycle to schedule against.',
+  )
+
+export const subscriptionEditTimingEnum = z
+  .enum(['immediate', 'next_billing_cycle'])
+
+  .describe(
+    'Subscription edit timing. When immediate, the requested changes take effect immediately. When next_billing_cycle, the requested changes take effect at the next billing cycle.',
+  )
+
+export const subscriptionEditRemoveItem = z
+  .object({
+    type: z
+      .literal('remove_item')
+      .describe('Discriminator for the remove-item operation.'),
+    phaseKey: z
+      .string()
+      .describe('The key of the phase to remove the item from.'),
+    itemKey: z.string().describe('The key of the item to remove.'),
+  })
+  .describe('Remove a rate card from a phase.')
+
+export const subscriptionRemovePhaseShifting = z
+  .enum(['next', 'prev'])
+
+  .describe(
+    "The direction to shift surrounding phases when a phase is removed. - `next`: Shift all subsequent phases to start sooner by the removed phase's length. - `prev`: Extend the previous phase to end later by the removed phase's length.",
+  )
+
+export const subscriptionEditUnscheduleEdit = z
+  .object({
+    type: z
+      .literal('unschedule_edit')
+      .describe('Discriminator for the unschedule-edit operation.'),
+  })
+
+  .describe(
+    'Discard any scheduled edits on the current phase, reverting it to its previously persisted state.',
+  )
+
+export const appType = z
+  .enum(['sandbox', 'stripe', 'external_invoicing'])
+  .describe('The type of the app.')
+
+export const appCapabilityType = z
+  .enum([
+    'report_usage',
+    'report_events',
+    'calculate_tax',
+    'invoice_customers',
+    'collect_payments',
+  ])
+
+  .describe(
+    'Supported capability types for an App. Each capability defines an integration function that an App can perform.',
+  )
+
+export const appInstallMethods = z
+  .enum(['with_oauth2', 'with_api_key', 'no_credentials_required'])
+  .describe('Supported installation methods for an app.')
+
+export const appStatus = z
+  .enum(['ready', 'unauthorized'])
+  .describe('Connection status of an installed app.')
+
+export const appActionType = z
+  .enum(['reconcile_webhook_events'])
+  .describe('App action type.')
+
+export const updateLabels = z
+  .record(z.string(), z.string())
+
+  .describe(
+    'Labels store metadata of an entity that can be used for filtering an entity list or for searching across entity types. Keys must be of length 1-63 characters, and cannot start with "kong", "konnect", "mesh", "kic", or "\\_".',
+  )
+
+export const appReconcileWebhookEventsActionRequest = z
+  .object({
+    actionType: z
+      .literal('reconcile_webhook_events')
+      .describe('The action to execute.'),
+  })
+
+  .describe(
+    "Request to reconcile the app's webhook events with the latest supported event set.",
+  )
+
+export const installAppStripeWithApiKey = z
+  .object({
+    type: z.literal('stripe').describe('Type of the app.'),
+    name: z.string().describe('Name of the app.'),
+    createBillingProfile: z
+      .boolean()
+
+      .describe(
+        'If true, a billing profile will be created for the app. The Stripe app will be also set as the default billing profile if the current default is a Sandbox app.',
+      ),
+    apiKey: z.string().describe('API key for the app.'),
+  })
+  .describe('Model for installing an app from the catalog with an API key.')
+
+export const installAppSandbox = z
+  .object({
+    type: z.literal('sandbox').describe('Type of the app.'),
+    name: z.string().describe('Name of the app.'),
+    createBillingProfile: z
+      .boolean()
+
+      .describe(
+        'If true, a billing profile will be created for the app. The Stripe app will be also set as the default billing profile if the current default is a Sandbox app.',
+      ),
+  })
+  .describe('Base model for installing an app from the catalog.')
+
+export const installAppExternalInvoicing = z
+  .object({
+    type: z.literal('external_invoicing').describe('Type of the app.'),
+    name: z.string().describe('Name of the app.'),
+    createBillingProfile: z
+      .boolean()
+
+      .describe(
+        'If true, creates the Auto Collection preset with an OpenMeter supplier in the US (postal code 94114), without replacing the default profile.',
+      ),
+  })
+  .describe('Model for installing an External Invoicing app from the catalog.')
+
+export const workflowCollectionAlignmentSubscription = z
+  .object({
+    type: z.literal('subscription').describe('The type of alignment.'),
+  })
+
+  .describe(
+    'BillingWorkflowCollectionAlignmentSubscription specifies the alignment for collecting the pending line items into an invoice.',
+  )
+
+export const workflowInvoicingSubscriptionEndProrationMode = z
+  .enum(['bill_full_period', 'bill_actual_period'])
+  .describe('Billing workflow subscription end proration mode.')
 
 export const invoiceDiscountReason = z
   .enum(['maximum_spend', 'ratecard_percentage', 'ratecard_usage'])
@@ -1036,18 +1220,6 @@ export const currencyExpand = z
   .describe(
     "Expands for currencies. Values: - `cost_basis`: The currency's active and scheduled cost basis.",
   )
-
-export const featureLlmTokenType = z
-  .enum([
-    'input',
-    'output',
-    'cache_read',
-    'cache_write',
-    'reasoning',
-    'request',
-    'response',
-  ])
-  .describe('Token type for LLM cost lookup.')
 
 export const llmCostProvider = z
   .object({
@@ -1148,6 +1320,80 @@ export const entitlementFeatureAccessReasonCode = z
 export const entitlementAccessQueryErrorCode = z
   .enum(['unknown', 'customer_not_found'])
   .describe('Error code for an entitlement access query failure.')
+
+export const booleanFieldFilter = z
+  .union([
+    z.boolean(),
+    z.object({
+      eq: z
+        .boolean()
+        .describe('Value strictly equals the given boolean value.'),
+    }),
+  ])
+  .describe('Filter by a boolean value (true/false).')
+
+export const notificationChannelType = z
+  .enum(['webhook'])
+
+  .describe(
+    'The type of a notification channel. Currently the only supported channel type is `webhook`; the domain model anticipates additional channel types (e.g. email, Slack) in the future, so this is modeled as an enum rather than a boolean/constant even though it has a single member today.',
+  )
+
+export const notificationBalanceThresholdType = z
+  .enum(['balance_value', 'usage_percentage', 'usage_value'])
+  .describe('What a balance threshold is measured against.')
+
+export const notificationEventType = z
+  .enum([
+    'entitlements.balance.threshold',
+    'entitlements.reset',
+    'invoice.created',
+    'invoice.updated',
+  ])
+
+  .describe(
+    'The type of a notification event. It determines which payload variant the event carries.',
+  )
+
+export const notificationEventDeliveryState = z
+  .enum(['success', 'failed', 'sending', 'pending', 'resending'])
+  .describe('The delivery state of a notification event for a single channel.')
+
+export const notificationEventDeliveryAttemptResponse = z
+  .object({
+    statusCode: z
+      .number()
+      .int()
+      .gte(-2147483648)
+      .lte(2147483647)
+      .optional()
+
+      .describe(
+        'The HTTP status code returned by the recipient. Absent when no response was received.',
+      ),
+    body: z
+      .string()
+
+      .describe(
+        'The response body returned by the recipient. Empty when no body was received.',
+      ),
+    durationMs: z.coerce
+      .bigint()
+      .gte(-9223372036854775808n)
+      .lte(9223372036854775807n)
+      .describe('How long the delivery attempt took, in milliseconds.'),
+    url: z
+      .string()
+      .optional()
+
+      .describe(
+        'The URL the event was delivered to. Only set for webhook channels.',
+      ),
+  })
+
+  .describe(
+    'The response the recipient returned for a delivery attempt. For webhook channels this is the HTTP response.',
+  )
 
 export const queryFilterInteger = z
   .object({
@@ -1296,17 +1542,6 @@ export const publicLabels = z
     'Public labels store information about an entity that can be used for filtering a list of objects.',
   )
 
-export const booleanFieldFilter = z
-  .union([
-    z.boolean(),
-    z.object({
-      eq: z
-        .boolean()
-        .describe('Value strictly equals the given boolean value.'),
-    }),
-  ])
-  .describe('Filter by a boolean value (true/false).')
-
 export const numericFieldFilter = z
   .union([
     z.number(),
@@ -1349,6 +1584,10 @@ export const numericFieldFilter = z
     'Filter by a numeric value. All properties are optional; provide exactly one to specify the comparison.',
   )
 
+export const chargeCostBasisType = z
+  .enum(['dynamic', 'pinned', 'manual'])
+  .describe('Cost basis resolution mode of a charge.')
+
 export const chargeType = z
   .enum(['flat_fee', 'usage_based'])
 
@@ -1371,13 +1610,6 @@ export const priceType = z
     "The type of the price. - `free`: No charge, the rate card is included at no cost. - `flat`: A fixed amount charged once per billing period, regardless of usage. - `unit`: A fixed rate charged per billing unit consumed. - `graduated`: Tiered pricing where each tier's rate applies only to usage within that tier. - `volume`: Tiered pricing where the rate for the highest tier reached applies to all units in the period.",
   )
 
-export const collectionAlignment = z
-  .enum(['subscription', 'anchored'])
-
-  .describe(
-    'BillingCollectionAlignment specifies when the pending line items should be collected into an invoice.',
-  )
-
 export const collectionMethod = z
   .enum(['charge_automatically', 'send_invoice'])
 
@@ -1385,9 +1617,30 @@ export const collectionMethod = z
     'Collection method specifies how the invoice should be collected (automatic or manual).',
   )
 
+export const collectionAlignment = z
+  .enum(['subscription', 'anchored'])
+
+  .describe(
+    'BillingCollectionAlignment specifies when the pending line items should be collected into an invoice.',
+  )
+
 export const featureUnitCostType = z
   .enum(['llm', 'manual'])
   .describe('The type of unit cost.')
+
+export const subscriptionEditOperationType = z
+  .enum([
+    'add_item',
+    'remove_item',
+    'add_phase',
+    'remove_phase',
+    'stretch_phase',
+    'unschedule_edit',
+  ])
+
+  .describe(
+    'The type of a subscription edit operation. - `add_item`: Add a rate card to a phase. - `remove_item`: Remove a rate card from a phase. - `add_phase`: Add a new phase to the subscription. - `remove_phase`: Remove a phase from the subscription. - `stretch_phase`: Extend the duration of a phase. - `unschedule_edit`: Discard scheduled edits on the current phase.',
+  )
 
 export const systemAccountAccessToken = z
   .object({
@@ -1462,6 +1715,24 @@ export const appCustomerDataExternalInvoicing = z
     labels: labels.optional(),
   })
   .describe('External invoicing customer data.')
+
+export const createChargeCostBasisDynamic = z
+  .object({
+    type: z
+      .literal('dynamic')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiatCurrency: currencyCode,
+  })
+  .describe("Cost basis resolved at the charge's full service period start.")
+
+export const chargeCostBasisDynamic = z
+  .object({
+    type: z
+      .literal('dynamic')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiatCurrency: currencyCode,
+  })
+  .describe("Cost basis resolved at the charge's full service period start.")
 
 export const currencyFiat = z
   .object({
@@ -1572,12 +1843,90 @@ export const createCurrencyCustomRequest = z
   })
   .describe('CurrencyCustom create request.')
 
-export const currencyAmount = z
+export const entitlementAccessValue = z
+  .object({
+    balance: numeric,
+    usage: numeric,
+    overage: numeric,
+    totalAvailableGrantAmount: numeric,
+    grantBalances: z
+      .record(z.string(), numeric)
+      .describe('The remaining balance of each grant, keyed by grant ID.'),
+  })
+
+  .describe(
+    'Balance details of a metered entitlement at the evaluation time, which is the `at` query parameter when given and the current time otherwise.',
+  )
+
+export const entitlementIssueAfterReset = z
   .object({
     amount: numeric,
-    currency: currencyCode,
+    priority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(255)
+      .optional()
+      .default(1)
+
+      .describe(
+        'The priority of the grant created after each reset. Lower values have higher priority.',
+      ),
   })
-  .describe('Monetary amount in a specific currency.')
+
+  .describe(
+    'Usage granted automatically after each reset of a metered entitlement. The balance returns to `amount` after every reset.',
+  )
+
+export const entitlementBurndownBalance = z
+  .object({
+    start: numeric,
+    end: numeric,
+  })
+  .describe('Entitlement balance at the boundaries of a burndown segment.')
+
+export const entitlementBurndownGrantBalances = z
+  .object({
+    start: z
+      .record(z.string(), numeric)
+
+      .describe(
+        'The balance of each active grant at the start of the segment.',
+      ),
+    end: z
+      .record(z.string(), numeric)
+      .describe('The balance of each active grant at the end of the segment.'),
+  })
+
+  .describe(
+    'Grant balances at the boundaries of a burndown segment, keyed by grant ID.',
+  )
+
+export const createChargeCostBasisManual = z
+  .object({
+    type: z
+      .literal('manual')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiatCurrency: currencyCode.optional(),
+    rate: numeric,
+  })
+
+  .describe(
+    'Cost basis with an explicit conversion rate supplied with the charge.',
+  )
+
+export const chargeCostBasisManual = z
+  .object({
+    type: z
+      .literal('manual')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiatCurrency: currencyCode.optional(),
+    rate: numeric,
+  })
+
+  .describe(
+    'Cost basis with an explicit conversion rate supplied with the charge.',
+  )
 
 export const priceFlat = z
   .object({
@@ -1593,7 +1942,17 @@ export const priceUnit = z
   })
 
   .describe(
-    'Unit price. Charges a fixed rate per billing unit. When UnitConfig is present on the rate card, billing units are the converted quantities (e.g. GB instead of bytes).',
+    'Unit price. Charges a fixed rate per billing unit. When UnitConfig is present on the object, billing units are the converted quantities (e.g. GB instead of bytes).',
+  )
+
+export const spendCommitments = z
+  .object({
+    minimumAmount: numeric.optional(),
+    maximumAmount: numeric.optional(),
+  })
+
+  .describe(
+    'Spend commitments for a usage-based price. The customer is committed to spend at least the minimum amount and at most the maximum amount.',
   )
 
 export const rateCardDiscounts = z
@@ -1624,15 +1983,60 @@ export const totals = z
     'Totals contains the summaries of all calculations for a billing resource.',
   )
 
-export const spendCommitments = z
+export const chargeRealizationDetailedLineCreditApplied = z
   .object({
-    minimumAmount: numeric.optional(),
-    maximumAmount: numeric.optional(),
+    amount: numeric,
+    description: z
+      .string()
+      .optional()
+      .describe('Human-readable description of the credit allocation.'),
+    creditRealizationId: z
+      .string()
+
+      .describe(
+        'The ID of the credit realization (allocation) this credit was applied from.',
+      ),
   })
 
   .describe(
-    'Spend commitments for a rate card. The customer is committed to spend at least the minimum amount and at most the maximum amount.',
+    'A credit allocation applied to a charge realization detailed line.',
   )
+
+export const chargeRealizationAmountDiscount = z
+  .object({
+    amount: numeric,
+    reason: z
+      .string()
+      .describe('The reason for the discount applied to the charge.'),
+    description: z
+      .string()
+      .optional()
+      .describe('Optional human-readable description of the discount.'),
+    roundingAmount: numeric.optional(),
+    childUniqueReferenceId: z
+      .string()
+      .describe('Unique reference ID of the discount applied to the charge.'),
+  })
+  .describe('A discount applied to a charge realization detailed line.')
+
+export const featureManualUnitCost = z
+  .object({
+    type: z
+      .literal('manual')
+      .describe('The type discriminator for manual unit cost.'),
+    amount: numeric,
+  })
+  .describe('A fixed per-unit cost amount.')
+
+export const featureLlmUnitCostPricing = z
+  .object({
+    inputPerToken: numeric,
+    outputPerToken: numeric,
+    cacheReadPerToken: numeric.optional(),
+    reasoningPerToken: numeric.optional(),
+    cacheWritePerToken: numeric.optional(),
+  })
+  .describe('Resolved per-token pricing from the LLM cost database.')
 
 export const invoiceLineCreditsApplied = z
   .object({
@@ -1676,7 +2080,7 @@ export const updatePriceUnit = z
   })
 
   .describe(
-    'Unit price. Charges a fixed rate per billing unit. When UnitConfig is present on the rate card, billing units are the converted quantities (e.g. GB instead of bytes).',
+    'Unit price. Charges a fixed rate per billing unit. When UnitConfig is present on the object, billing units are the converted quantities (e.g. GB instead of bytes).',
   )
 
 export const updateDiscounts = z
@@ -1691,25 +2095,6 @@ export const updateDiscounts = z
   })
   .describe('Discount configuration for a rate card.')
 
-export const featureManualUnitCost = z
-  .object({
-    type: z
-      .literal('manual')
-      .describe('The type discriminator for manual unit cost.'),
-    amount: numeric,
-  })
-  .describe('A fixed per-unit cost amount.')
-
-export const featureLlmUnitCostPricing = z
-  .object({
-    inputPerToken: numeric,
-    outputPerToken: numeric,
-    cacheReadPerToken: numeric.optional(),
-    reasoningPerToken: numeric.optional(),
-    cacheWritePerToken: numeric.optional(),
-  })
-  .describe('Resolved per-token pricing from the LLM cost database.')
-
 export const llmCostModelPricing = z
   .object({
     inputPerToken: numeric,
@@ -1719,6 +2104,13 @@ export const llmCostModelPricing = z
     reasoningPerToken: numeric.optional(),
   })
   .describe('Token pricing for an LLM model, denominated per token.')
+
+export const fiatCurrencyAmount = z
+  .object({
+    amount: numeric,
+    currency: currencyCode,
+  })
+  .describe('Monetary amount in a specific fiat currency.')
 
 export const queryFilterNumeric = z
   .object({
@@ -1810,11 +2202,50 @@ export const profileReference = z
   })
   .describe('Billing profile reference.')
 
+export const featureReference = z
+  .object({
+    id: ulid,
+  })
+  .describe('Feature reference.')
+
+export const entitlementGrantUsage = z
+  .object({
+    grantId: ulid,
+    usage: numeric,
+  })
+  .describe('Usage taken from a single grant.')
+
+export const createChargeCostBasisPinned = z
+  .object({
+    type: z
+      .literal('pinned')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiatCurrency: currencyCode,
+    costBasisId: ulid,
+  })
+
+  .describe(
+    'Cost basis pinned to a specific cost basis resource of the custom currency.',
+  )
+
 export const createResourceReference = z
   .object({
     id: ulid,
   })
   .describe('TaxCode reference.')
+
+export const chargeCostBasisPinned = z
+  .object({
+    type: z
+      .literal('pinned')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiatCurrency: currencyCode,
+    costBasisId: ulid,
+  })
+
+  .describe(
+    'Cost basis pinned to a specific cost basis resource of the custom currency.',
+  )
 
 export const taxCodeReference = z
   .object({
@@ -1834,15 +2265,33 @@ export const creditGrantInvoiceReference = z
   })
   .describe('Invoice references for the grant.')
 
-export const billingCustomerReference = z
+export const currencyCustomReference = z
   .object({
     id: ulid,
   })
-  .describe('Customer reference.')
+  .describe('CurrencyCustom reference.')
+
+export const subscriptionCostBasisPin = z
+  .object({
+    customCurrencyId: ulid,
+    invoiceCurrency: currencyCode,
+    costBasisId: ulid,
+  })
+
+  .describe(
+    'A cost basis pinned to a custom-currency pair for the subscription.',
+  )
 
 export const subscriptionReference = z
   .object({
     id: ulid,
+    name: z
+      .string()
+      .optional()
+
+      .describe(
+        'The display name of the subscription. Only populated where the referencing endpoint documents a `subscription` expand that resolves it.',
+      ),
     phase: z
       .object({
         id: ulid,
@@ -1859,34 +2308,23 @@ export const subscriptionReference = z
     'Subscription reference represents a reference to the specific subscription item this entity represents.',
   )
 
-export const subscriptionCostBasisPin = z
+export const appReference = z
   .object({
-    customCurrencyId: ulid,
-    invoiceCurrency: currencyCode,
-    costBasisId: ulid,
+    id: ulid,
   })
+  .describe('App reference.')
 
-  .describe(
-    'A cost basis pinned to a custom-currency pair for the subscription.',
-  )
+export const chargeRealizationInvoiceReference = z
+  .object({
+    id: ulid,
+  })
+  .describe('ChargeRealizationInvoice reference.')
 
 export const addonReference = z
   .object({
     id: ulid,
   })
   .describe('Addon reference.')
-
-export const featureReference = z
-  .object({
-    id: ulid,
-  })
-  .describe('Feature reference.')
-
-export const appReference = z
-  .object({
-    id: ulid,
-  })
-  .describe('App reference.')
 
 export const chargeReference = z
   .object({
@@ -1899,6 +2337,71 @@ export const updateResourceReference = z
     id: ulid,
   })
   .describe('TaxCode reference.')
+
+export const notificationChannelReference = z
+  .object({
+    id: ulid,
+  })
+  .describe('NotificationChannel reference.')
+
+export const notificationEventFeatureReference = z
+  .object({
+    id: ulid,
+    key: z.string().describe('The immutable key of the feature.'),
+  })
+  .describe('A reference to the feature of an entitlement notification event.')
+
+export const notificationEventInvoiceReference = z
+  .object({
+    id: ulid,
+    number: z.string().describe('The human-readable invoice number.'),
+  })
+  .describe('A reference to the invoice of an invoice notification event.')
+
+export const resendBillingNotificationEventRequest = z
+  .object({
+    channels: z
+      .array(ulid)
+      .optional()
+
+      .describe(
+        'The channels to resend the event to. When omitted or empty, the event is resent to every enabled channel of the rule. Channels not targeted by the rule or disabled are rejected.',
+      ),
+  })
+  .describe('Request body for resending a notification event.')
+
+export const billingCustomerReference = z
+  .object({
+    id: ulid,
+    name: z
+      .string()
+      .optional()
+
+      .describe(
+        'The display name of the customer. Only populated where the referencing endpoint documents a `customer` expand that resolves it.',
+      ),
+  })
+  .describe('Customer reference.')
+
+export const chargeFeature = z
+  .object({
+    id: ulid,
+    key: z
+      .string()
+      .optional()
+      .describe('The key of the feature. Requires the `feature` expand.'),
+    name: z
+      .string()
+      .optional()
+
+      .describe(
+        'The display name of the feature. Requires the `feature` expand.',
+      ),
+  })
+
+  .describe(
+    'The feature associated with a charge. `key` is always present and is set at charge creation time. `id` and `name` are only resolved with the `feature` expand, since resolving them requires an additional lookup against the feature catalog.',
+  )
 
 export const dateTimeFieldFilter = z
   .union([
@@ -2044,6 +2547,39 @@ export const closedPeriod = z
 
   .describe(
     'A period with defined start and end dates. The period is always inclusive at the start and exclusive at the end.',
+  )
+
+export const resetCustomerEntitlementUsageRequest = z
+  .object({
+    effectiveAt: dateTime.optional(),
+    retainAnchor: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the usage period anchor is kept. When false, the anchor moves to `effective_at`.',
+      ),
+    preserveOverage: z
+      .boolean()
+      .optional()
+
+      .describe(
+        "Whether overage carries over into the new usage period. Defaults to the entitlement's own setting.",
+      ),
+  })
+  .describe('Request body for resetting the usage of a metered entitlement.')
+
+export const chargeResolvedCostBasis = z
+  .object({
+    fiatCurrency: currencyCode,
+    rate: numeric,
+    costBasisId: ulid.optional(),
+    resolvedAt: dateTime,
+  })
+
+  .describe(
+    'Fiat conversion rate a custom-currency charge is invoiced at. Present once the cost basis is resolved; dynamic cost bases are exposed only after the service period has started.',
   )
 
 export const subscriptionAddonTimelineSegment = z
@@ -2335,29 +2871,16 @@ export const notImplemented = baseError.describe('Not Implemented.')
 
 export const notAvailable = baseError.describe('Not Available.')
 
-export const createCreditGrantFilters = z
+export const subscriptionPlanReference = z
   .object({
-    features: z
-      .array(resourceKey)
-      .optional()
-
-      .describe(
-        'Limit the credit grant to specific features. If no features are specified, the credit grant can be used for any feature.',
-      ),
+    id: ulid,
+    key: resourceKey,
+    version: z.number().int().gte(1).describe('The plan version.'),
   })
-  .describe('Filters for the credit grant.')
 
-export const creditGrantFilters = z
-  .object({
-    features: z
-      .array(resourceKey)
-      .optional()
-
-      .describe(
-        'Limit the credit grant to specific features. If no features are specified, the credit grant can be used for any feature.',
-      ),
-  })
-  .describe('Filters for the credit grant.')
+  .describe(
+    'A reference to the plan a subscription was created from, pinned to an exact revision.',
+  )
 
 export const upsertPlanAddonRequest = z
   .object({
@@ -2744,10 +3267,8 @@ export const customerStripeCreateCustomerPortalSessionRequest = z
     'Request to create a Stripe Customer Portal Session for the customer. Useful to redirect the customer to the Stripe Customer Portal to manage their payment methods, change their billing address and access their invoice history. Only returns URL if the customer billing profile is linked to a stripe app and customer.',
   )
 
-export const entitlementAccessResult = z
+export const entitlementAccessCheckResult = z
   .object({
-    type: entitlementType,
-    featureKey: resourceKey,
     hasAccess: z
       .boolean()
 
@@ -2761,18 +3282,26 @@ export const entitlementAccessResult = z
       .describe(
         'Only available for static entitlements. Config is the JSON parsable configuration of the entitlement. Useful to describe per customer configuration.',
       ),
+    type: entitlementType.optional(),
   })
-  .describe('Entitlement access result.')
+  .describe('Entitlement access check result.')
 
-export const createCreditGrantPurchase = z
+export const recurringPeriodInput = z
   .object({
-    currency: currencyCode,
-    perUnitCostBasis: numeric.optional().default('1.0'),
-    availabilityPolicy: creditAvailabilityPolicy
-      .optional()
-      .default('on_creation'),
+    interval: iso8601Duration,
+    anchor: dateTime.optional(),
   })
-  .describe('Purchase and payment terms of the grant.')
+
+  .describe(
+    'Recurring period input. The anchor is optional; the owning resource defines the default, typically its creation time.',
+  )
+
+export const recurringPeriod = z
+  .object({
+    anchor: dateTime,
+    interval: iso8601Duration,
+  })
+  .describe('Recurring period with an anchor and an interval.')
 
 export const rateCardMeteredEntitlement = z
   .object({
@@ -2799,41 +3328,43 @@ export const rateCardMeteredEntitlement = z
   })
   .describe('The entitlement template of a metered entitlement.')
 
-export const recurringPeriod = z
+export const subscriptionPhaseCreate = z
   .object({
-    anchor: dateTime,
-    interval: iso8601Duration,
-  })
-  .describe('Recurring period with an anchor and an interval.')
-
-export const creditGrantPurchase = z
-  .object({
-    currency: currencyCode,
-    perUnitCostBasis: numeric.optional().default('1.0'),
-    amount: numeric,
-    availabilityPolicy: creditAvailabilityPolicy
+    key: resourceKey,
+    name: z.string().describe('The name of the phase.'),
+    description: z
+      .string()
       .optional()
-      .default('on_creation'),
-    settlementStatus: creditPurchasePaymentSettlementStatus.optional(),
-  })
-  .describe('Purchase and payment terms of the grant.')
+      .describe('An optional description of the phase.'),
+    startAfter: iso8601Duration
+      .nullable()
 
-export const updateCreditGrantExternalSettlementRequest = z
+      .describe(
+        'The ISO-8601 interval after the subscription start at which the phase begins. When null, the phase starts immediately after the subscription starts.',
+      ),
+    duration: iso8601Duration.optional(),
+  })
+  .describe('The definition of a new subscription phase to add via an edit.')
+
+export const subscriptionEditStretchPhase = z
   .object({
-    status: creditPurchasePaymentSettlementStatus,
+    type: z
+      .literal('stretch_phase')
+      .describe('Discriminator for the stretch-phase operation.'),
+    phaseKey: z.string().describe('The key of the phase to stretch.'),
+    extendBy: iso8601Duration,
   })
 
   .describe(
-    'Request body for updating the external payment settlement status of a credit grant.',
+    'Extend the duration of a phase, shifting later phases by the same amount.',
   )
 
-export const listCreditGrantsParamsFilter = z
-  .object({
-    status: creditGrantStatus.optional(),
-    currency: currencyCode.optional(),
-    key: stringFieldFilter.optional(),
-  })
-  .describe('Filter options for listing credit grants.')
+export const entitlementMeasureUsageFrom = z
+  .union([entitlementMeasureUsageFromPreset, dateTime])
+
+  .describe(
+    'The time from which usage is measured, as a preset or an explicit timestamp.',
+  )
 
 export const getCreditBalanceParamsFilter = z
   .object({
@@ -2841,12 +3372,6 @@ export const getCreditBalanceParamsFilter = z
     featureKey: stringFieldFilter.optional(),
   })
   .describe('Filter options for getting a credit balance.')
-
-export const listChargesParamsFilter = z
-  .object({
-    status: stringFieldFilterExact.optional(),
-  })
-  .describe('Filter options for listing charges.')
 
 export const listPlansParamsFilter = z
   .object({
@@ -2857,6 +3382,66 @@ export const listPlansParamsFilter = z
   })
   .describe('Filter options for listing plans.')
 
+export const createCreditGrantPlanFilter = z
+  .object({
+    key: resourceKey,
+    version: createVersionFilter.optional(),
+  })
+
+  .describe(
+    'A plan key and an optional version constraint for matching credit grants.',
+  )
+
+export const updateCreditGrantExternalSettlementRequest = z
+  .object({
+    status: creditPurchasePaymentSettlementStatus,
+  })
+
+  .describe(
+    'Request body for updating the external payment settlement status of a credit grant.',
+  )
+
+export const creditGrantPlanFilter = z
+  .object({
+    key: resourceKey,
+    version: versionFilter.optional(),
+  })
+
+  .describe(
+    'A plan key and an optional version constraint for matching credit grants.',
+  )
+
+export const listCreditGrantsParamsFilter = z
+  .object({
+    status: creditGrantStatus.optional(),
+    currency: currencyCode.optional(),
+    key: stringFieldFilter.optional(),
+  })
+  .describe('Filter options for listing credit grants.')
+
+export const validationIssue = z
+  .object({
+    code: z.string().describe('Machine-readable error code.'),
+    message: z.string().describe('Human-readable description of the error.'),
+    attributes: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe('Additional structured context.'),
+    severity: validationIssueSeverity,
+    field: z
+      .string()
+      .optional()
+
+      .describe(
+        'JSON path to the field that caused the validation issue, if applicable.',
+      ),
+    component: z
+      .string()
+      .optional()
+      .describe('Component that reported the validation issue, if applicable.'),
+  })
+  .describe('A validation issue found while processing a billing resource.')
+
 export const voidCreditGrantRequest = z
   .object({
     paymentAdjustment: creditGrantVoidPaymentAdjustment
@@ -2865,47 +3450,18 @@ export const voidCreditGrantRequest = z
   })
   .describe('Request body for voiding a credit grant.')
 
+export const subscriptionProRatingConfig = z
+  .object({
+    enabled: z.boolean().describe('Whether pro-rating is enabled.'),
+    mode: rateCardProrationMode,
+  })
+  .describe('The pro-rating configuration of a subscription.')
+
 export const rateCardProrationConfiguration = z
   .object({
     mode: rateCardProrationMode,
   })
   .describe('The proration configuration of the rate card.')
-
-export const subscriptionCreate = z
-  .object({
-    labels: labels.optional(),
-    settlementMode: settlementMode.optional(),
-    customer: z
-      .object({
-        id: ulid.optional(),
-        key: externalResourceKey.optional(),
-      })
-      .describe('The customer to create the subscription for.'),
-    plan: z
-      .object({
-        id: ulid.optional(),
-        key: resourceKey.optional(),
-        version: z
-          .number()
-          .int()
-          .optional()
-
-          .describe(
-            'The plan version of the subscription, if any. If not provided, the latest version of the plan will be used.',
-          ),
-      })
-      .describe('The plan reference of the subscription.'),
-    billingAnchor: dateTime.optional(),
-    costBasisMode: subscriptionCostBasisMode.optional().default('dynamic'),
-  })
-  .describe('Subscription create request.')
-
-export const subscriptionEditTiming = z
-  .union([subscriptionEditTimingEnum, dateTime])
-
-  .describe(
-    'Subscription edit timing defined when the changes should take effect. If the provided configuration is not supported by the subscription, an error will be returned.',
-  )
 
 export const unitConfig = z
   .object({
@@ -2931,8 +3487,76 @@ export const unitConfig = z
   })
 
   .describe(
-    'Unit conversion configuration. Transforms raw metered quantities into billing-ready units before pricing and entitlement evaluation. Applied at the rate card level so the same feature can be billed in different units across plans. Examples: - Meter bytes, bill GB: operation=divide, conversionFactor=1e9, rounding=ceiling, displayUnit="GB" - Meter seconds, bill hours: operation=divide, conversionFactor=3600, rounding=ceiling, displayUnit="hours" - Cost + 20% margin: operation=multiply, conversionFactor=1.2 - Bill per million tokens: operation=divide, conversionFactor=1e6, rounding=ceiling, displayUnit="M" v1 equivalents: - DynamicPrice(multiplier): operation=multiply, conversionFactor=multiplier + UnitPrice(amount=1) - PackagePrice(amount, quantityPerPkg): operation=divide, conversionFactor=quantityPerPkg, rounding=ceiling + UnitPrice(amount)',
+    'Unit conversion configuration. Transforms raw metered quantities into billing-ready units before pricing and entitlement evaluation. Stored with a resource\'s rating configuration so the same metered feature can be billed in different units across plans and charges. Examples: - Meter bytes, bill GB: operation=divide, conversionFactor=1e9, rounding=ceiling, displayUnit="GB" - Meter seconds, bill hours: operation=divide, conversionFactor=3600, rounding=ceiling, displayUnit="hours" - Cost + 20% margin: operation=multiply, conversionFactor=1.2 - Bill per million tokens: operation=divide, conversionFactor=1e6, rounding=ceiling, displayUnit="M" v1 equivalents: - DynamicPrice(multiplier): operation=multiply, conversionFactor=multiplier + UnitPrice(amount=1) - PackagePrice(amount, quantityPerPkg): operation=divide, conversionFactor=quantityPerPkg, rounding=ceiling + UnitPrice(amount)',
   )
+
+export const partyTaxIdentity = z
+  .object({
+    code: taxIdentificationCode.optional(),
+  })
+
+  .describe(
+    'Identity stores the details required to identify an entity for tax purposes in a specific country.',
+  )
+
+export const updateBillingPartyTaxIdentity = z
+  .object({
+    code: taxIdentificationCode.optional(),
+  })
+
+  .describe(
+    'Identity stores the details required to identify an entity for tax purposes in a specific country.',
+  )
+
+export const invoiceAvailableActions = z
+  .object({
+    advance: invoiceAvailableActionDetails.optional(),
+    approve: invoiceAvailableActionDetails.optional(),
+    delete: invoiceAvailableActionDetails.optional(),
+    retry: invoiceAvailableActionDetails.optional(),
+    snapshotQuantities: invoiceAvailableActionDetails.optional(),
+  })
+
+  .describe(
+    'The set of state-transition actions available for an invoice in its current status. A field is present only when that action is permitted from the current state.',
+  )
+
+export const workflowPaymentSettings = z
+  .discriminatedUnion('collectionMethod', [
+    workflowPaymentChargeAutomaticallySettings,
+    workflowPaymentSendInvoiceSettings,
+  ])
+  .describe('Payment settings for a billing workflow.')
+
+export const chargeRealizationPayment = z
+  .object({
+    status: chargeRealizationPaymentStatus,
+  })
+  .describe('Payment state of a charge realization.')
+
+export const subscriptionCreateTiming = z
+  .union([subscriptionCreateTimingEnum, dateTime])
+
+  .describe(
+    'When a subscription should start: immediate (the default) or a custom timestamp to schedule a future start.',
+  )
+
+export const subscriptionEditTiming = z
+  .union([subscriptionEditTimingEnum, dateTime])
+
+  .describe(
+    'Subscription edit timing defined when the changes should take effect. If the provided configuration is not supported by the subscription, an error will be returned.',
+  )
+
+export const subscriptionEditRemovePhase = z
+  .object({
+    type: z
+      .literal('remove_phase')
+      .describe('Discriminator for the remove-phase operation.'),
+    phaseKey: z.string().describe('The key of the phase to remove.'),
+    shift: subscriptionRemovePhaseShifting,
+  })
+  .describe('Remove a phase from the subscription.')
 
 export const taxCodeAppMapping = z
   .object({
@@ -2949,6 +3573,15 @@ export const appCapability = z
     description: z.string().describe('Description of the capability.'),
   })
   .describe('App capability describes a function that an App can perform.')
+
+export const appAction = z
+  .object({
+    type: appActionType,
+    description: z
+      .string()
+      .describe('Human readable explanation of why the action is needed.'),
+  })
+  .describe('An action the operator should take on an installed app.')
 
 export const updateAppStripeRequest = z
   .object({
@@ -3026,6 +3659,10 @@ export const updateAppExternalInvoicingRequest = z
   })
   .describe('AppExternalInvoicing update request.')
 
+export const appActionRequest = z
+  .discriminatedUnion('actionType', [appReconcileWebhookEventsActionRequest])
+  .describe('Request to execute an operator action on an installed app.')
+
 export const installAppRequest = z
   .discriminatedUnion('type', [
     installAppStripeWithApiKey,
@@ -3033,24 +3670,6 @@ export const installAppRequest = z
     installAppExternalInvoicing,
   ])
   .describe('Request to install an app from the catalog.')
-
-export const partyTaxIdentity = z
-  .object({
-    code: taxIdentificationCode.optional(),
-  })
-
-  .describe(
-    'Identity stores the details required to identify an entity for tax purposes in a specific country.',
-  )
-
-export const updateBillingPartyTaxIdentity = z
-  .object({
-    code: taxIdentificationCode.optional(),
-  })
-
-  .describe(
-    'Identity stores the details required to identify an entity for tax purposes in a specific country.',
-  )
 
 export const workflowInvoicingSettings = z
   .object({
@@ -3080,48 +3699,6 @@ export const workflowInvoicingSettings = z
       .default('bill_actual_period'),
   })
   .describe('Invoice settings for a billing workflow.')
-
-export const workflowPaymentSettings = z
-  .discriminatedUnion('collectionMethod', [
-    workflowPaymentChargeAutomaticallySettings,
-    workflowPaymentSendInvoiceSettings,
-  ])
-  .describe('Payment settings for a billing workflow.')
-
-export const invoiceValidationIssue = z
-  .object({
-    code: z.string().describe('Machine-readable error code.'),
-    message: z.string().describe('Human-readable description of the error.'),
-    attributes: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('Additional structured context.'),
-    severity: invoiceValidationIssueSeverity,
-    field: z
-      .string()
-      .optional()
-
-      .describe(
-        'JSON path to the field that caused this validation issue, if applicable. For example: `lines/0/rate_card/price`.',
-      ),
-  })
-
-  .describe(
-    'A validation issue found during invoice processing. Converges on the same structure used by plan and subscription validation errors: a machine-readable `code`, a human-readable `message`, optional structured `attributes`, plus a `severity` and optional `field` path.',
-  )
-
-export const invoiceAvailableActions = z
-  .object({
-    advance: invoiceAvailableActionDetails.optional(),
-    approve: invoiceAvailableActionDetails.optional(),
-    delete: invoiceAvailableActionDetails.optional(),
-    retry: invoiceAvailableActionDetails.optional(),
-    snapshotQuantities: invoiceAvailableActionDetails.optional(),
-  })
-
-  .describe(
-    'The set of state-transition actions available for an invoice in its current status. A field is present only when that action is permitted from the current state.',
-  )
 
 export const invoiceLineAmountDiscount = z
   .object({
@@ -3222,17 +3799,188 @@ export const entitlementAccessQueryError = z
     'Query error within a partially successful entitlement access query response.',
   )
 
+export const notificationChannel = z
+  .object({
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: notificationChannelType,
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the channel is disabled. Disabled channels do not receive notification events.',
+      ),
+    url: z
+      .string()
+      .describe('The URL that webhook notification events are delivered to.'),
+    customHeaders: z
+      .record(z.string(), z.string())
+      .optional()
+
+      .describe(
+        'Custom HTTP headers to include on every webhook delivery request, keyed by header name.',
+      ),
+    signingSecret: z
+      .string()
+      .optional()
+
+      .describe(
+        'Secret used to sign outgoing webhook payloads so recipients can verify their authenticity. If omitted on create, a secret is generated automatically by the delivery provider. This is a sensitive credential returned in responses (unlike most secrets) specifically so clients can retrieve a server-generated value and verify webhook signatures; handle it with the same care as any other credential.',
+      ),
+  })
+
+  .describe(
+    'A notification channel delivers notification events, such as entitlement balance threshold crossings, to an external system. Today the only supported channel type is a webhook delivered via Svix.',
+  )
+
+export const createNotificationChannelRequest = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labels.optional(),
+    type: notificationChannelType,
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the channel is disabled. Disabled channels do not receive notification events.',
+      ),
+    url: z
+      .string()
+      .describe('The URL that webhook notification events are delivered to.'),
+    customHeaders: z
+      .record(z.string(), z.string())
+      .optional()
+
+      .describe(
+        'Custom HTTP headers to include on every webhook delivery request, keyed by header name.',
+      ),
+    signingSecret: z
+      .string()
+      .optional()
+
+      .describe(
+        'Secret used to sign outgoing webhook payloads so recipients can verify their authenticity. If omitted on create, a secret is generated automatically by the delivery provider. This is a sensitive credential returned in responses (unlike most secrets) specifically so clients can retrieve a server-generated value and verify webhook signatures; handle it with the same care as any other credential.',
+      ),
+  })
+  .describe('NotificationChannel create request.')
+
+export const updateBillingNotificationChannelRequest = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    type: notificationChannelType,
+    url: z
+      .string()
+      .describe('The URL that webhook notification events are delivered to.'),
+    labels: labels.optional(),
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the channel is disabled. Disabled channels do not receive notification events.',
+      ),
+    customHeaders: z
+      .record(z.string(), z.string())
+      .optional()
+
+      .describe(
+        'Custom HTTP headers to include on every webhook delivery request, keyed by header name.',
+      ),
+    signingSecret: z
+      .string()
+      .optional()
+
+      .describe(
+        'Secret used to sign outgoing webhook payloads so recipients can verify their authenticity. If omitted on create, a secret is generated automatically by the delivery provider. This is a sensitive credential returned in responses (unlike most secrets) specifically so clients can retrieve a server-generated value and verify webhook signatures; handle it with the same care as any other credential.',
+      ),
+  })
+
+  .describe(
+    "Request body for updating a notification channel. Updates replace the channel's mutable state rather than merging it: `type`, `name`, and `url` must always be provided, and omitting `disabled`, `labels`, or `custom_headers` resets them to their defaults (enabled, no labels, no custom headers). `signing_secret` is the one exception: omitting it keeps the channel's current signing secret instead of clearing the credential.",
+  )
+
+export const notificationBalanceThreshold = z
+  .object({
+    type: notificationBalanceThresholdType,
+    value: z.number().describe('The threshold value.'),
+  })
+
+  .describe(
+    'A balance threshold of a notification rule. Crossing it generates an `entitlements.balance.threshold` event.',
+  )
+
+export const notificationRuleReference = z
+  .object({
+    id: ulid,
+    type: notificationEventType,
+    name: z.string().describe('The user-provided name of the rule.'),
+  })
+  .describe('A reference to the notification rule that generated an event.')
+
+export const notificationEventDeliveryAttempt = z
+  .object({
+    state: notificationEventDeliveryState,
+    response: notificationEventDeliveryAttemptResponse,
+    timestamp: dateTime,
+  })
+  .describe('A single delivery attempt to a channel.')
+
 export const appCustomerData = z
   .object({
-    stripe: appCustomerDataStripe.optional(),
-    externalInvoicing: appCustomerDataExternalInvoicing.optional(),
+    stripe: appCustomerDataStripe
+      .nullable()
+      .optional()
+
+      .describe(
+        'Used if the customer has a linked Stripe app. Set to `null` to remove the Stripe data of the customer; omit to leave it unchanged.',
+      ),
+    externalInvoicing: appCustomerDataExternalInvoicing
+      .nullable()
+      .optional()
+
+      .describe(
+        'Used if the customer has a linked external invoicing app. Set to `null` to remove the external invoicing data of the customer; omit to leave it unchanged.',
+      ),
   })
   .describe('App customer data.')
 
 export const upsertAppCustomerDataRequest = z
   .object({
-    stripe: appCustomerDataStripe.optional(),
-    externalInvoicing: appCustomerDataExternalInvoicing.optional(),
+    stripe: appCustomerDataStripe
+      .nullable()
+      .optional()
+
+      .describe(
+        'Used if the customer has a linked Stripe app. Set to `null` to remove the Stripe data of the customer; omit to leave it unchanged.',
+      ),
+    externalInvoicing: appCustomerDataExternalInvoicing
+      .nullable()
+      .optional()
+
+      .describe(
+        'Used if the customer has a linked external invoicing app. Set to `null` to remove the external invoicing data of the customer; omit to leave it unchanged.',
+      ),
   })
   .describe('AppCustomerData upsert request.')
 
@@ -3257,15 +4005,6 @@ export const creditAdjustment = z
   .describe(
     "A credit adjustment can be used to make manual adjustments to a customer's credit balance. Supported use-cases: - Usage correction",
   )
-
-export const creditBalance = z
-  .object({
-    currency: billingCurrencyCode,
-    live: numeric,
-    settled: numeric,
-    pending: numeric,
-  })
-  .describe('The credit balance by currency.')
 
 export const createCreditAdjustmentRequest = z
   .object({
@@ -3296,38 +4035,56 @@ export const listCreditTransactionsParamsFilter = z
   })
   .describe('Filter options for listing credit transactions.')
 
-export const creditTransaction = z
+export const currencyAmount = z
   .object({
-    id: ulid,
-    name: z
+    amount: numeric,
+    currency: billingCurrencyCode,
+  })
+  .describe('Monetary amount in a fiat or custom currency.')
+
+export const entitlementValueResult = z
+  .object({
+    type: entitlementType,
+    featureKey: resourceKey,
+    hasAccess: z
+      .boolean()
+
+      .describe(
+        'Whether the customer has access to the feature. Always true for `boolean` and `static` entitlements. Depends on balance for `metered` entitlements.',
+      ),
+    config: z
       .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
       .optional()
 
       .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
+        'Only available for static entitlements. Config is the JSON parsable configuration of the entitlement. Useful to describe per customer configuration.',
       ),
-    labels: labels.optional(),
-    createdAt: dateTime,
-    bookedAt: dateTime,
-    type: creditTransactionType,
-    currency: billingCurrencyCode,
-    amount: numeric,
-    availableBalance: z
-      .object({
-        before: numeric,
-        after: numeric,
-      })
-      .describe('The available balance before and after the transaction.'),
+    value: entitlementAccessValue.optional(),
+  })
+  .describe('Entitlement value result.')
+
+export const entitlementFeatureValueResult = z
+  .object({
+    featureKey: resourceKey,
+    hasAccess: z
+      .boolean()
+
+      .describe(
+        'Whether the customer has access to the feature. Always true for `boolean` and `static` entitlements. Depends on balance for `metered` entitlements.',
+      ),
+    config: z
+      .string()
+      .optional()
+
+      .describe(
+        'Only available for static entitlements. Config is the JSON parsable configuration of the entitlement. Useful to describe per customer configuration.',
+      ),
+    value: entitlementAccessValue.optional(),
+    type: entitlementType.optional(),
   })
 
   .describe(
-    "A credit transaction represents a single credit movement on the customer's balance. Credit transactions are immutable.",
+    'Entitlement value looked up by feature key. A missing entitlement has no type and does not grant access.',
   )
 
 export const priceTier = z
@@ -3338,7 +4095,7 @@ export const priceTier = z
   })
 
   .describe(
-    'A price tier used in graduated and volume pricing. At least one price component (flat_price or unit_price) must be set. When UnitConfig is present on the rate card, up_to_amount is expressed in converted billing units.',
+    'A price tier used in graduated and volume pricing. At least one price component (flat_price or unit_price) must be set. When UnitConfig is present on the containing resource, up_to_amount is expressed in converted billing units.',
   )
 
 export const chargeTotals = z
@@ -3348,18 +4105,7 @@ export const chargeTotals = z
   })
 
   .describe(
-    'The totals of a change. RealTime is only expanded when the `real_time_usage` expand is used.',
-  )
-
-export const updatePriceTier = z
-  .object({
-    upToAmount: numeric.optional(),
-    flatPrice: updatePriceFlat.optional(),
-    unitPrice: updatePriceUnit.optional(),
-  })
-
-  .describe(
-    'A price tier used in graduated and volume pricing. At least one price component (flat_price or unit_price) must be set. When UnitConfig is present on the rate card, up_to_amount is expressed in converted billing units.',
+    'The totals of a charge. `realtime` is only populated when the `real_time_usage` expand is used.',
   )
 
 export const featureLlmUnitCost = z
@@ -3410,6 +4156,17 @@ export const featureLlmUnitCost = z
     'LLM cost lookup configuration. Each dimension (provider, model, token type) can be specified as either a static value or a meter group-by property name (mutually exclusive).',
   )
 
+export const updatePriceTier = z
+  .object({
+    upToAmount: numeric.optional(),
+    flatPrice: updatePriceFlat.optional(),
+    unitPrice: updatePriceUnit.optional(),
+  })
+
+  .describe(
+    'A price tier used in graduated and volume pricing. At least one price component (flat_price or unit_price) must be set. When UnitConfig is present on the containing resource, up_to_amount is expressed in converted billing units.',
+  )
+
 export const llmCostPrice = z
   .object({
     id: ulid,
@@ -3454,6 +4211,30 @@ export const listCustomersParamsFilter = z
   })
   .describe('Filter options for listing customers.')
 
+export const listCustomerEntitlementsParamsFilter = z
+  .object({
+    featureId: ulidFieldFilter.optional(),
+    featureKey: stringFieldFilterExact.optional(),
+    type: stringFieldFilterExact.optional(),
+  })
+  .describe('Filter options for listing customer entitlements.')
+
+export const listEntitlementsParamsFilter = z
+  .object({
+    featureId: ulidFieldFilter.optional(),
+    featureKey: stringFieldFilterExact.optional(),
+    type: stringFieldFilterExact.optional(),
+    customerId: ulidFieldFilter.optional(),
+  })
+  .describe('Filter options for listing entitlements.')
+
+export const listGrantsParamsFilter = z
+  .object({
+    customerId: ulidFieldFilter.optional(),
+    featureId: ulidFieldFilter.optional(),
+  })
+  .describe('Filter options for listing grants.')
+
 export const listSubscriptionsParamsFilter = z
   .object({
     id: ulidFieldFilter.optional(),
@@ -3463,6 +4244,22 @@ export const listSubscriptionsParamsFilter = z
     planKey: stringFieldFilterExact.optional(),
   })
   .describe('Filter options for listing subscriptions.')
+
+export const listAppsParamsFilter = z
+  .object({
+    id: ulidFieldFilter.optional(),
+    name: stringFieldFilter.optional(),
+    type: stringFieldFilterExact.optional(),
+    status: stringFieldFilterExact.optional(),
+  })
+  .describe('Filter options for listing apps.')
+
+export const listBillingProfilesParamsFilter = z
+  .object({
+    id: ulidFieldFilter.optional(),
+    name: stringFieldFilter.optional(),
+  })
+  .describe('Filter options for listing billing profiles.')
 
 export const listFeatureParamsFilter = z
   .object({
@@ -3482,24 +4279,57 @@ export const listAddonsParamsFilter = z
   })
   .describe('Filter options for listing add-ons.')
 
-export const createCreditGrantTaxConfig = z
+export const listPlanAddonsParamsFilter = z
   .object({
-    behavior: taxBehavior.optional(),
-    taxCode: createResourceReference.optional(),
+    id: ulidFieldFilter.optional(),
+    planKey: stringFieldFilter.optional(),
+    addonId: ulidFieldFilter.optional(),
+    addonKey: stringFieldFilter.optional(),
+    addonName: stringFieldFilter.optional(),
+    planCurrency: stringFieldFilter.optional(),
   })
+  .describe('Filter options for listing plan add-ons.')
+
+export const createChargeCostBasis = z
+  .discriminatedUnion('type', [
+    createChargeCostBasisDynamic,
+    createChargeCostBasisPinned,
+    createChargeCostBasisManual,
+  ])
 
   .describe(
-    'Tax configuration for a credit grant. Tax configuration should be provided to ensure correct revenue recognition, including for externally funded grants.',
+    'Cost basis selection for a custom-currency charge. The variant chosen fixes when and how the conversion rate is determined.',
   )
 
-export const creditGrantTaxConfig = z
+export const createTaxCodeConfig = z
   .object({
     behavior: taxBehavior.optional(),
-    taxCode: taxCodeReference.optional(),
+    code: createResourceReference.optional(),
   })
 
   .describe(
-    'Tax configuration for a credit grant. Tax configuration should be provided to ensure correct revenue recognition, including for externally funded grants.',
+    'Tax configuration for a billable resource. Applies a tax code and tax behavior to the resulting invoice line items. When not set, the applicable default is used: the billing profile default tax configuration, then the organization default tax code.',
+  )
+
+export const chargeCostBasis = z
+  .discriminatedUnion('type', [
+    chargeCostBasisDynamic,
+    chargeCostBasisPinned,
+    chargeCostBasisManual,
+  ])
+
+  .describe(
+    'Cost basis selection for a custom-currency charge. The variant chosen fixes when and how the conversion rate is determined.',
+  )
+
+export const taxCodeConfig = z
+  .object({
+    behavior: taxBehavior.optional(),
+    code: taxCodeReference.optional(),
+  })
+
+  .describe(
+    'Tax configuration for a billable resource. Applies a tax code and tax behavior to the resulting invoice line items. When not set, the applicable default is used: the billing profile default tax configuration, then the organization default tax code.',
   )
 
 export const taxConfig = z
@@ -3511,13 +4341,6 @@ export const taxConfig = z
     taxCode: taxCodeReference.optional(),
   })
   .describe('Set of provider specific tax configs.')
-
-export const rateCardTaxConfig = z
-  .object({
-    behavior: taxBehavior.optional(),
-    code: taxCodeReference,
-  })
-  .describe('The tax config of the rate card.')
 
 export const organizationDefaultTaxCodes = z
   .object({
@@ -3538,28 +4361,69 @@ export const updateOrganizationDefaultTaxCodesRequest = z
   })
   .describe('OrganizationDefaultTaxCodes update request.')
 
-export const subscription = z
+export const creditBalance = z
+  .object({
+    currency: billingCurrencyCode,
+    customCurrency: currencyCustomReference.optional(),
+    live: numeric,
+    settled: numeric,
+    pending: numeric,
+  })
+  .describe('The credit balance by currency.')
+
+export const creditTransaction = z
   .object({
     id: ulid,
-    labels: labels.optional(),
-    createdAt: dateTime,
-    updatedAt: dateTime,
-    deletedAt: dateTime.optional(),
-    customerId: ulid,
-    planId: ulid.optional(),
-    invoiceCurrency: currencyCode,
-    costBasisMode: subscriptionCostBasisMode.default('dynamic'),
-    costBasisPins: z
-      .array(subscriptionCostBasisPin)
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
 
       .describe(
-        'Cost bases pinned to custom-currency pairs for this subscription.',
+        'Optional description of the resource. Maximum 1024 characters.',
       ),
-    billingAnchor: dateTime,
-    status: subscriptionStatus,
-    settlementMode: settlementMode.optional(),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    bookedAt: dateTime,
+    type: creditTransactionType,
+    currency: billingCurrencyCode,
+    customCurrency: currencyCustomReference.optional(),
+    amount: numeric,
+    availableBalance: z
+      .object({
+        before: numeric,
+        after: numeric,
+      })
+      .describe('The available balance before and after the transaction.'),
   })
-  .describe('Subscription.')
+
+  .describe(
+    "A credit transaction represents a single credit movement on the customer's balance. Credit transactions are immutable.",
+  )
+
+export const invoiceWorkflowAppsReferences = z
+  .object({
+    tax: appReference,
+    invoicing: appReference,
+    payment: appReference,
+  })
+
+  .describe(
+    'BillingInvoiceWorkflowAppsReferences represents the references (id) to the apps used by a billing profile',
+  )
+
+export const profileAppReferences = z
+  .object({
+    tax: appReference,
+    invoicing: appReference,
+    payment: appReference,
+  })
+  .describe('References to the applications used by a billing profile.')
 
 export const planAddon = z
   .object({
@@ -3632,31 +4496,251 @@ export const createPlanAddonRequest = z
   })
   .describe('PlanAddon create request.')
 
-export const profileAppReferences = z
+export const updateTaxCodeConfig = z
   .object({
-    tax: appReference,
-    invoicing: appReference,
-    payment: appReference,
-  })
-  .describe('References to the applications used by a billing profile.')
-
-export const invoiceWorkflowAppsReferences = z
-  .object({
-    tax: appReference,
-    invoicing: appReference,
-    payment: appReference,
+    behavior: taxBehavior.optional(),
+    code: updateResourceReference.optional(),
   })
 
   .describe(
-    'BillingInvoiceWorkflowAppsReferences represents the references (id) to the apps used by a billing profile',
+    'Tax configuration for a billable resource. Applies a tax code and tax behavior to the resulting invoice line items. When not set, the applicable default is used: the billing profile default tax configuration, then the organization default tax code.',
   )
 
-export const updateRateCardTaxConfig = z
+export const notificationRuleEntitlementReset = z
   .object({
-    behavior: taxBehavior.optional(),
-    code: updateResourceReference,
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z
+      .literal('entitlements.reset')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReference)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+    features: z
+      .array(featureReference)
+      .optional()
+
+      .describe(
+        'The features the rule applies to. When omitted, the rule applies to every feature.',
+      ),
   })
-  .describe('The tax config of the rate card.')
+
+  .describe(
+    'A rule that generates an event when an entitlement usage period is reset.',
+  )
+
+export const notificationRuleInvoiceCreated = z
+  .object({
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z
+      .literal('invoice.created')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReference)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+  })
+  .describe('A rule that generates an event when an invoice is created.')
+
+export const notificationRuleInvoiceUpdated = z
+  .object({
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z
+      .literal('invoice.updated')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReference)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+  })
+  .describe('A rule that generates an event when an invoice is updated.')
+
+export const notificationRuleEntitlementResetRequest = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labels.optional(),
+    type: z
+      .literal('entitlements.reset')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReference)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+    features: z
+      .array(featureReference)
+      .optional()
+
+      .describe(
+        'The features the rule applies to. When omitted, the rule applies to every feature.',
+      ),
+  })
+  .describe('Request body for an entitlement reset rule.')
+
+export const notificationRuleInvoiceCreatedRequest = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labels.optional(),
+    type: z
+      .literal('invoice.created')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReference)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+  })
+  .describe('Request body for an invoice created rule.')
+
+export const notificationRuleInvoiceUpdatedRequest = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labels.optional(),
+    type: z
+      .literal('invoice.updated')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReference)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+  })
+  .describe('Request body for an invoice updated rule.')
+
+export const notificationEventInvoiceData = z
+  .object({
+    invoice: notificationEventInvoiceReference,
+    customerId: ulid.optional(),
+    currency: currencyCode,
+    status: z
+      .string()
+
+      .describe(
+        'The status of the invoice at the time the event was generated.',
+      ),
+    total: numeric,
+  })
+  .describe('The invoice an invoice notification event refers to.')
 
 export const listEventsParamsFilter = z
   .object({
@@ -3671,6 +4755,16 @@ export const listEventsParamsFilter = z
   })
   .describe('Filter options for listing ingested events.')
 
+export const listCustomerChargesParamsFilter = z
+  .object({
+    status: stringFieldFilterExact.optional(),
+    featureId: ulidFieldFilter.optional(),
+    featureKey: stringFieldFilterExact.optional(),
+    servicePeriodFrom: dateTimeFieldFilter.optional(),
+    servicePeriodTo: dateTimeFieldFilter.optional(),
+  })
+  .describe('Filter options for listing charges.')
+
 export const listInvoicesParamsFilter = z
   .object({
     status: stringFieldFilterExact.optional(),
@@ -3680,6 +4774,55 @@ export const listInvoicesParamsFilter = z
     createdAt: dateTimeFieldFilter.optional(),
   })
   .describe('Filter options for listing invoices.')
+
+export const listChargesParamsFilter = z
+  .object({
+    status: stringFieldFilterExact.optional(),
+    featureId: ulidFieldFilter.optional(),
+    featureKey: stringFieldFilterExact.optional(),
+    servicePeriodFrom: dateTimeFieldFilter.optional(),
+    servicePeriodTo: dateTimeFieldFilter.optional(),
+    customerId: ulidFieldFilter.optional(),
+  })
+  .describe('Filter options for listing charges across customers.')
+
+export const listNotificationChannelsParamsFilter = z
+  .object({
+    id: ulidFieldFilter.optional(),
+    name: stringFieldFilter.optional(),
+    type: stringFieldFilterExact.optional(),
+    disabled: booleanFieldFilter.optional(),
+    createdAt: dateTimeFieldFilter.optional(),
+    updatedAt: dateTimeFieldFilter.optional(),
+  })
+  .describe('Filter options for listing notification channels.')
+
+export const listNotificationRulesParamsFilter = z
+  .object({
+    id: ulidFieldFilter.optional(),
+    name: stringFieldFilter.optional(),
+    type: stringFieldFilterExact.optional(),
+    disabled: booleanFieldFilter.optional(),
+    createdAt: dateTimeFieldFilter.optional(),
+    updatedAt: dateTimeFieldFilter.optional(),
+    channelId: ulidFieldFilter.optional(),
+  })
+  .describe('Filter options for listing notification rules.')
+
+export const listNotificationEventsParamsFilter = z
+  .object({
+    id: ulidFieldFilter.optional(),
+    type: stringFieldFilterExact.optional(),
+    createdAt: dateTimeFieldFilter.optional(),
+    ruleId: ulidFieldFilter.optional(),
+    channelId: ulidFieldFilter.optional(),
+    deliveryStatus: stringFieldFilterExact.optional(),
+    subjectKey: stringFieldFilterExact.optional(),
+    subjectId: ulidFieldFilter.optional(),
+    featureKey: stringFieldFilterExact.optional(),
+    featureId: ulidFieldFilter.optional(),
+  })
+  .describe('Filter options for listing notification events.')
 
 export const resourceFilters = z
   .object({
@@ -3729,6 +4872,87 @@ export const meterQueryResult = z
       ),
   })
   .describe('Meter query result.')
+
+export const entitlementHistoryWindow = z
+  .object({
+    period: closedPeriod,
+    usage: numeric,
+    balanceAtStart: numeric,
+  })
+  .describe('Usage and balance of a single history window.')
+
+export const entitlementBurndownSegment = z
+  .object({
+    period: closedPeriod,
+    usage: numeric,
+    overage: numeric,
+    balance: entitlementBurndownBalance,
+    grantBalances: entitlementBurndownGrantBalances,
+    grantUsages: z
+      .array(entitlementGrantUsage)
+
+      .describe(
+        'The grants consumed in the segment and the usage taken from each.',
+      ),
+  })
+  .describe('A period in which grants were consumed in a fixed order.')
+
+export const chargeRealizationDetailedLineFlatFee = z
+  .object({
+    id: ulid,
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z
+      .literal('flat_fee')
+      .describe('The type of the charge the realization belongs to.'),
+    servicePeriod: closedPeriod,
+    totals: totals,
+    category: chargeRealizationDetailedLineCategory,
+    creditsApplied: z
+      .array(chargeRealizationDetailedLineCreditApplied)
+      .optional()
+      .describe('Credits applied to this detailed line.'),
+    unitPrice: numeric,
+    amountDiscounts: z
+      .array(chargeRealizationAmountDiscount)
+      .describe('The amount discounts applied to the detailed line.'),
+  })
+  .describe("A detailed line produced by a flat fee charge's realization run.")
+
+export const chargeRealizationDetailedLineUsageBased = z
+  .object({
+    id: ulid,
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z
+      .literal('usage_based')
+      .describe('The type of the charge the realization belongs to.'),
+    servicePeriod: closedPeriod,
+    totals: totals,
+    category: chargeRealizationDetailedLineCategory,
+    creditsApplied: z
+      .array(chargeRealizationDetailedLineCreditApplied)
+      .optional()
+      .describe('Credits applied to this detailed line.'),
+    unitPrice: numeric,
+    amountDiscounts: z
+      .array(chargeRealizationAmountDiscount)
+      .describe('The amount discounts applied to the detailed line.'),
+    quantity: numeric,
+    correctsRunId: z
+      .string()
+      .optional()
+
+      .describe(
+        "The ID of a prior realization run this detailed line corrects. Only set if the detailed line's totals are negative.",
+      ),
+  })
+
+  .describe(
+    "A detailed line produced by a usage-based charge's realization run.",
+  )
 
 export const currencyCustom = z
   .object({
@@ -3985,23 +5209,174 @@ export const appStripeCreateCheckoutSessionConsentCollection = z
   })
   .describe('Checkout Session consent collection configuration.')
 
-export const listCustomerEntitlementAccessResponseData = z
+export const entitlementGrantCreateRequest = z
   .object({
-    data: z
-      .array(entitlementAccessResult)
-      .describe('The list of entitlement access results.'),
-  })
-  .describe('List customer entitlement access response data.')
+    amount: numeric,
+    priority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(255)
+      .optional()
 
-export const rateCardEntitlement = z
-  .discriminatedUnion('type', [
-    rateCardMeteredEntitlement,
-    rateCardStaticEntitlement,
-    rateCardBooleanEntitlement,
-  ])
+      .describe(
+        'The priority of the grant. Lower values have higher priority. Grants are consumed in priority order, then by closest expiration, then by earliest creation.',
+      ),
+    effectiveAt: dateTime,
+    expiresAfter: iso8601Duration.optional(),
+    maxRolloverAmount: numeric.optional(),
+    minRolloverAmount: numeric.optional(),
+    labels: labels.optional(),
+    recurrence: recurringPeriodInput.optional(),
+  })
+  .describe('A grant to issue for a metered entitlement.')
+
+export const createEntitlementStaticRequest = z
+  .object({
+    type: z.literal('static').describe('The type of the entitlement.'),
+    feature: featureReference,
+    labels: labels.optional(),
+    config: z
+      .unknown()
+
+      .describe(
+        'The entitlement configuration as a JSON value. Returned when checking entitlement access.',
+      ),
+    usagePeriod: recurringPeriodInput.optional(),
+  })
+  .describe('Static entitlement create request.')
+
+export const createEntitlementBooleanRequest = z
+  .object({
+    type: z.literal('boolean').describe('The type of the entitlement.'),
+    feature: featureReference,
+    labels: labels.optional(),
+    usagePeriod: recurringPeriodInput.optional(),
+  })
+  .describe('Boolean entitlement create request.')
+
+export const entitlementMetered = z
+  .object({
+    id: ulid,
+    type: z.literal('metered').describe('The type of the entitlement.'),
+    feature: featureReference,
+    customer: customerReference,
+    labels: labels.optional(),
+    activeFrom: dateTime,
+    activeTo: dateTime.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    usagePeriod: recurringPeriod,
+    currentUsagePeriod: closedPeriod,
+    isSoftLimit: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'If true, the customer keeps access to the feature after the balance is exhausted.',
+      ),
+    issue: entitlementIssueAfterReset.optional(),
+    issueAfterReset: numeric.optional(),
+    issueAfterResetPriority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(255)
+      .optional()
+      .default(1)
+      .describe('The priority of the grant created after each reset.'),
+    preserveOverageAtReset: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'If true, the overage is preserved at reset. If false, the usage is reset to 0.',
+      ),
+    measureUsageFrom: dateTime,
+    lastReset: dateTime,
+  })
 
   .describe(
-    'Entitlement template configured on a rate card. The feature is taken from the rate card itself, so it is omitted here.',
+    'A metered entitlement grants a usage allowance for a feature. Access is determined by the balance: the allowance provided by grants is burnt down by usage.',
+  )
+
+export const entitlementStatic = z
+  .object({
+    id: ulid,
+    type: z.literal('static').describe('The type of the entitlement.'),
+    feature: featureReference,
+    customer: customerReference,
+    labels: labels.optional(),
+    usagePeriod: recurringPeriod.optional(),
+    currentUsagePeriod: closedPeriod.optional(),
+    activeFrom: dateTime,
+    activeTo: dateTime.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    config: z
+      .unknown()
+
+      .describe(
+        'The entitlement configuration as a JSON value. Returned when checking entitlement access.',
+      ),
+  })
+
+  .describe(
+    'A static entitlement grants access to a feature together with a configuration.',
+  )
+
+export const entitlementBoolean = z
+  .object({
+    id: ulid,
+    type: z.literal('boolean').describe('The type of the entitlement.'),
+    feature: featureReference,
+    customer: customerReference,
+    labels: labels.optional(),
+    usagePeriod: recurringPeriod.optional(),
+    currentUsagePeriod: closedPeriod.optional(),
+    activeFrom: dateTime,
+    activeTo: dateTime.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+  })
+  .describe('A boolean entitlement grants access to a feature.')
+
+export const entitlementGrant = z
+  .object({
+    id: ulid,
+    entitlementId: ulid,
+    customerId: ulid.optional(),
+    amount: numeric,
+    priority: z
+      .number()
+      .int()
+      .nonnegative()
+      .lte(255)
+
+      .describe(
+        'The priority of the grant. Lower values are consumed first: a grant with priority 1 is consumed before one with priority 2. Among equal priorities, the grant closest to expiration is consumed first, then the earliest created.',
+      ),
+    effectiveAt: dateTime,
+    expiresAfter: iso8601Duration.optional(),
+    expiresAt: dateTime.optional(),
+    maxRolloverAmount: numeric,
+    minRolloverAmount: numeric,
+    recurrence: recurringPeriod.optional(),
+    nextRecurrence: dateTime.optional(),
+    voidedAt: dateTime.optional(),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+  })
+
+  .describe(
+    "A grant issued for a metered entitlement. Each grant adds its amount to the entitlement's balance from its effective time until it expires, and usage is deducted from the grants in priority order. Grants are immutable, so the balance is deterministic regardless of when it is queried. Deleting a grant ends it at the time of the deletion.",
   )
 
 export const workflowCollectionAlignmentAnchored = z
@@ -4014,35 +5389,136 @@ export const workflowCollectionAlignmentAnchored = z
     'BillingWorkflowCollectionAlignmentAnchored specifies the alignment for collecting the pending line items into an invoice.',
   )
 
-export const chargeFlatFeeSystemIntent = z
+export const rateCardEntitlement = z
+  .discriminatedUnion('type', [
+    rateCardMeteredEntitlement,
+    rateCardStaticEntitlement,
+    rateCardBooleanEntitlement,
+  ])
+
+  .describe(
+    'Entitlement template configured on a rate card. The feature is taken from the rate card itself, so it is omitted here.',
+  )
+
+export const subscriptionEditAddPhase = z
   .object({
+    type: z
+      .literal('add_phase')
+      .describe('Discriminator for the add-phase operation.'),
+    phase: subscriptionPhaseCreate,
+  })
+
+  .describe(
+    'Add a new phase to the subscription. The phase is created without items; use add-item operations to populate it.',
+  )
+
+export const createCreditGrantFilters = z
+  .object({
+    features: z
+      .array(resourceKey)
+      .optional()
+
+      .describe(
+        'Limit the credit grant to specific features. If no features are specified, the credit grant can be used for any feature.',
+      ),
+    plans: z
+      .array(createCreditGrantPlanFilter)
+      .optional()
+
+      .describe(
+        'Limit credits to charges from these plans. Entries are alternatives; when features are also specified, both dimensions must match. Omission or an empty list leaves plans unrestricted.',
+      ),
+  })
+  .describe('Filters for the credit grant.')
+
+export const creditGrantFilters = z
+  .object({
+    features: z
+      .array(resourceKey)
+      .optional()
+
+      .describe(
+        'Limit the credit grant to specific features. If no features are specified, the credit grant can be used for any feature.',
+      ),
+    plans: z
+      .array(creditGrantPlanFilter)
+      .optional()
+
+      .describe(
+        'Limit credits to charges from these plans. Entries are alternatives; when features are also specified, both dimensions must match. Omission or an empty list leaves plans unrestricted.',
+      ),
+  })
+  .describe('Filters for the credit grant.')
+
+export const subscriptionBase = z
+  .object({
+    id: ulid,
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
     name: z
       .string()
       .min(1)
       .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
+
+      .describe(
+        'Display name of the subscription. Defaults to the plan name when the subscription is created from a plan.',
+      ),
     description: z
       .string()
       .max(1024)
       .optional()
+      .describe('Optional description of the subscription.'),
+    activeFrom: dateTime,
+    activeTo: dateTime.optional(),
+    customerId: ulid,
+    planId: ulid.optional(),
+    plan: subscriptionPlanReference.optional(),
+    invoiceCurrency: currencyCode,
+    costBasisMode: subscriptionCostBasisMode.default('dynamic'),
+    costBasisPins: z
+      .array(subscriptionCostBasisPin)
 
       .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
+        'Cost bases pinned to custom-currency pairs for this subscription.',
       ),
-    labels: labels.optional(),
-    invoiceAt: dateTime,
-    servicePeriod: closedPeriod,
-    fullServicePeriod: closedPeriod,
-    billingPeriod: closedPeriod,
-    paymentTerm: pricePaymentTerm,
-    discounts: chargeFlatFeeDiscounts.optional(),
-    prorationConfiguration: rateCardProrationConfiguration,
-    amountBeforeProration: currencyAmount,
-    deletedAt: dateTime.optional(),
+    billingCadence: iso8601Duration,
+    proRatingConfig: subscriptionProRatingConfig.optional(),
+    billingAnchor: dateTime,
+    status: subscriptionStatus,
+    settlementMode: settlementMode.optional(),
+  })
+
+  .describe('Subscription fields without phases or the current billing period.')
+
+export const invoiceStatusDetails = z
+  .object({
+    immutable: z
+      .boolean()
+
+      .describe(
+        'Whether the invoice is immutable (i.e. cannot be modified or deleted).',
+      ),
+    failed: z.boolean().describe('Whether the invoice is in a failed state.'),
+    extendedStatus: z
+      .string()
+
+      .describe(
+        'Fine-grained internal status string providing additional workflow detail beyond the top-level status enum.',
+      ),
+    availableActions: invoiceAvailableActions,
+  })
+  .describe('Detailed status information for a standard invoice.')
+
+export const invoiceWorkflow = z
+  .object({
+    invoicing: invoiceWorkflowInvoicingSettings.optional(),
+    payment: workflowPaymentSettings.optional(),
   })
 
   .describe(
-    'Flat fee intent fields from the system lifecycle controller shadowed by a manual override.',
+    'Invoice-level snapshot of the workflow configuration. Contains only the settings that are meaningful for an already-created invoice: invoicing behaviour and payment settings. Collection alignment and tax policy are gather-time / profile-wide concerns and are not included.',
   )
 
 export const subscriptionCancel = z
@@ -4051,35 +5527,32 @@ export const subscriptionCancel = z
   })
   .describe('Request for canceling a subscription.')
 
-export const subscriptionChange = z
+export const subscriptionMigrate = z
   .object({
-    labels: labels.optional(),
-    settlementMode: settlementMode.optional(),
-    customer: z
-      .object({
-        id: ulid.optional(),
-        key: externalResourceKey.optional(),
-      })
-      .describe('The customer to create the subscription for.'),
-    plan: z
-      .object({
-        id: ulid.optional(),
-        key: resourceKey.optional(),
-        version: z
-          .number()
-          .int()
-          .optional()
+    timing: subscriptionEditTiming.optional().default('immediate'),
+    targetVersion: z
+      .number()
+      .int()
+      .gte(1)
+      .optional()
 
-          .describe(
-            'The plan version of the subscription, if any. If not provided, the latest version of the plan will be used.',
-          ),
-      })
-      .describe('The plan reference of the subscription.'),
+      .describe(
+        'A strictly later version of the current plan. Omit to use its latest version.',
+      ),
+    startingPhase: z
+      .string()
+      .min(1)
+      .optional()
+
+      .describe(
+        'Explicitly replace the subscription, starting in this target plan phase. Always selects replacement, even when the phase matches the current one. Replacement may produce billing adjustments and does not transfer addons.',
+      ),
     billingAnchor: dateTime.optional(),
-    costBasisMode: subscriptionCostBasisMode.optional().default('dynamic'),
-    timing: subscriptionEditTiming,
   })
-  .describe('Request for changing a subscription.')
+
+  .describe(
+    "Request for migrating to a later version of the subscription's current plan.",
+  )
 
 export const createSubscriptionAddonRequest = z
   .object({
@@ -4096,6 +5569,23 @@ export const createSubscriptionAddonRequest = z
     timing: subscriptionEditTiming,
   })
   .describe('SubscriptionAddon create request.')
+
+export const subscriptionAddonUpdate = z
+  .object({
+    quantity: z
+      .number()
+      .int()
+      .nonnegative()
+
+      .describe(
+        'The new quantity of the add-on. Must be at least 0. A quantity of 0 removes the add-on from the point the timing resolves to.',
+      ),
+    timing: subscriptionEditTiming,
+  })
+
+  .describe(
+    'Request for updating a subscription add-on. Only the quantity can be changed; the timing controls when the new quantity takes effect.',
+  )
 
 export const createTaxCodeRequest = z
   .object({
@@ -4192,35 +5682,6 @@ export const updateAppRequest = z
   ])
   .describe('Request to update an installed app.')
 
-export const invoiceWorkflow = z
-  .object({
-    invoicing: invoiceWorkflowInvoicingSettings.optional(),
-    payment: workflowPaymentSettings.optional(),
-  })
-
-  .describe(
-    'Invoice-level snapshot of the workflow configuration. Contains only the settings that are meaningful for an already-created invoice: invoicing behaviour and payment settings. Collection alignment and tax policy are gather-time / profile-wide concerns and are not included.',
-  )
-
-export const invoiceStatusDetails = z
-  .object({
-    immutable: z
-      .boolean()
-
-      .describe(
-        'Whether the invoice is immutable (i.e. cannot be modified or deleted).',
-      ),
-    failed: z.boolean().describe('Whether the invoice is in a failed state.'),
-    extendedStatus: z
-      .string()
-
-      .describe(
-        'Fine-grained internal status string providing additional workflow detail beyond the top-level status enum.',
-      ),
-    availableActions: invoiceAvailableActions,
-  })
-  .describe('Detailed status information for a standard invoice.')
-
 export const invoiceLineDiscounts = z
   .object({
     amount: z
@@ -4259,6 +5720,129 @@ export const entitlementFeatureAccess = z
   })
   .describe('Access status for a single feature.')
 
+export const notificationChannelPagePaginatedResponse = z
+  .object({
+    data: z.array(notificationChannel),
+    meta: paginatedMeta,
+  })
+  .describe('Page paginated response.')
+
+export const notificationRuleBalanceThreshold = z
+  .object({
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z
+      .literal('entitlements.balance.threshold')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReference)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+    thresholds: z
+      .array(notificationBalanceThreshold)
+      .min(1)
+      .max(10)
+      .describe('The thresholds that generate an event when crossed.'),
+    features: z
+      .array(featureReference)
+      .optional()
+
+      .describe(
+        'The features the rule applies to. When omitted, the rule applies to every feature.',
+      ),
+  })
+
+  .describe(
+    'A rule that generates an event when an entitlement balance crosses one of its thresholds.',
+  )
+
+export const notificationRuleBalanceThresholdRequest = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labels.optional(),
+    type: z
+      .literal('entitlements.balance.threshold')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReference)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+    thresholds: z
+      .array(notificationBalanceThreshold)
+      .min(1)
+      .max(10)
+      .describe('The thresholds that generate an event when crossed.'),
+    features: z
+      .array(featureReference)
+      .optional()
+
+      .describe(
+        'The features the rule applies to. When omitted, the rule applies to every feature.',
+      ),
+  })
+  .describe('Request body for a balance threshold rule.')
+
+export const notificationEventDeliveryStatus = z
+  .object({
+    channelId: ulid,
+    state: notificationEventDeliveryState,
+    reason: z
+      .string()
+
+      .describe(
+        'The reason for the last state change. Empty for successful deliveries.',
+      ),
+    updatedAt: dateTime,
+    nextAttempt: dateTime.optional(),
+    attempts: z
+      .array(notificationEventDeliveryAttempt)
+      .describe('The delivery attempts made so far, most recent first.'),
+  })
+
+  .describe(
+    'The delivery status of a notification event for one channel of the generating rule.',
+  )
+
 export const customerData = z
   .object({
     billingProfile: profileReference.optional(),
@@ -4273,19 +5857,72 @@ export const upsertCustomerBillingDataRequest = z
   })
   .describe('CustomerBillingData upsert request.')
 
-export const creditBalances = z
+export const chargeFlatFeeSystemIntent = z
   .object({
-    retrievedAt: dateTime,
-    balances: z.array(creditBalance).describe('The balances by currencies.'),
-  })
-  .describe('The balances of the credits of a customer.')
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
 
-export const creditTransactionPaginatedResponse = z
-  .object({
-    data: z.array(creditTransaction),
-    meta: cursorMeta,
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labels.optional(),
+    invoiceAt: dateTime,
+    servicePeriod: closedPeriod,
+    fullServicePeriod: closedPeriod,
+    billingPeriod: closedPeriod,
+    paymentTerm: pricePaymentTerm,
+    discounts: chargeFlatFeeDiscounts.optional(),
+    prorationConfiguration: rateCardProrationConfiguration,
+    amountBeforeProration: currencyAmount,
+    deletedAt: dateTime.optional(),
   })
-  .describe('Cursor paginated response.')
+
+  .describe(
+    'Flat fee intent fields from the system lifecycle controller shadowed by a manual override.',
+  )
+
+export const listCustomerEntitlementAccessResponseData = z
+  .object({
+    data: z
+      .array(entitlementValueResult)
+      .describe('The list of entitlement access results.'),
+  })
+  .describe('List customer entitlement access response data.')
+
+export const notificationEventBalanceThresholdData = z
+  .object({
+    entitlementId: ulid,
+    feature: notificationEventFeatureReference,
+    subjectKey: z
+      .string()
+      .describe('The key of the subject the entitlement belongs to.'),
+    customerId: ulid.optional(),
+    value: entitlementValueResult,
+    threshold: notificationBalanceThreshold,
+  })
+  .describe('The entities and threshold a balance threshold event refers to.')
+
+export const notificationEventEntitlementData = z
+  .object({
+    entitlementId: ulid,
+    feature: notificationEventFeatureReference,
+    subjectKey: z
+      .string()
+      .describe('The key of the subject the entitlement belongs to.'),
+    customerId: ulid.optional(),
+    value: entitlementValueResult,
+  })
+
+  .describe(
+    'The entitlement, feature, and subject an entitlement notification event refers to.',
+  )
 
 export const priceGraduated = z
   .object({
@@ -4300,7 +5937,7 @@ export const priceGraduated = z
   })
 
   .describe(
-    "Graduated tiered price. Each tier's rate applies only to the usage within that tier. Pricing can change as cumulative usage crosses tier boundaries. When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are expressed in converted billing units.",
+    "Graduated tiered price. Each tier's rate applies only to the usage within that tier. Pricing can change as cumulative usage crosses tier boundaries. When UnitConfig is present on the containing resource, tier boundaries (up_to_amount) are expressed in converted billing units.",
   )
 
 export const priceVolume = z
@@ -4316,7 +5953,14 @@ export const priceVolume = z
   })
 
   .describe(
-    'Volume tiered price. The maximum quantity within a period determines the per-unit price for all units in that period. When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are expressed in converted billing units.',
+    'Volume tiered price. The maximum quantity within a period determines the per-unit price for all units in that period. When UnitConfig is present on the containing resource, tier boundaries (up_to_amount) are expressed in converted billing units.',
+  )
+
+export const featureUnitCost = z
+  .discriminatedUnion('type', [featureManualUnitCost, featureLlmUnitCost])
+
+  .describe(
+    'Per-unit cost configuration for a feature. Either a fixed manual amount or a dynamic LLM cost lookup.',
   )
 
 export const updatePriceGraduated = z
@@ -4332,7 +5976,7 @@ export const updatePriceGraduated = z
   })
 
   .describe(
-    "Graduated tiered price. Each tier's rate applies only to the usage within that tier. Pricing can change as cumulative usage crosses tier boundaries. When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are expressed in converted billing units.",
+    "Graduated tiered price. Each tier's rate applies only to the usage within that tier. Pricing can change as cumulative usage crosses tier boundaries. When UnitConfig is present on the containing resource, tier boundaries (up_to_amount) are expressed in converted billing units.",
   )
 
 export const updatePriceVolume = z
@@ -4348,14 +5992,7 @@ export const updatePriceVolume = z
   })
 
   .describe(
-    'Volume tiered price. The maximum quantity within a period determines the per-unit price for all units in that period. When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are expressed in converted billing units.',
-  )
-
-export const featureUnitCost = z
-  .discriminatedUnion('type', [featureManualUnitCost, featureLlmUnitCost])
-
-  .describe(
-    'Per-unit cost configuration for a feature. Either a fixed manual amount or a dynamic LLM cost lookup.',
+    'Volume tiered price. The maximum quantity within a period determines the per-unit price for all units in that period. When UnitConfig is present on the containing resource, tier boundaries (up_to_amount) are expressed in converted billing units.',
   )
 
 export const pricePagePaginatedResponse = z
@@ -4365,93 +6002,29 @@ export const pricePagePaginatedResponse = z
   })
   .describe('Page paginated response.')
 
-export const createCreditGrantRequest = z
+export const createCreditGrantPurchase = z
   .object({
-    name: z
-      .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
+    currency: currencyCode,
+    perUnitCostBasis: numeric.optional(),
+    costBasis: createChargeCostBasis.optional(),
+    availabilityPolicy: creditAvailabilityPolicy
       .optional()
-
-      .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
-      ),
-    labels: createLabels.optional(),
-    fundingMethod: creditFundingMethod,
-    currency: createCurrencyCode,
-    amount: numeric,
-    purchase: createCreditGrantPurchase.optional(),
-    taxConfig: createCreditGrantTaxConfig.optional(),
-    filters: createCreditGrantFilters.optional(),
-    priority: z
-      .number()
-      .int()
-      .gte(1)
-      .lte(1000)
-      .optional()
-      .default(10)
-
-      .describe(
-        'Draw-down priority of the grant. Lower values have higher priority.',
-      ),
-    effectiveAt: dateTime.optional(),
-    expiresAfter: iso8601Duration.optional(),
-    key: externalResourceKey.optional(),
+      .default('on_creation'),
   })
-  .describe('CreditGrant create request.')
+  .describe('Purchase and payment terms of the grant.')
 
-export const creditGrant = z
+export const creditGrantPurchase = z
   .object({
-    id: ulid,
-    name: z
-      .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
+    currency: currencyCode,
+    perUnitCostBasis: numeric.optional(),
+    resolvedCostBasis: chargeResolvedCostBasis.optional(),
+    amount: numeric.optional(),
+    availabilityPolicy: creditAvailabilityPolicy
       .optional()
-
-      .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
-      ),
-    labels: labels.optional(),
-    createdAt: dateTime,
-    updatedAt: dateTime,
-    deletedAt: dateTime.optional(),
-    fundingMethod: creditFundingMethod,
-    currency: billingCurrencyCode,
-    amount: numeric,
-    purchase: creditGrantPurchase.optional(),
-    taxConfig: creditGrantTaxConfig.optional(),
-    invoice: creditGrantInvoiceReference.optional(),
-    filters: creditGrantFilters.optional(),
-    priority: z
-      .number()
-      .int()
-      .gte(1)
-      .lte(1000)
-      .optional()
-      .default(10)
-
-      .describe(
-        'Draw-down priority of the grant. Lower values have higher priority.',
-      ),
-    effectiveAt: dateTime.optional(),
-    key: externalResourceKey.optional(),
-    expiresAt: dateTime.optional(),
-    voidedAt: dateTime.optional(),
-    status: creditGrantStatus,
+      .default('on_creation'),
+    settlementStatus: creditPurchasePaymentSettlementStatus.optional(),
   })
-
-  .describe(
-    'A credit grant allocates credits to a customer. Credits are drawn down against charges according to the settlement mode configured on the rate card.',
-  )
+  .describe('Purchase and payment terms of the grant.')
 
 export const createChargeFlatFeeRequest = z
   .object({
@@ -4470,7 +6043,8 @@ export const createChargeFlatFeeRequest = z
       ),
     labels: labels.optional(),
     type: z.literal('flat_fee').describe('The type of the charge.'),
-    currency: currencyCode,
+    currency: billingCurrencyCode,
+    costBasis: chargeCostBasis.optional(),
     invoiceAt: dateTime,
     servicePeriod: closedPeriod,
     uniqueReferenceId: z
@@ -4481,12 +6055,9 @@ export const createChargeFlatFeeRequest = z
     taxConfig: taxConfig.optional(),
     paymentTerm: pricePaymentTerm,
     discounts: chargeFlatFeeDiscounts.optional(),
-    featureId: z
-      .string()
-      .optional()
-      .describe('The feature ID associated with the charge.'),
     prorationConfiguration: rateCardProrationConfiguration,
     amountBeforeProration: currencyAmount,
+    feature: featureReference.optional(),
     fullServicePeriod: closedPeriod.optional(),
     billingPeriod: closedPeriod.optional(),
   })
@@ -4514,19 +6085,19 @@ export const workflowTaxSettings = z
   })
   .describe('Tax settings for a billing workflow.')
 
-export const subscriptionPagePaginatedResponse = z
+export const creditBalances = z
   .object({
-    data: z.array(subscription),
-    meta: paginatedMeta,
+    retrievedAt: dateTime,
+    balances: z.array(creditBalance).describe('The balances by currencies.'),
   })
-  .describe('Page paginated response.')
+  .describe('The balances of the credits of a customer.')
 
-export const subscriptionChangeResponse = z
+export const creditTransactionPaginatedResponse = z
   .object({
-    current: subscription,
-    next: subscription,
+    data: z.array(creditTransaction),
+    meta: cursorMeta,
   })
-  .describe('Response for changing a subscription.')
+  .describe('Cursor paginated response.')
 
 export const planAddonPagePaginatedResponse = z
   .object({
@@ -4535,12 +6106,57 @@ export const planAddonPagePaginatedResponse = z
   })
   .describe('Page paginated response.')
 
+export const notificationEventInvoiceCreatedPayload = z
+  .object({
+    id: ulid,
+    type: z.literal('invoice.created').describe('The type of the event.'),
+    timestamp: dateTime,
+    data: notificationEventInvoiceData,
+  })
+  .describe('An invoice created notification event payload.')
+
+export const notificationEventInvoiceUpdatedPayload = z
+  .object({
+    id: ulid,
+    type: z.literal('invoice.updated').describe('The type of the event.'),
+    timestamp: dateTime,
+    data: notificationEventInvoiceData,
+  })
+  .describe('An invoice updated notification event payload.')
+
 export const ingestedEventPaginatedResponse = z
   .object({
     data: z.array(ingestedEvent),
     meta: cursorMeta,
   })
   .describe('Cursor paginated response.')
+
+export const entitlementHistory = z
+  .object({
+    windowedHistory: z
+      .array(entitlementHistoryWindow)
+
+      .describe(
+        'Usage in half-open windows of the requested size, aligned to the requested time zone. Empty windows are included; windows before usage measurement began are omitted.',
+      ),
+    burndownHistory: z
+      .array(entitlementBurndownSegment)
+
+      .describe(
+        'Periods in which grants were consumed in a fixed order. A new segment starts whenever grant priorities change or a usage period starts.',
+      ),
+  })
+  .describe('Balance and usage history of a metered entitlement.')
+
+export const chargeRealizationDetailedLine = z
+  .discriminatedUnion('type', [
+    chargeRealizationDetailedLineFlatFee,
+    chargeRealizationDetailedLineUsageBased,
+  ])
+
+  .describe(
+    "A detailed (child) line type of a charge realization run. This is distinct from an invoice's own detailed lines: it represents the rated/priced breakdown produced by the realization run itself, before that breakdown is (or is not yet) reflected on an invoice line. Credit-then-invoice runs include credit allocations in these lines, while credits-only runs keep the gross rated detail.",
+  )
 
 export const currency = z
   .discriminatedUnion('type', [currencyFiat, currencyCustom])
@@ -4580,18 +6196,9 @@ export const customerPagePaginatedResponse = z
   })
   .describe('Page paginated response.')
 
-export const party = z
-  .object({
-    id: z.string().optional().describe('Unique identifier for the party.'),
-    key: externalResourceKey.optional(),
-    name: z
-      .string()
-      .optional()
-      .describe('Legal name or representation of the party.'),
-    taxId: partyTaxIdentity.optional(),
-    addresses: partyAddresses.optional(),
-  })
-  .describe('Party represents a person or business entity.')
+export const customerOrReference = z
+  .union([customer, customerReference])
+  .describe('Customer or reference.')
 
 export const supplier = z
   .object({
@@ -4607,6 +6214,19 @@ export const supplier = z
   .describe(
     "Snapshot of the supplier's information at the time the invoice was issued. Structurally a read-only subset of `BillingParty` (the type configured on the billing profile), so the snapshot stays aligned with the source. `key` is omitted because it is not part of the snapshotted supplier data.",
   )
+
+export const party = z
+  .object({
+    id: z.string().optional().describe('Unique identifier for the party.'),
+    key: externalResourceKey.optional(),
+    name: z
+      .string()
+      .optional()
+      .describe('Legal name or representation of the party.'),
+    taxId: partyTaxIdentity.optional(),
+    addresses: partyAddresses.optional(),
+  })
+  .describe('Party represents a person or business entity.')
 
 export const updateSupplier = z
   .object({
@@ -4702,6 +6322,64 @@ export const appStripeCreateCheckoutSessionRequestOptions = z
     "Configuration options for creating a Stripe Checkout Session. Based on Stripe's [Checkout Session API parameters](https://docs.stripe.com/api/checkout/sessions/create).",
   )
 
+export const createEntitlementMeteredRequest = z
+  .object({
+    type: z.literal('metered').describe('The type of the entitlement.'),
+    feature: featureReference,
+    labels: labels.optional(),
+    isSoftLimit: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'If true, the customer keeps access to the feature after the balance is exhausted.',
+      ),
+    issue: entitlementIssueAfterReset.optional(),
+    issueAfterReset: numeric.optional(),
+    issueAfterResetPriority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(255)
+      .optional()
+      .default(1)
+      .describe('The priority of the grant created after each reset.'),
+    preserveOverageAtReset: z
+      .boolean()
+      .optional()
+      .default(false)
+
+      .describe(
+        'If true, the overage is preserved at reset. If false, the usage is reset to 0.',
+      ),
+    usagePeriod: recurringPeriodInput,
+    measureUsageFrom: entitlementMeasureUsageFrom.optional(),
+    grants: z
+      .array(entitlementGrantCreateRequest)
+      .optional()
+
+      .describe(
+        'Grants created together with the entitlement. Cannot be combined with `issue`.',
+      ),
+  })
+  .describe('Metered entitlement create request.')
+
+export const entitlement = z
+  .discriminatedUnion('type', [
+    entitlementMetered,
+    entitlementStatic,
+    entitlementBoolean,
+  ])
+  .describe('An entitlement grants a customer access to a feature.')
+
+export const entitlementGrantPagePaginatedResponse = z
+  .object({
+    data: z.array(entitlementGrant),
+    meta: paginatedMeta,
+  })
+  .describe('Page paginated response.')
+
 export const workflowCollectionAlignment = z
   .discriminatedUnion('type', [
     workflowCollectionAlignmentSubscription,
@@ -4710,6 +6388,17 @@ export const workflowCollectionAlignment = z
 
   .describe(
     'The alignment for collecting the pending line items into an invoice. Defaults to subscription, which means that we are to create a new invoice every time the a subscription period starts (for in advance items) or ends (for in arrears items).',
+  )
+
+export const invoiceWorkflowSettings = z
+  .object({
+    apps: invoiceWorkflowAppsReferences.optional(),
+    sourceBillingProfile: profileReference,
+    workflow: invoiceWorkflow,
+  })
+
+  .describe(
+    'Snapshot of the billing workflow configuration captured at invoice creation.',
   )
 
 export const taxCodePagePaginatedResponse = z
@@ -4742,6 +6431,13 @@ export const appStripe = z
     type: z.literal('stripe').describe('The app type.'),
     definition: appCatalogItem,
     status: appStatus,
+    actions: z
+      .array(appAction)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
     accountId: z
       .string()
 
@@ -4786,6 +6482,13 @@ export const appSandbox = z
     type: z.literal('sandbox').describe('The app type.'),
     definition: appCatalogItem,
     status: appStatus,
+    actions: z
+      .array(appAction)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
   })
   .describe('Sandbox app can be used for testing billing features.')
 
@@ -4812,6 +6515,13 @@ export const appExternalInvoicing = z
     type: z.literal('external_invoicing').describe('The app type.'),
     definition: appCatalogItem,
     status: appStatus,
+    actions: z
+      .array(appAction)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
     enableDraftSyncHook: z
       .boolean()
 
@@ -4837,16 +6547,143 @@ export const appCatalogItemPagePaginatedResponse = z
   })
   .describe('Page paginated response.')
 
-export const invoiceWorkflowSettings = z
+export const installedAppStripe = z
   .object({
-    apps: invoiceWorkflowAppsReferences.optional(),
-    sourceBillingProfile: profileReference,
-    workflow: invoiceWorkflow,
-  })
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
 
-  .describe(
-    'Snapshot of the billing workflow configuration captured at invoice creation.',
-  )
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z.literal('stripe').describe('The app type.'),
+    definition: appCatalogItem,
+    status: appStatus,
+    actions: z
+      .array(appAction)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
+    accountId: z
+      .string()
+
+      .describe(
+        'The Stripe account ID associated with the connected Stripe account.',
+      ),
+    livemode: z
+      .boolean()
+
+      .describe(
+        'Indicates whether the app is connected to a live Stripe account.',
+      ),
+    maskedApiKey: z
+      .string()
+
+      .describe(
+        'The masked Stripe API key that only exposes the first and last few characters.',
+      ),
+    defaultForCapabilityTypes: z
+      .array(appCapabilityType)
+      .describe('Default capabilities of the installed app.'),
+  })
+  .describe('Response of an installed app.')
+
+export const installedAppSandbox = z
+  .object({
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z.literal('sandbox').describe('The app type.'),
+    definition: appCatalogItem,
+    status: appStatus,
+    actions: z
+      .array(appAction)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
+    defaultForCapabilityTypes: z
+      .array(appCapabilityType)
+      .describe('Default capabilities of the installed app.'),
+  })
+  .describe('Response of an installed app.')
+
+export const installedAppExternalInvoicing = z
+  .object({
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z.literal('external_invoicing').describe('The app type.'),
+    definition: appCatalogItem,
+    status: appStatus,
+    actions: z
+      .array(appAction)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
+    enableDraftSyncHook: z
+      .boolean()
+
+      .describe(
+        'Enable draft synchronization hook. When enabled, invoices will pause at the draft state and wait for the integration to call the draft synchronized endpoint before progressing to the issuing state. This allows the external system to validate and prepare the invoice data. When disabled, invoices automatically progress through the draft state based on the configured workflow timing.',
+      ),
+    enableIssuingSyncHook: z
+      .boolean()
+
+      .describe(
+        'Enable issuing synchronization hook. When enabled, invoices will pause at the issuing state and wait for the integration to call the issuing synchronized endpoint before progressing to the issued state. This ensures the external invoicing system has successfully created and finalized the invoice before it is marked as issued. When disabled, invoices automatically progress through the issuing state and are immediately marked as issued.',
+      ),
+    defaultForCapabilityTypes: z
+      .array(appCapabilityType)
+      .describe('Default capabilities of the installed app.'),
+  })
+  .describe('Response of an installed app.')
 
 export const invoiceDetailedLine = z
   .object({
@@ -4913,6 +6750,50 @@ export const entitlementAccessQueryResult = z
   })
   .describe('Access evaluation result for a single resolved customer.')
 
+export const notificationRule = z
+  .discriminatedUnion('type', [
+    notificationRuleBalanceThreshold,
+    notificationRuleEntitlementReset,
+    notificationRuleInvoiceCreated,
+    notificationRuleInvoiceUpdated,
+  ])
+
+  .describe(
+    'A notification rule selects the type of event to generate, the conditions specific to that type, and the channels to deliver the events to.',
+  )
+
+export const notificationRuleRequest = z
+  .discriminatedUnion('type', [
+    notificationRuleBalanceThresholdRequest,
+    notificationRuleEntitlementResetRequest,
+    notificationRuleInvoiceCreatedRequest,
+    notificationRuleInvoiceUpdatedRequest,
+  ])
+
+  .describe(
+    "Request body for creating or updating a notification rule. Updates replace the rule's mutable state: omitting `disabled`, `labels`, or `features` resets them to their defaults. The `type` must match the existing rule on update.",
+  )
+
+export const notificationEventBalanceThresholdPayload = z
+  .object({
+    id: ulid,
+    type: z
+      .literal('entitlements.balance.threshold')
+      .describe('The type of the event.'),
+    timestamp: dateTime,
+    data: notificationEventBalanceThresholdData,
+  })
+  .describe('A balance threshold notification event payload.')
+
+export const notificationEventResetPayload = z
+  .object({
+    id: ulid,
+    type: z.literal('entitlements.reset').describe('The type of the event.'),
+    timestamp: dateTime,
+    data: notificationEventEntitlementData,
+  })
+  .describe('An entitlement reset notification event payload.')
+
 export const price = z
   .discriminatedUnion('type', [
     priceFree,
@@ -4927,18 +6808,8 @@ export const priceUsageBased = z
   .discriminatedUnion('type', [priceUnit, priceGraduated, priceVolume])
 
   .describe(
-    'Usage-based price types that can appear on a usage-based rate card. When UnitConfig is present on the rate card, these price types operate on billing units (i.e. post-conversion quantities), not raw metered units.',
+    'Usage-based price types for a rate card or charge. When UnitConfig is present on the object, these price types operate on billing units (i.e. post-conversion quantities), not raw metered units.',
   )
-
-export const updatePrice = z
-  .discriminatedUnion('type', [
-    updatePriceFree,
-    updatePriceFlat,
-    updatePriceUnit,
-    updatePriceGraduated,
-    updatePriceVolume,
-  ])
-  .describe('Price.')
 
 export const feature = z
   .object({
@@ -5003,12 +6874,110 @@ export const updateFeatureRequest = z
     'Request body for updating a feature. Currently only the unit_cost field can be updated.',
   )
 
-export const creditGrantPagePaginatedResponse = z
+export const updatePrice = z
+  .discriminatedUnion('type', [
+    updatePriceFree,
+    updatePriceFlat,
+    updatePriceUnit,
+    updatePriceGraduated,
+    updatePriceVolume,
+  ])
+  .describe('Price.')
+
+export const createCreditGrantRequest = z
   .object({
-    data: z.array(creditGrant),
-    meta: paginatedMeta,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: createLabels.optional(),
+    fundingMethod: creditFundingMethod,
+    currency: createCurrencyCode,
+    amount: numeric,
+    purchase: createCreditGrantPurchase.optional(),
+    taxConfig: createTaxCodeConfig.optional(),
+    filters: createCreditGrantFilters.optional(),
+    priority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(1000)
+      .optional()
+      .default(10)
+
+      .describe(
+        'Draw-down priority of the grant. Lower values have higher priority.',
+      ),
+    effectiveAt: dateTime.optional(),
+    expiresAfter: iso8601Duration.optional(),
+    key: externalResourceKey.optional(),
   })
-  .describe('Page paginated response.')
+  .describe('CreditGrant create request.')
+
+export const creditGrant = z
+  .object({
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    fundingMethod: creditFundingMethod,
+    currency: billingCurrencyCode,
+    amount: numeric,
+    purchase: creditGrantPurchase.optional(),
+    taxConfig: taxCodeConfig.optional(),
+    invoice: creditGrantInvoiceReference.optional(),
+    filters: creditGrantFilters.optional(),
+    priority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(1000)
+      .optional()
+      .default(10)
+
+      .describe(
+        'Draw-down priority of the grant. Lower values have higher priority.',
+      ),
+    effectiveAt: dateTime.optional(),
+    key: externalResourceKey.optional(),
+    expiresAt: dateTime.optional(),
+    voidedAt: dateTime.optional(),
+    status: creditGrantStatus,
+    validationIssues: z
+      .array(validationIssue)
+      .optional()
+
+      .describe(
+        'Validation issues found while processing the credit grant. Present only when there are one or more validation findings. An empty list is omitted.',
+      ),
+  })
+
+  .describe(
+    'A credit grant allocates credits to a customer. Credits are drawn down against charges according to the settlement mode configured on the rate card.',
+  )
 
 export const currencyPagePaginatedResponse = z
   .object({
@@ -5048,7 +7017,7 @@ export const invoiceBase = z
     totals: totals,
     servicePeriod: closedPeriod,
     validationIssues: z
-      .array(invoiceValidationIssue)
+      .array(validationIssue)
       .optional()
 
       .describe(
@@ -5070,6 +7039,21 @@ export const customerStripeCreateCheckoutSessionRequest = z
     'Request to create a Stripe Checkout Session for the customer. Checkout Sessions are used to collect payment method information from customers in a secure, Stripe-hosted interface. This integration uses setup mode to collect payment methods that can be charged later for subscription billing.',
   )
 
+export const createEntitlementRequest = z
+  .discriminatedUnion('type', [
+    createEntitlementMeteredRequest,
+    createEntitlementStaticRequest,
+    createEntitlementBooleanRequest,
+  ])
+  .describe('Entitlement create request.')
+
+export const entitlementPagePaginatedResponse = z
+  .object({
+    data: z.array(entitlement),
+    meta: paginatedMeta,
+  })
+  .describe('Page paginated response.')
+
 export const workflowCollectionSettings = z
   .object({
     alignment: workflowCollectionAlignment.optional().default({
@@ -5089,9 +7073,63 @@ export const workflowCollectionSettings = z
     'Workflow collection specifies how to collect the pending line items for an invoice.',
   )
 
+export const chargeRealizationInvoice = z
+  .object({
+    id: ulid,
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    number: invoiceNumber,
+    currency: currencyCode,
+    supplier: supplier,
+    totals: totals,
+    servicePeriod: closedPeriod,
+    validationIssues: z
+      .array(validationIssue)
+      .optional()
+
+      .describe(
+        'Validation issues found during invoice processing. Present only when there are one or more validation findings. An empty list is omitted.',
+      ),
+    externalReferences: invoiceExternalReferences.optional(),
+    type: z
+      .literal('standard')
+      .describe('Discriminator field identifying this as a standard invoice.'),
+    status: invoiceStandardStatus,
+    statusDetails: invoiceStatusDetails,
+    issuedAt: dateTime.optional(),
+    draftUntil: dateTime.optional(),
+    quantitySnapshottedAt: dateTime.optional(),
+    collectionAt: dateTime.optional(),
+    dueAt: dateTime.optional(),
+    sentToCustomerAt: dateTime.optional(),
+    workflow: invoiceWorkflowSettings,
+  })
+
+  .describe(
+    'The invoice a charge realization was booked to, embedded as a header. Matches the standard invoice entity, except that it carries no `customer` snapshot (the charge context already identifies the customer) and `lines` are never populated (the realization itself is the line-level breakdown). The shared invoice contract stays untouched: this model exists so the charges API can slim the embedding without loosening the invoices API.',
+  )
+
 export const app = z
   .discriminatedUnion('type', [appStripe, appSandbox, appExternalInvoicing])
   .describe('Installed application.')
+
+export const billingInstallAppResponse = z
+  .discriminatedUnion('type', [
+    installedAppStripe,
+    installedAppSandbox,
+    installedAppExternalInvoicing,
+  ])
+  .describe('Response of the app install.')
 
 export const entitlementAccessQueryResponse = z
   .object({
@@ -5105,124 +7143,24 @@ export const entitlementAccessQueryResponse = z
   })
   .describe('Response of the entitlement access query.')
 
-export const chargeFlatFee = z
+export const notificationRulePagePaginatedResponse = z
   .object({
-    id: ulid,
-    name: z
-      .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
-      .optional()
-
-      .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
-      ),
-    labels: labels.optional(),
-    createdAt: dateTime,
-    updatedAt: dateTime,
-    deletedAt: dateTime.optional(),
-    type: z.literal('flat_fee').describe('The type of the charge.'),
-    customer: billingCustomerReference,
-    lifecycleController: lifecycleController,
-    subscription: subscriptionReference.optional(),
-    currency: currencyCode,
-    status: chargeStatus,
-    invoiceAt: dateTime,
-    servicePeriod: closedPeriod,
-    fullServicePeriod: closedPeriod,
-    billingPeriod: closedPeriod,
-    advanceAfter: dateTime.optional(),
-    uniqueReferenceId: z
-      .string()
-      .optional()
-      .describe('Unique reference ID of the charge.'),
-    settlementMode: settlementMode,
-    taxConfig: taxConfig.optional(),
-    paymentTerm: pricePaymentTerm,
-    discounts: chargeFlatFeeDiscounts.optional(),
-    featureKey: z
-      .string()
-      .optional()
-      .describe('The feature associated with the charge, when applicable.'),
-    featureId: z
-      .string()
-      .optional()
-      .describe('The feature ID associated with the charge.'),
-    prorationConfiguration: rateCardProrationConfiguration,
-    amountAfterProration: currencyAmount,
-    price: price,
-    systemIntent: chargeFlatFeeSystemIntent.optional(),
+    data: z.array(notificationRule),
+    meta: paginatedMeta,
   })
-  .describe('A flat fee charge for a customer.')
+  .describe('Page paginated response.')
 
-export const chargeUsageBasedSystemIntent = z
-  .object({
-    name: z
-      .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
-      .optional()
-
-      .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
-      ),
-    labels: labels.optional(),
-    invoiceAt: dateTime,
-    servicePeriod: closedPeriod,
-    fullServicePeriod: closedPeriod,
-    billingPeriod: closedPeriod,
-    discounts: rateCardDiscounts.optional(),
-    price: price,
-    deletedAt: dateTime.optional(),
-  })
+export const notificationEventPayload = z
+  .discriminatedUnion('type', [
+    notificationEventBalanceThresholdPayload,
+    notificationEventResetPayload,
+    notificationEventInvoiceCreatedPayload,
+    notificationEventInvoiceUpdatedPayload,
+  ])
 
   .describe(
-    'Usage-based intent fields from the system lifecycle controller shadowed by a manual override.',
+    'The payload delivered to the channels, discriminated by the event type.',
   )
-
-export const createChargeUsageBasedRequest = z
-  .object({
-    name: z
-      .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
-      .optional()
-
-      .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
-      ),
-    labels: labels.optional(),
-    type: z.literal('usage_based').describe('The type of the charge.'),
-    currency: currencyCode,
-    invoiceAt: dateTime,
-    servicePeriod: closedPeriod,
-    uniqueReferenceId: z
-      .string()
-      .optional()
-      .describe('Unique reference ID of the charge.'),
-    settlementMode: settlementMode,
-    taxConfig: taxConfig.optional(),
-    discounts: rateCardDiscounts.optional(),
-    featureId: z
-      .string()
-      .describe('The feature ID associated with the charge.'),
-    price: price,
-    fullServicePeriod: closedPeriod.optional(),
-    billingPeriod: closedPeriod.optional(),
-  })
-  .describe('Usage-based charge create request.')
 
 export const rateCard = z
   .object({
@@ -5249,7 +7187,7 @@ export const rateCard = z
     paymentTerm: pricePaymentTerm.optional().default('in_arrears'),
     commitments: spendCommitments.optional(),
     discounts: rateCardDiscounts.optional(),
-    taxConfig: rateCardTaxConfig.optional(),
+    taxConfig: taxCodeConfig.optional(),
     entitlement: rateCardEntitlement.optional(),
   })
 
@@ -5260,63 +7198,15 @@ export const rateCard = z
 export const invoiceLineRateCard = z
   .object({
     price: price,
-    taxConfig: rateCardTaxConfig.optional(),
+    taxConfig: taxCodeConfig.optional(),
     featureKey: resourceKey.optional(),
     discounts: rateCardDiscounts.optional(),
     unitConfig: unitConfig.optional(),
   })
   .describe('Rate card configuration snapshot for a usage-based invoice line.')
 
-export const updateInvoiceLineRateCard = z
+export const chargeUsageBasedSystemIntent = z
   .object({
-    price: updatePrice,
-    taxConfig: updateRateCardTaxConfig.optional(),
-    featureKey: resourceKey.optional(),
-    discounts: updateDiscounts.optional(),
-  })
-  .describe('Rate card configuration snapshot for a usage-based invoice line.')
-
-export const featurePagePaginatedResponse = z
-  .object({
-    data: z.array(feature),
-    meta: paginatedMeta,
-  })
-  .describe('Page paginated response.')
-
-export const workflow = z
-  .object({
-    collection: workflowCollectionSettings.optional(),
-    invoicing: workflowInvoicingSettings.optional(),
-    payment: workflowPaymentSettings.optional(),
-    tax: workflowTaxSettings.optional(),
-  })
-  .describe('Billing workflow settings.')
-
-export const appPagePaginatedResponse = z
-  .object({
-    data: z.array(app),
-    meta: paginatedMeta,
-  })
-  .describe('Page paginated response.')
-
-export const billingInstallAppResponse = z
-  .object({
-    app: app,
-    defaultForCapabilityTypes: z.array(appCapabilityType),
-  })
-  .describe('Response of the app install.')
-
-export const profileApps = z
-  .object({
-    tax: app,
-    invoicing: app,
-    payment: app,
-  })
-  .describe('Applications used by a billing profile.')
-
-export const chargeUsageBased = z
-  .object({
-    id: ulid,
     name: z
       .string()
       .min(1)
@@ -5331,20 +7221,42 @@ export const chargeUsageBased = z
         'Optional description of the resource. Maximum 1024 characters.',
       ),
     labels: labels.optional(),
-    createdAt: dateTime,
-    updatedAt: dateTime,
-    deletedAt: dateTime.optional(),
-    type: z.literal('usage_based').describe('The type of the charge.'),
-    customer: billingCustomerReference,
-    lifecycleController: lifecycleController,
-    subscription: subscriptionReference.optional(),
-    currency: currencyCode,
-    status: chargeStatus,
     invoiceAt: dateTime,
     servicePeriod: closedPeriod,
     fullServicePeriod: closedPeriod,
     billingPeriod: closedPeriod,
-    advanceAfter: dateTime.optional(),
+    discounts: rateCardDiscounts.optional(),
+    price: priceUsageBased,
+    commitments: spendCommitments.optional(),
+    unitConfig: unitConfig.optional(),
+    deletedAt: dateTime.optional(),
+  })
+
+  .describe(
+    'Usage-based intent fields from the system lifecycle controller shadowed by a manual override.',
+  )
+
+export const createChargeUsageBasedRequest = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labels.optional(),
+    type: z.literal('usage_based').describe('The type of the charge.'),
+    currency: billingCurrencyCode,
+    costBasis: chargeCostBasis.optional(),
+    invoiceAt: dateTime,
+    servicePeriod: closedPeriod,
     uniqueReferenceId: z
       .string()
       .optional()
@@ -5352,34 +7264,100 @@ export const chargeUsageBased = z
     settlementMode: settlementMode,
     taxConfig: taxConfig.optional(),
     discounts: rateCardDiscounts.optional(),
-    featureKey: z.string().describe('The feature associated with the charge.'),
-    featureId: z
-      .string()
-      .describe('The feature ID associated with the charge.'),
-    totals: chargeTotals,
-    price: price,
-    systemIntent: chargeUsageBasedSystemIntent.optional(),
+    price: priceUsageBased,
+    commitments: spendCommitments.optional(),
+    unitConfig: unitConfig.optional(),
+    feature: featureReference,
+    fullServicePeriod: closedPeriod.optional(),
+    billingPeriod: closedPeriod.optional(),
   })
-  .describe('A usage-based charge for a customer.')
+  .describe('Usage-based charge create request.')
 
-export const createChargeRequest = z
-  .discriminatedUnion('type', [
-    createChargeFlatFeeRequest,
-    createChargeUsageBasedRequest,
-  ])
-  .describe('Customer charge.')
+export const featureOrReference = z
+  .union([feature, featureReference])
+  .describe('Feature or reference.')
 
-export const subscriptionAddonRateCard = z
+export const featurePagePaginatedResponse = z
   .object({
-    rateCard: rateCard,
-    affectedSubscriptionItemIds: z
-      .array(ulid)
+    data: z.array(feature),
+    meta: paginatedMeta,
+  })
+  .describe('Page paginated response.')
+
+export const updateInvoiceLineRateCard = z
+  .object({
+    price: updatePrice,
+    taxConfig: updateTaxCodeConfig.optional(),
+    featureKey: resourceKey.optional(),
+    discounts: updateDiscounts.optional(),
+  })
+  .describe('Rate card configuration snapshot for a usage-based invoice line.')
+
+export const creditGrantPagePaginatedResponse = z
+  .object({
+    data: z.array(creditGrant),
+    meta: paginatedMeta,
+  })
+  .describe('Page paginated response.')
+
+export const workflow = z
+  .object({
+    collection: workflowCollectionSettings.optional(),
+    invoicing: workflowInvoicingSettings.optional(),
+    payment: workflowPaymentSettings.optional(),
+    tax: workflowTaxSettings.optional(),
+  })
+  .describe('Billing workflow settings.')
+
+export const chargeRealizationInvoiceOrReference = z
+  .union([chargeRealizationInvoice, chargeRealizationInvoiceReference])
+  .describe('ChargeRealizationInvoice or reference.')
+
+export const appPagePaginatedResponse = z
+  .object({
+    data: z.array(app),
+    meta: paginatedMeta,
+  })
+  .describe('Page paginated response.')
+
+export const profileApps = z
+  .object({
+    tax: app,
+    invoicing: app,
+    payment: app,
+  })
+  .describe('Applications used by a billing profile.')
+
+export const notificationEvent = z
+  .object({
+    id: ulid,
+    type: notificationEventType,
+    createdAt: dateTime,
+    rule: notificationRuleReference,
+    deliveryStatus: z
+      .array(notificationEventDeliveryStatus)
 
       .describe(
-        'The IDs of the subscription items that this rate card belongs to.',
+        'The delivery status of the event, one entry per channel of the rule.',
       ),
+    payload: notificationEventPayload,
   })
-  .describe('A rate card for a subscription add-on.')
+
+  .describe(
+    'A notification event records that a notification rule fired and tracks the delivery of its payload to each channel of the rule. Events are created by the system and cannot be modified.',
+  )
+
+export const subscriptionItem = z
+  .object({
+    id: ulid,
+    activeFrom: dateTime,
+    activeTo: dateTime.optional(),
+    rateCard: rateCard,
+  })
+
+  .describe(
+    'A subscription item pins a rate card to a cadence within a subscription phase.',
+  )
 
 export const planPhase = z
   .object({
@@ -5405,6 +7383,31 @@ export const planPhase = z
   .describe(
     "The plan phase or pricing ramp allows changing a plan's rate cards over time as a subscription progresses.",
   )
+
+export const subscriptionEditAddItem = z
+  .object({
+    type: z
+      .literal('add_item')
+      .describe('Discriminator for the add-item operation.'),
+    phaseKey: z.string().describe('The key of the phase to add the item to.'),
+    rateCard: rateCard,
+  })
+
+  .describe(
+    'Add a new rate card to a phase. Adding an item to the current phase closes the active version of the same item key and appends a new version.',
+  )
+
+export const subscriptionAddonRateCard = z
+  .object({
+    rateCard: rateCard,
+    affectedSubscriptionItemIds: z
+      .array(ulid)
+
+      .describe(
+        'The IDs of the subscription items that this rate card belongs to.',
+      ),
+  })
+  .describe('A rate card for a subscription add-on.')
 
 export const addon = z
   .object({
@@ -5544,6 +7547,13 @@ export const invoiceStandardLine = z
     'A top-level line item on an invoice. Each line represents a single charge, typically associated with a rate card from a subscription. Detailed (child) lines are nested under `detailed_lines` when present.',
   )
 
+export const createChargeRequest = z
+  .discriminatedUnion('type', [
+    createChargeFlatFeeRequest,
+    createChargeUsageBasedRequest,
+  ])
+  .describe('Customer charge.')
+
 export const updateInvoiceStandardLine = z
   .object({
     name: z
@@ -5647,17 +7657,51 @@ export const upsertBillingProfileRequest = z
   })
   .describe('BillingProfile upsert request.')
 
-export const charge = z
-  .discriminatedUnion('type', [chargeFlatFee, chargeUsageBased])
-  .describe('Customer charge.')
+export const chargeRealization = z
+  .object({
+    id: z
+      .string()
+      .optional()
 
-export const subscriptionAddon = z
+      .describe(
+        'The ID of the realization run. Not present on `outstanding` entries, which are projections rather than persisted runs.',
+      ),
+    lineId: z
+      .string()
+      .optional()
+
+      .describe(
+        'The ID of the invoice line this realization was booked to, when the realization has been invoiced.',
+      ),
+    invoice: chargeRealizationInvoiceOrReference.optional(),
+    type: chargeRealizationType,
+    servicePeriod: closedPeriod,
+    usage: numeric.optional(),
+    payment: chargeRealizationPayment.optional(),
+    totals: totals.optional(),
+    detailedLines: z
+      .array(chargeRealizationDetailedLine)
+      .optional()
+
+      .describe(
+        'The detailed (rated) lines produced by the realization run. Requires the `realization.detailed_lines` expand.',
+      ),
+  })
+
+  .describe(
+    "A realization run of a charge. `totals` and `detailed_lines` are only populated with the `realization.totals` and `realization.detailed_lines` expands, respectively, since computing them requires re-deriving the run's rated breakdown. `invoice` is an ID reference unless the `realization.invoice` expand is used, which resolves it to the invoice header of the run's booked line: the invoice entity without its `lines` and without the `customer` snapshot (the charge itself already identifies the customer).",
+  )
+
+export const notificationEventPagePaginatedResponse = z
+  .object({
+    data: z.array(notificationEvent),
+    meta: paginatedMeta,
+  })
+  .describe('Page paginated response.')
+
+export const subscriptionPhase = z
   .object({
     id: ulid,
-    labels: labels.optional(),
-    createdAt: dateTime,
-    updatedAt: dateTime,
-    deletedAt: dateTime.optional(),
     name: z
       .string()
       .min(1)
@@ -5671,29 +7715,60 @@ export const subscriptionAddon = z
       .describe(
         'Optional description of the resource. Maximum 1024 characters.',
       ),
-    addon: addonReference,
-    quantity: z
-      .number()
-      .int()
-      .gte(1)
-
-      .describe(
-        'The quantity of the add-on. Always 1 for single instance add-ons.',
-      ),
-    quantityAt: dateTime,
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    key: resourceKey,
     activeFrom: dateTime,
     activeTo: dateTime.optional(),
-    timeline: z
-      .array(subscriptionAddonTimelineSegment)
+    items: z
+      .array(subscriptionItem)
 
       .describe(
-        'The timeline of the add-on. The returned periods are sorted and continuous.',
+        'The rate cards in effect for this phase, resolved to the version active at the queried time (the currently active version for the current phase, the first version for future phases, and the last version for past phases).',
       ),
-    rateCards: z
-      .array(subscriptionAddonRateCard)
-      .describe('The rate cards of the add-on.'),
   })
-  .describe('Addon purchased with a subscription.')
+
+  .describe(
+    "A subscription phase groups the rate cards in effect for a segment of the subscription's lifetime. Analogous to plan phases.",
+  )
+
+export const subscriptionCustomPlan = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labels.optional(),
+    currency: billingCurrencyCode,
+    billingCadence: iso8601Duration,
+    proRatingEnabled: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe('Whether pro-rating is enabled for this plan.'),
+    phases: z
+      .array(planPhase)
+      .min(1)
+
+      .describe(
+        'The plan phases define the pricing ramp for a subscription. A phase switch occurs only at the end of a billing period. At least one phase is required.',
+      ),
+  })
+
+  .describe(
+    'An inline (custom) plan definition used to create or change a subscription without referencing a published plan. Mirrors the plan create shape without a key or version, since a custom plan is not persisted or versioned on its own. `settlement_mode` is also omitted: it is a subscription-level concern set via the `settlement_mode` field on the create/change request, not on the inline plan.',
+  )
 
 export const plan = z
   .object({
@@ -5742,7 +7817,7 @@ export const plan = z
       .describe(
         'The plan phases define the pricing ramp for a subscription. A phase switch occurs only at the end of a billing period. At least one phase is required.',
       ),
-    settlementMode: settlementMode.optional().default('credit_then_invoice'),
+    settlementMode: settlementMode,
     validationErrors: z
       .array(productCatalogValidationError)
       .optional()
@@ -5784,8 +7859,12 @@ export const createPlanRequest = z
       .describe(
         'The plan phases define the pricing ramp for a subscription. A phase switch occurs only at the end of a billing period. At least one phase is required.',
       ),
+    settlementMode: settlementMode.optional().default('credit_then_invoice'),
   })
-  .describe('Plan create request.')
+
+  .describe(
+    'Plan create request. `settlement_mode` is re-declared as optional with a `credit_then_invoice` default, applied only on create.',
+  )
 
 export const upsertPlanRequest = z
   .object({
@@ -5815,8 +7894,70 @@ export const upsertPlanRequest = z
       .describe(
         'The plan phases define the pricing ramp for a subscription. A phase switch occurs only at the end of a billing period. At least one phase is required.',
       ),
+    settlementMode: settlementMode.optional(),
   })
-  .describe('Plan upsert request.')
+
+  .describe(
+    "Plan upsert (update) request. `settlement_mode` is re-declared as optional with no default, so an omitted value leaves the plan's existing settlement mode unchanged.",
+  )
+
+export const subscriptionEditOperation = z
+  .discriminatedUnion('type', [
+    subscriptionEditAddItem,
+    subscriptionEditRemoveItem,
+    subscriptionEditAddPhase,
+    subscriptionEditRemovePhase,
+    subscriptionEditStretchPhase,
+    subscriptionEditUnscheduleEdit,
+  ])
+
+  .describe(
+    'A single customization to apply to a running subscription. The `type` field discriminates which operation is performed.',
+  )
+
+export const subscriptionAddon = z
+  .object({
+    id: ulid,
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    addon: addonReference,
+    quantity: z
+      .number()
+      .int()
+      .gte(1)
+
+      .describe(
+        'The quantity of the add-on. Always 1 for single instance add-ons.',
+      ),
+    quantityAt: dateTime,
+    activeFrom: dateTime,
+    activeTo: dateTime.optional(),
+    timeline: z
+      .array(subscriptionAddonTimelineSegment)
+
+      .describe(
+        'The timeline of the add-on. The returned periods are sorted and continuous.',
+      ),
+    rateCards: z
+      .array(subscriptionAddonRateCard)
+      .describe('The rate cards of the add-on.'),
+  })
+  .describe('Addon purchased with a subscription.')
 
 export const addonPagePaginatedResponse = z
   .object({
@@ -5846,23 +7987,164 @@ export const profilePagePaginatedResponse = z
   })
   .describe('Page paginated response.')
 
-export const chargePagePaginatedResponse = z
+export const subscription = z
   .object({
-    data: z.array(charge),
-    meta: paginatedMeta,
-  })
-  .describe('Page paginated response.')
+    id: ulid,
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    name: z
+      .string()
+      .min(1)
+      .max(256)
 
-export const subscriptionAddonPagePaginatedResponse = z
-  .object({
-    data: z.array(subscriptionAddon),
-    meta: paginatedMeta,
+      .describe(
+        'Display name of the subscription. Defaults to the plan name when the subscription is created from a plan.',
+      ),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+      .describe('Optional description of the subscription.'),
+    activeFrom: dateTime,
+    activeTo: dateTime.optional(),
+    customerId: ulid,
+    planId: ulid.optional(),
+    plan: subscriptionPlanReference.optional(),
+    invoiceCurrency: currencyCode,
+    costBasisMode: subscriptionCostBasisMode.default('dynamic'),
+    costBasisPins: z
+      .array(subscriptionCostBasisPin)
+
+      .describe(
+        'Cost bases pinned to custom-currency pairs for this subscription.',
+      ),
+    billingCadence: iso8601Duration,
+    proRatingConfig: subscriptionProRatingConfig.optional(),
+    billingAnchor: dateTime,
+    status: subscriptionStatus,
+    settlementMode: settlementMode.optional(),
+    currentPeriod: closedPeriod.optional(),
+    phases: z
+      .array(subscriptionPhase)
+
+      .describe(
+        "The phases of the subscription in chronological order. A phase groups the rate cards that are in effect for a segment of the subscription's lifetime.",
+      ),
   })
-  .describe('Page paginated response.')
+  .describe('Subscription.')
+
+export const subscriptionCreate = z.object({
+  labels: labels.optional(),
+  settlementMode: settlementMode.optional(),
+  customer: z
+    .object({
+      id: ulid.optional(),
+      key: externalResourceKey.optional(),
+    })
+    .describe('The customer to create the subscription for.'),
+  plan: z
+    .object({
+      id: ulid.optional(),
+      key: resourceKey.optional(),
+      version: z
+        .number()
+        .int()
+        .optional()
+
+        .describe(
+          'The plan version of the subscription, if any. If not provided, the latest version of the plan will be used.',
+        ),
+    })
+    .optional()
+
+    .describe(
+      'A reference to a published plan the subscription is created from. Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the subscription on an existing published plan; use `custom_plan` to define the plan inline.',
+    ),
+  customPlan: subscriptionCustomPlan.optional(),
+  startingPhase: z
+    .string()
+    .min(1)
+    .optional()
+
+    .describe(
+      'The key of the phase to start the subscription in. If not provided, the subscription starts in the first phase of the plan. Only applies when creating from a published `plan`; custom plans define their own phases inline.',
+    ),
+  timing: subscriptionCreateTiming.optional(),
+  billingAnchor: dateTime.optional(),
+  costBasisMode: subscriptionCostBasisMode.optional().default('dynamic'),
+})
+
+export const subscriptionChange = z
+  .object({
+    labels: labels.optional(),
+    settlementMode: settlementMode.optional(),
+    customer: z
+      .object({
+        id: ulid.optional(),
+        key: externalResourceKey.optional(),
+      })
+      .describe('The customer to create the subscription for.'),
+    plan: z
+      .object({
+        id: ulid.optional(),
+        key: resourceKey.optional(),
+        version: z
+          .number()
+          .int()
+          .optional()
+
+          .describe(
+            'The plan version of the subscription, if any. If not provided, the latest version of the plan will be used.',
+          ),
+      })
+      .optional()
+
+      .describe(
+        'A reference to a published plan the subscription is created from. Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the subscription on an existing published plan; use `custom_plan` to define the plan inline.',
+      ),
+    customPlan: subscriptionCustomPlan.optional(),
+    startingPhase: z
+      .string()
+      .min(1)
+      .optional()
+
+      .describe(
+        'The key of the phase to start the subscription in. If not provided, the subscription starts in the first phase of the plan. Only applies when creating from a published `plan`; custom plans define their own phases inline.',
+      ),
+    billingAnchor: dateTime.optional(),
+    costBasisMode: subscriptionCostBasisMode.optional().default('dynamic'),
+    timing: subscriptionEditTiming,
+  })
+  .describe('Request for changing a subscription.')
 
 export const planPagePaginatedResponse = z
   .object({
     data: z.array(plan),
+    meta: paginatedMeta,
+  })
+  .describe('Page paginated response.')
+
+export const subscriptionEdit = z
+  .object({
+    customizations: z
+      .array(subscriptionEditOperation)
+      .max(100)
+
+      .describe(
+        'The ordered batch of customizations to apply to the running subscription.',
+      ),
+    timing: subscriptionEditTiming.optional().default('immediate'),
+  })
+
+  .describe(
+    "Request for editing a running subscription. Applies an ordered batch of customizations to the subscription's phases and items. A later customization observes the state produced by earlier ones.",
+  )
+
+export const subscriptionAddonPagePaginatedResponse = z
+  .object({
+    data: z.array(subscriptionAddon),
     meta: paginatedMeta,
   })
   .describe('Page paginated response.')
@@ -5889,7 +8171,7 @@ export const invoiceStandard = z
     totals: totals,
     servicePeriod: closedPeriod,
     validationIssues: z
-      .array(invoiceValidationIssue)
+      .array(validationIssue)
       .optional()
 
       .describe(
@@ -5945,6 +8227,31 @@ export const updateInvoiceStandardRequest = z
   })
   .describe('InvoiceStandard update request.')
 
+export const subscriptionOrReference = z
+  .union([subscription, subscriptionReference])
+  .describe('Subscription or reference.')
+
+export const subscriptionPagePaginatedResponse = z
+  .object({
+    data: z.array(subscription),
+    meta: paginatedMeta,
+  })
+  .describe('Page paginated response.')
+
+export const subscriptionChangeResponse = z
+  .object({
+    current: subscription,
+    next: subscription,
+  })
+  .describe('Response for changing a subscription.')
+
+export const subscriptionMigrateResponse = z
+  .object({
+    current: subscriptionBase,
+    next: subscription,
+  })
+  .describe('Response for migrating a subscription.')
+
 export const invoice = z
   .discriminatedUnion('type', [invoiceStandard])
 
@@ -5956,9 +8263,137 @@ export const updateInvoiceRequest = z
   .discriminatedUnion('type', [updateInvoiceStandardRequest])
   .describe('UpdateInvoiceRequest update request.')
 
+export const chargeFlatFee = z
+  .object({
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z.literal('flat_fee').describe('The type of the charge.'),
+    customer: customerOrReference,
+    lifecycleController: lifecycleController,
+    subscription: subscriptionOrReference.optional(),
+    currency: billingCurrencyCode,
+    resolvedCostBasis: chargeResolvedCostBasis.optional(),
+    status: chargeStatus,
+    validationIssues: z
+      .array(validationIssue)
+      .optional()
+
+      .describe(
+        'Validation issues found while processing the charge. Present only when there are one or more validation findings. An empty list is omitted.',
+      ),
+    invoiceAt: dateTime,
+    servicePeriod: closedPeriod,
+    fullServicePeriod: closedPeriod,
+    billingPeriod: closedPeriod,
+    advanceAfter: dateTime.optional(),
+    uniqueReferenceId: z
+      .string()
+      .optional()
+      .describe('Unique reference ID of the charge.'),
+    settlementMode: settlementMode,
+    taxConfig: taxConfig.optional(),
+    realizations: z
+      .array(chargeRealization)
+      .describe('The realization runs of the charge, sorted by `created_at`.'),
+    paymentTerm: pricePaymentTerm,
+    discounts: chargeFlatFeeDiscounts.optional(),
+    feature: featureOrReference.optional(),
+    prorationConfiguration: rateCardProrationConfiguration,
+    amountAfterProration: currencyAmount,
+    price: priceFlat,
+    systemIntent: chargeFlatFeeSystemIntent.optional(),
+  })
+  .describe('A flat fee charge for a customer.')
+
+export const chargeUsageBased = z
+  .object({
+    id: ulid,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labels.optional(),
+    createdAt: dateTime,
+    updatedAt: dateTime,
+    deletedAt: dateTime.optional(),
+    type: z.literal('usage_based').describe('The type of the charge.'),
+    customer: customerOrReference,
+    lifecycleController: lifecycleController,
+    subscription: subscriptionOrReference.optional(),
+    currency: billingCurrencyCode,
+    resolvedCostBasis: chargeResolvedCostBasis.optional(),
+    status: chargeStatus,
+    validationIssues: z
+      .array(validationIssue)
+      .optional()
+
+      .describe(
+        'Validation issues found while processing the charge. Present only when there are one or more validation findings. An empty list is omitted.',
+      ),
+    invoiceAt: dateTime,
+    servicePeriod: closedPeriod,
+    fullServicePeriod: closedPeriod,
+    billingPeriod: closedPeriod,
+    advanceAfter: dateTime.optional(),
+    uniqueReferenceId: z
+      .string()
+      .optional()
+      .describe('Unique reference ID of the charge.'),
+    settlementMode: settlementMode,
+    taxConfig: taxConfig.optional(),
+    realizations: z
+      .array(chargeRealization)
+      .describe('The realization runs of the charge, sorted by `created_at`.'),
+    discounts: rateCardDiscounts.optional(),
+    feature: featureOrReference,
+    totals: chargeTotals,
+    usage: numeric.optional(),
+    price: priceUsageBased,
+    commitments: spendCommitments.optional(),
+    unitConfig: unitConfig.optional(),
+    systemIntent: chargeUsageBasedSystemIntent.optional(),
+  })
+  .describe('A usage-based charge for a customer.')
+
 export const invoicePagePaginatedResponse = z
   .object({
     data: z.array(invoice),
+    meta: paginatedMeta,
+  })
+  .describe('Page paginated response.')
+
+export const charge = z
+  .discriminatedUnion('type', [chargeFlatFee, chargeUsageBased])
+  .describe('Customer charge.')
+
+export const chargePagePaginatedResponse = z
+  .object({
+    data: z.array(charge),
     meta: paginatedMeta,
   })
   .describe('Page paginated response.')
@@ -6127,6 +8562,228 @@ export const listCustomerEntitlementAccessPathParams = z.object({
 export const listCustomerEntitlementAccessResponse =
   listCustomerEntitlementAccessResponseData
 
+export const getCustomerEntitlementAccessPathParams = z.object({
+  customerId: ulid,
+  featureKey: resourceKey,
+})
+
+export const getCustomerEntitlementAccessResponse = entitlementAccessCheckResult
+
+export const getCustomerEntitlementValueByFeatureKeyPathParams = z.object({
+  customerId: ulid,
+  featureKey: resourceKey,
+})
+
+export const getCustomerEntitlementValueByFeatureKeyQueryParams = z.object({
+  expand: z
+    .array(entitlementAccessExpand)
+    .optional()
+
+    .describe(
+      'Expand computed fields. Supported values are: - `value`: Expand the balance details of a metered entitlement; it sets the `value` field.',
+    ),
+  at: dateTime.optional(),
+})
+
+export const getCustomerEntitlementValueByFeatureKeyResponse =
+  entitlementFeatureValueResult
+
+export const createCustomerEntitlementPathParams = z.object({
+  customerId: ulid,
+})
+
+export const createCustomerEntitlementBody = createEntitlementRequest
+
+export const createCustomerEntitlementResponse = entitlement
+
+export const overrideCustomerEntitlementPathParams = z.object({
+  customerId: ulid,
+  entitlementId: ulid,
+})
+
+export const overrideCustomerEntitlementBody = createEntitlementRequest
+
+export const overrideCustomerEntitlementResponse = entitlement
+
+export const getCustomerEntitlementHistoryPathParams = z.object({
+  customerId: ulid,
+  entitlementId: ulid,
+})
+
+export const getCustomerEntitlementHistoryQueryParams = z.object({
+  from: dateTime.optional(),
+  to: dateTime.optional(),
+  windowSize: entitlementHistoryWindowSize,
+  timeZone: z.coerce
+    .string()
+    .optional()
+    .default('UTC')
+    .describe('The IANA time zone the windows are aligned to.'),
+})
+
+export const getCustomerEntitlementHistoryResponse = entitlementHistory
+
+export const getCustomerEntitlementPathParams = z.object({
+  customerId: ulid,
+  entitlementId: ulid,
+})
+
+export const getCustomerEntitlementResponse = entitlement
+
+export const listCustomerEntitlementsPathParams = z.object({
+  customerId: ulid,
+})
+
+export const listCustomerEntitlementsQueryParams = z.object({
+  page: z
+    .object({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  filter: listCustomerEntitlementsParamsFilter.optional(),
+})
+
+export const listCustomerEntitlementsResponse = z.object({
+  data: z.array(entitlement),
+  meta: paginatedMeta,
+})
+
+export const resetCustomerEntitlementUsagePathParams = z.object({
+  customerId: ulid,
+  entitlementId: ulid,
+})
+
+export const resetCustomerEntitlementUsageBody =
+  resetCustomerEntitlementUsageRequest
+
+export const deleteCustomerEntitlementPathParams = z.object({
+  customerId: ulid,
+  entitlementId: ulid,
+})
+
+export const listEntitlementsQueryParams = z.object({
+  page: z
+    .object({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  filter: listEntitlementsParamsFilter.optional(),
+})
+
+export const listEntitlementsResponse = z.object({
+  data: z.array(entitlement),
+  meta: paginatedMeta,
+})
+
+export const getEntitlementPathParams = z.object({
+  entitlementId: ulid,
+})
+
+export const getEntitlementResponse = entitlement
+
+export const createCustomerEntitlementGrantPathParams = z.object({
+  customerId: ulid,
+  entitlementId: ulid,
+})
+
+export const createCustomerEntitlementGrantBody = entitlementGrantCreateRequest
+
+export const createCustomerEntitlementGrantResponse = entitlementGrant
+
+export const listCustomerEntitlementGrantsPathParams = z.object({
+  customerId: ulid,
+  entitlementId: ulid,
+})
+
+export const listCustomerEntitlementGrantsQueryParams = z.object({
+  page: z
+    .object({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  includeDeleted: z.coerce
+    .boolean()
+    .optional()
+    .describe('Include deleted grants in the response.'),
+})
+
+export const listCustomerEntitlementGrantsResponse = z.object({
+  data: z.array(entitlementGrant),
+  meta: paginatedMeta,
+})
+
+export const getCustomerEntitlementValuePathParams = z.object({
+  customerId: ulid,
+  entitlementId: ulid,
+})
+
+export const getCustomerEntitlementValueQueryParams = z.object({
+  expand: z
+    .array(entitlementAccessExpand)
+    .optional()
+
+    .describe(
+      'Expand computed fields. Supported values are: - `value`: Expand the balance details of a metered entitlement; it sets the `value` field.',
+    ),
+  at: dateTime.optional(),
+})
+
+export const getCustomerEntitlementValueResponse = entitlementValueResult
+
+export const listGrantsQueryParams = z.object({
+  page: z
+    .object({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  filter: listGrantsParamsFilter.optional(),
+  includeDeleted: z.coerce
+    .boolean()
+    .optional()
+    .describe('Include deleted grants in the response.'),
+})
+
+export const listGrantsResponse = z.object({
+  data: z.array(entitlementGrant),
+  meta: paginatedMeta,
+})
+
+export const voidGrantPathParams = z.object({
+  grantId: ulid,
+})
+
+export const voidGrantQueryParams = z.object({
+  voidedAt: dateTime.optional(),
+})
+
 export const createCreditGrantPathParams = z.object({
   customerId: ulid,
 })
@@ -6235,13 +8892,13 @@ export const listCustomerChargesQueryParams = z.object({
     .optional()
     .describe('Determines which page of the collection to retrieve.'),
   sort: sortQuery.optional(),
-  filter: listChargesParamsFilter.optional(),
+  filter: listCustomerChargesParamsFilter.optional(),
   expand: z
     .array(chargesExpand)
     .optional()
 
     .describe(
-      "Expand full objects for referenced entities. Supported values are: - `real_time_usage`: Expand the charge's real-time usage.",
+      "Expand full objects for referenced entities. Supported values are: - `real_time_usage`: Expand the charge's real-time usage; it sets the `usage` and the `totals.realtime` fields. - `customer`: Expand the charge's customer to the complete entity. - `feature`: Expand the charge's feature to the complete entity. - `subscription`: Expand the charge's subscription to the complete entity. - `realization.invoice`: Expand each realization's invoice to the complete entity. - `realization.totals`: Expand each realization run's `totals`. - `realization.detailed_lines`: Expand each realization run's `detailed_lines`.",
     ),
 })
 
@@ -6303,6 +8960,16 @@ export const unscheduleCancelationPathParams = z.object({
 
 export const unscheduleCancelationResponse = subscription
 
+export const unscheduleSubscriptionPathParams = z.object({
+  subscriptionId: ulid,
+})
+
+export const restoreSubscriptionPathParams = z.object({
+  subscriptionId: ulid,
+})
+
+export const restoreSubscriptionResponse = subscription
+
 export const changeSubscriptionPathParams = z.object({
   subscriptionId: ulid,
 })
@@ -6310,6 +8977,22 @@ export const changeSubscriptionPathParams = z.object({
 export const changeSubscriptionBody = subscriptionChange
 
 export const changeSubscriptionResponse = subscriptionChangeResponse
+
+export const migrateSubscriptionPathParams = z.object({
+  subscriptionId: ulid,
+})
+
+export const migrateSubscriptionBody = subscriptionMigrate
+
+export const migrateSubscriptionResponse = subscriptionMigrateResponse
+
+export const editSubscriptionPathParams = z.object({
+  subscriptionId: ulid,
+})
+
+export const editSubscriptionBody = subscriptionEdit
+
+export const editSubscriptionResponse = subscription
 
 export const createSubscriptionAddonPathParams = z.object({
   subscriptionId: ulid,
@@ -6350,6 +9033,15 @@ export const getSubscriptionAddonPathParams = z.object({
 
 export const getSubscriptionAddonResponse = subscriptionAddon
 
+export const updateSubscriptionAddonPathParams = z.object({
+  subscriptionId: ulid,
+  subscriptionAddonId: ulid,
+})
+
+export const updateSubscriptionAddonBody = subscriptionAddonUpdate
+
+export const updateSubscriptionAddonResponse = subscriptionAddon
+
 export const listAppsQueryParams = z.object({
   page: z
     .object({
@@ -6362,6 +9054,8 @@ export const listAppsQueryParams = z.object({
     })
     .optional()
     .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  filter: listAppsParamsFilter.optional(),
 })
 
 export const listAppsResponse = z.object({
@@ -6386,6 +9080,14 @@ export const updateAppPathParams = z.object({
 export const updateAppBody = updateAppRequest
 
 export const updateAppResponse = app
+
+export const executeAppActionPathParams = z.object({
+  appId: ulid,
+})
+
+export const executeAppActionBody = appActionRequest
+
+export const executeAppActionResponse = app
 
 export const listAppCatalogQueryParams = z.object({
   page: z
@@ -6428,6 +9130,8 @@ export const listBillingProfilesQueryParams = z.object({
     })
     .optional()
     .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  filter: listBillingProfilesParamsFilter.optional(),
 })
 
 export const listBillingProfilesResponse = z.object({
@@ -6519,6 +9223,34 @@ export const snapshotQuantitiesInvoicePathParams = z.object({
 })
 
 export const snapshotQuantitiesInvoiceResponse = invoice
+
+export const listChargesQueryParams = z.object({
+  page: z
+    .object({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  filter: listChargesParamsFilter.optional(),
+  expand: z
+    .array(chargesExpand)
+    .optional()
+
+    .describe(
+      "Expand full objects for referenced entities. Supported values are: - `real_time_usage`: Expand the charge's real-time usage; it sets the `usage` and the `totals.realtime` fields. - `customer`: Expand the charge's customer to the complete entity. - `feature`: Expand the charge's feature to the complete entity. - `subscription`: Expand the charge's subscription to the complete entity. - `realization.invoice`: Expand each realization's invoice to the complete entity. - `realization.totals`: Expand each realization run's `totals`. - `realization.detailed_lines`: Expand each realization run's `detailed_lines`.",
+    ),
+})
+
+export const listChargesResponse = z.object({
+  data: z.array(charge),
+  meta: paginatedMeta,
+})
 
 export const createTaxCodeBody = createTaxCodeRequest
 
@@ -6867,6 +9599,8 @@ export const listPlanAddonsQueryParams = z.object({
     })
     .optional()
     .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  filter: listPlanAddonsParamsFilter.optional(),
 })
 
 export const listPlanAddonsResponse = z.object({
@@ -6919,6 +9653,132 @@ export const queryEntitlementAccessQueryParams = z.object({
 export const queryEntitlementAccessBody = entitlementAccessQueryRequest
 
 export const queryEntitlementAccessResponse = entitlementAccessQueryResponse
+
+export const listNotificationChannelsQueryParams = z.object({
+  page: z
+    .object({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  filter: listNotificationChannelsParamsFilter.optional(),
+})
+
+export const listNotificationChannelsResponse = z.object({
+  data: z.array(notificationChannel),
+  meta: paginatedMeta,
+})
+
+export const createNotificationChannelBody = createNotificationChannelRequest
+
+export const createNotificationChannelResponse = notificationChannel
+
+export const getNotificationChannelPathParams = z.object({
+  notificationChannelId: ulid,
+})
+
+export const getNotificationChannelResponse = notificationChannel
+
+export const updateNotificationChannelPathParams = z.object({
+  notificationChannelId: ulid,
+})
+
+export const updateNotificationChannelBody =
+  updateBillingNotificationChannelRequest
+
+export const updateNotificationChannelResponse = notificationChannel
+
+export const deleteNotificationChannelPathParams = z.object({
+  notificationChannelId: ulid,
+})
+
+export const listNotificationRulesQueryParams = z.object({
+  page: z
+    .object({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  filter: listNotificationRulesParamsFilter.optional(),
+})
+
+export const listNotificationRulesResponse = z.object({
+  data: z.array(notificationRule),
+  meta: paginatedMeta,
+})
+
+export const createNotificationRuleBody = notificationRuleRequest
+
+export const createNotificationRuleResponse = notificationRule
+
+export const getNotificationRulePathParams = z.object({
+  notificationRuleId: ulid,
+})
+
+export const getNotificationRuleResponse = notificationRule
+
+export const updateNotificationRulePathParams = z.object({
+  notificationRuleId: ulid,
+})
+
+export const updateNotificationRuleBody = notificationRuleRequest
+
+export const updateNotificationRuleResponse = notificationRule
+
+export const deleteNotificationRulePathParams = z.object({
+  notificationRuleId: ulid,
+})
+
+export const testNotificationRulePathParams = z.object({
+  notificationRuleId: ulid,
+})
+
+export const testNotificationRuleResponse = notificationEvent
+
+export const listNotificationEventsQueryParams = z.object({
+  page: z
+    .object({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: sortQuery.optional(),
+  filter: listNotificationEventsParamsFilter.optional(),
+})
+
+export const listNotificationEventsResponse = z.object({
+  data: z.array(notificationEvent),
+  meta: paginatedMeta,
+})
+
+export const getNotificationEventPathParams = z.object({
+  notificationEventId: ulid,
+})
+
+export const getNotificationEventResponse = notificationEvent
+
+export const resendNotificationEventPathParams = z.object({
+  notificationEventId: ulid,
+})
+
+export const resendNotificationEventBody = resendBillingNotificationEventRequest
 
 export const labelsWire = z
   .record(z.string(), z.string())
@@ -7417,32 +10277,11 @@ export const entitlementTypeWire = z
   .enum(['metered', 'static', 'boolean'])
   .describe('The type of the entitlement.')
 
-export const createLabelsWire = z
-  .record(z.string(), z.string())
+export const entitlementAccessExpandWire = z
+  .enum(['value'])
 
   .describe(
-    'Labels store metadata of an entity that can be used for filtering an entity list or for searching across entity types. Keys must be of length 1-63 characters, and cannot start with "kong", "konnect", "mesh", "kic", or "\\_".',
-  )
-
-export const creditFundingMethodWire = z
-  .enum(['none', 'invoice', 'external'])
-
-  .describe(
-    'The funding method describes how the grant is funded. - `none`: No funding workflow applies, for example promotional grants - `invoice`: The grant is funded by an in-system invoice flow - `external`: The grant is funded outside the system (e.g., wire transfer, external invoice, or manual reconciliation)',
-  )
-
-export const creditAvailabilityPolicyWire = z
-  .enum(['on_creation'])
-
-  .describe(
-    'When credits become available for consumption. - `on_creation`: Credits are available as soon as the grant is created. - `on_authorization`: Credits are available once the payment is authorized. - `on_settlement`: Credits are available once the payment is settled.',
-  )
-
-export const taxBehaviorWire = z
-  .enum(['inclusive', 'exclusive'])
-
-  .describe(
-    'Tax behavior. This enum is used to specify whether tax is included in the price or excluded from the price.',
+    'Expands for customer entitlement access. Values: - `value`: The balance details of a metered entitlement; it sets the `value` field.',
   )
 
 export const iso8601DurationWire = z
@@ -7458,18 +10297,18 @@ export const iso8601DurationWire = z
     '[ISO 8601 Duration](https://docs.digi.com/resources/documentation/digidocs/90001488-13/reference/r_iso_8601_duration_format.htm) string.',
   )
 
-export const creditPurchasePaymentSettlementStatusWire = z
-  .enum(['pending', 'authorized', 'settled'])
+export const entitlementMeasureUsageFromPresetWire = z
+  .enum(['current_period_start', 'now'])
 
   .describe(
-    'Credit purchase payment settlement status. - `pending`: Payment has been initiated and is not yet authorized. - `authorized`: Payment has been authorized. - `settled`: Payment has been settled.',
+    'Preset for the time from which usage is measured. - `current_period_start`: the start of the current usage period. - `now`: the entitlement creation time.',
   )
 
-export const creditGrantStatusWire = z
-  .enum(['pending', 'active', 'expired', 'voided'])
+export const entitlementHistoryWindowSizeWire = z
+  .union([z.literal('PT1H'), z.literal('P1D')])
 
   .describe(
-    'Credit grant lifecycle status. - `pending`: The credit block has been created but is not yet valid. (`effective_at` is in the future or availability_policy is not met) - `active`: The credit block is currently valid and eligible for consumption. (`effective_at` is in the past, `expires_at` is in the future and availability_policy is met) - `expired`: The credit block expired with remaining unused balance, `expires_at` time has passed. - `voided`: The credit block was voided. Remaining balance is forfeited.',
+    'The meter query granularities the usage history can be grouped into. Sub-hour windows are too expensive to compute and monthly windows are not supported.',
   )
 
 export const stringFieldFilterExactWire = z
@@ -7498,6 +10337,122 @@ export const stringFieldFilterExactWire = z
     'Filters on the given string field value by exact match. All properties are optional; provide exactly one to specify the comparison.',
   )
 
+export const createLabelsWire = z
+  .record(z.string(), z.string())
+
+  .describe(
+    'Labels store metadata of an entity that can be used for filtering an entity list or for searching across entity types. Keys must be of length 1-63 characters, and cannot start with "kong", "konnect", "mesh", "kic", or "\\_".',
+  )
+
+export const creditFundingMethodWire = z
+  .enum(['none', 'invoice', 'external'])
+
+  .describe(
+    'The funding method describes how the grant is funded. - `none`: No funding workflow applies, for example promotional grants - `invoice`: The grant is funded by an in-system invoice flow - `external`: The grant is funded outside the system (e.g., wire transfer, external invoice, or manual reconciliation)',
+  )
+
+export const creditAvailabilityPolicyWire = z
+  .enum(['on_creation'])
+
+  .describe(
+    'When credits become available for consumption. - `on_creation`: Credits are available as soon as the grant is created. - `on_authorization`: Credits are available once the payment is authorized. - `on_settlement`: Credits are available once the payment is settled.',
+  )
+
+export const taxBehaviorWire = z
+  .enum(['inclusive', 'exclusive'])
+
+  .describe(
+    'Tax behavior. This enum is used to specify whether tax is included in the price or excluded from the price.',
+  )
+
+export const createVersionFilterWire = z
+  .strictObject({
+    eq: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this exact version.'),
+    oeq: z
+      .array(z.number().int().gte(-2147483648).lte(2147483647))
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('Match one of these versions.'),
+    gte: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this version and later versions.'),
+    lte: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this version and earlier versions.'),
+  })
+
+  .describe(
+    'An integer version comparison. Exactly one operator must be provided.',
+  )
+
+export const creditPurchasePaymentSettlementStatusWire = z
+  .enum(['pending', 'authorized', 'settled'])
+
+  .describe(
+    'Credit purchase payment settlement status. - `pending`: Payment has been initiated and is not yet authorized. - `authorized`: Payment has been authorized. - `settled`: Payment has been settled.',
+  )
+
+export const versionFilterWire = z
+  .strictObject({
+    eq: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this exact version.'),
+    oeq: z
+      .array(z.number().int().gte(-2147483648).lte(2147483647))
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('Match one of these versions.'),
+    gte: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this version and later versions.'),
+    lte: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(2147483647)
+      .optional()
+      .describe('Match this version and earlier versions.'),
+  })
+
+  .describe(
+    'An integer version comparison. Exactly one operator must be provided.',
+  )
+
+export const creditGrantStatusWire = z
+  .enum(['pending', 'active', 'expired', 'voided'])
+
+  .describe(
+    'Credit grant lifecycle status. - `pending`: The credit block has been created but is not yet valid. (`effective_at` is in the future or availability_policy is not met) - `active`: The credit block is currently valid and eligible for consumption. (`effective_at` is in the past, `expires_at` is in the future and availability_policy is met) - `expired`: The credit block expired with remaining unused balance, `expires_at` time has passed. - `voided`: The credit block was voided. Remaining balance is forfeited.',
+  )
+
+export const validationIssueSeverityWire = z
+  .enum(['critical', 'warning'])
+  .describe('Severity level of a billing validation issue.')
+
 export const creditGrantVoidPaymentAdjustmentWire = z
   .enum(['none'])
 
@@ -7513,10 +10468,18 @@ export const creditTransactionTypeWire = z
   )
 
 export const chargesExpandWire = z
-  .enum(['real_time_usage'])
+  .enum([
+    'real_time_usage',
+    'customer',
+    'feature',
+    'subscription',
+    'realization.invoice',
+    'realization.totals',
+    'realization.detailed_lines',
+  ])
 
   .describe(
-    "Expands for customer charges. Values: - `real_time_usage`: The charge's real-time usage.",
+    "Expands for customer charges. Values: - `real_time_usage`: The charge's real-time usage; it sets the `usage` and the `totals.realtime` fields, and fills the `outstanding` realization's `usage` with the not-yet-booked remainder of the live read. - `customer`: The complete customer entity of the charge. - `feature`: The complete feature entity of the charge. - `subscription`: The complete subscription of the charge, when present. - `realization.invoice`: The invoice header of each realization (the invoice entity without its `lines` and `customer` snapshot), in place of the ID reference. - `realization.totals`: The `totals` of each realization run, including credit allocations. - `realization.detailed_lines`: The `detailed_lines` of each realization run.",
   )
 
 export const lifecycleControllerWire = z
@@ -7526,18 +10489,80 @@ export const lifecycleControllerWire = z
     'Identifies whether a resource lifecycle is controlled by OpenMeter or manually overridden by the API user. Values: - `system`: The resource lifecycle is controlled by OpenMeter. - `manual`: The resource lifecycle was manually overridden by the API user.',
   )
 
-export const chargeStatusWire = z
-  .enum(['created', 'active', 'final', 'deleted'])
+export const subscriptionCostBasisModeWire = z
+  .enum(['dynamic', 'pinned'])
 
   .describe(
-    'Lifecycle status of a charge. Values: - `created`: The charge has been created but is not active yet. - `active`: The charge is active. - `final`: The charge is fully finalized and no further changes are expected. - `deleted`: The charge has been deleted.',
+    'Controls how custom-currency cost bases are selected for the subscription.',
   )
+
+export const rateCardProrationModeWire = z
+  .enum(['no_proration', 'prorate_prices'])
+
+  .describe(
+    'The proration mode of the rate card. Values: - `no_proration`: No proration. - `prorate_prices`: Prorate the price based on the time remaining in the billing period.',
+  )
+
+export const subscriptionStatusWire = z
+  .enum(['active', 'inactive', 'canceled', 'scheduled'])
+  .describe('Subscription status.')
 
 export const settlementModeWire = z
   .enum(['credit_then_invoice', 'credit_only'])
 
   .describe(
     'Settlement mode for billing. Values: - `credit_then_invoice`: Credits are applied first, then any remainder is invoiced. - `credit_only`: Usage is settled exclusively against credits.',
+  )
+
+export const priceFreeWire = z
+  .strictObject({
+    type: z.literal('free').describe('The type of the price.'),
+  })
+  .describe('Free price.')
+
+export const unitConfigOperationWire = z
+  .enum(['divide', 'multiply'])
+
+  .describe(
+    'The arithmetic operation used to convert raw metered units into billing units. - `divide`: Divide the metered quantity by the conversion factor (e.g., bytes ÷ 1e9 = GB). - `multiply`: Multiply the metered quantity by the conversion factor (e.g., cost × 1.2 = cost + 20% margin).',
+  )
+
+export const unitConfigRoundingModeWire = z
+  .enum(['ceiling', 'floor', 'half_up', 'none'])
+
+  .describe(
+    'The rounding mode applied to the converted quantity for invoicing. Rounding is applied only to the invoiced quantity. Entitlement balance checks use the precise decimal value after conversion. - `ceiling`: Round up to the next integer (typical for package-style billing). - `floor`: Round down to the previous integer. - `half_up`: Round to the nearest integer, with 0.5 rounding up. - `none`: No rounding; the converted value is used as-is.',
+  )
+
+export const pricePaymentTermWire = z
+  .union([z.literal('in_advance'), z.literal('in_arrears')])
+  .describe('The payment term of a flat price.')
+
+export const rateCardStaticEntitlementWire = z
+  .strictObject({
+    type: z.literal('static').describe('The type of the entitlement template.'),
+    config: z
+      .unknown()
+
+      .describe(
+        'The entitlement config as a JSON object. Returned when checking entitlement access; useful for configuring fine-grained access settings implemented in your own system.',
+      ),
+  })
+  .describe('The entitlement template of a static entitlement.')
+
+export const rateCardBooleanEntitlementWire = z
+  .strictObject({
+    type: z
+      .literal('boolean')
+      .describe('The type of the entitlement template.'),
+  })
+  .describe('The entitlement template of a boolean entitlement.')
+
+export const chargeStatusWire = z
+  .enum(['created', 'active', 'final', 'deleted'])
+
+  .describe(
+    'Lifecycle status of a charge. Values: - `created`: The charge has been created but is not active yet. - `active`: The charge is active. - `final`: The charge is fully finalized and no further changes are expected. - `deleted`: The charge has been deleted.',
   )
 
 export const taxConfigStripeWire = z
@@ -7561,212 +10586,6 @@ export const taxConfigExternalInvoicingWire = z
   })
   .describe('External invoicing tax config.')
 
-export const pricePaymentTermWire = z
-  .union([z.literal('in_advance'), z.literal('in_arrears')])
-  .describe('The payment term of a flat price.')
-
-export const chargeFlatFeeDiscountsWire = z
-  .strictObject({
-    percentage: z
-      .number()
-      .nonnegative()
-      .lte(100)
-      .optional()
-      .describe('Percentage discount applied to the price (0–100).'),
-  })
-
-  .describe(
-    'Discounts applicable to flat fee charges. This is the same as `ProductCatalog.Discounts` but without the `usage` field, which is not applicable to flat fee charges.',
-  )
-
-export const rateCardProrationModeWire = z
-  .enum(['no_proration', 'prorate_prices'])
-
-  .describe(
-    'The proration mode of the rate card. Values: - `no_proration`: No proration. - `prorate_prices`: Prorate the price based on the time remaining in the billing period.',
-  )
-
-export const priceFreeWire = z
-  .strictObject({
-    type: z.literal('free').describe('The type of the price.'),
-  })
-  .describe('Free price.')
-
-export const subscriptionCostBasisModeWire = z
-  .enum(['dynamic', 'pinned'])
-
-  .describe(
-    'Controls how custom-currency cost bases are selected for the subscription.',
-  )
-
-export const subscriptionStatusWire = z
-  .enum(['active', 'inactive', 'canceled', 'scheduled'])
-  .describe('Subscription status.')
-
-export const subscriptionEditTimingEnumWire = z
-  .enum(['immediate', 'next_billing_cycle'])
-
-  .describe(
-    'Subscription edit timing. When immediate, the requested changes take effect immediately. When next_billing_cycle, the requested changes take effect at the next billing cycle.',
-  )
-
-export const unitConfigOperationWire = z
-  .enum(['divide', 'multiply'])
-
-  .describe(
-    'The arithmetic operation used to convert raw metered units into billing units. - `divide`: Divide the metered quantity by the conversion factor (e.g., bytes ÷ 1e9 = GB). - `multiply`: Multiply the metered quantity by the conversion factor (e.g., cost × 1.2 = cost + 20% margin).',
-  )
-
-export const unitConfigRoundingModeWire = z
-  .enum(['ceiling', 'floor', 'half_up', 'none'])
-
-  .describe(
-    'The rounding mode applied to the converted quantity for invoicing. Rounding is applied only to the invoiced quantity. Entitlement balance checks use the precise decimal value after conversion. - `ceiling`: Round up to the next integer (typical for package-style billing). - `floor`: Round down to the previous integer. - `half_up`: Round to the nearest integer, with 0.5 rounding up. - `none`: No rounding; the converted value is used as-is.',
-  )
-
-export const rateCardStaticEntitlementWire = z
-  .strictObject({
-    type: z.literal('static').describe('The type of the entitlement template.'),
-    config: z
-      .unknown()
-
-      .describe(
-        'The entitlement config as a JSON object. Returned when checking entitlement access; useful for configuring fine-grained access settings implemented in your own system.',
-      ),
-  })
-  .describe('The entitlement template of a static entitlement.')
-
-export const rateCardBooleanEntitlementWire = z
-  .strictObject({
-    type: z
-      .literal('boolean')
-      .describe('The type of the entitlement template.'),
-  })
-  .describe('The entitlement template of a boolean entitlement.')
-
-export const appTypeWire = z
-  .enum(['sandbox', 'stripe', 'external_invoicing'])
-  .describe('The type of the app.')
-
-export const appCapabilityTypeWire = z
-  .enum([
-    'report_usage',
-    'report_events',
-    'calculate_tax',
-    'invoice_customers',
-    'collect_payments',
-  ])
-
-  .describe(
-    'Supported capability types for an App. Each capability defines an integration function that an App can perform.',
-  )
-
-export const appInstallMethodsWire = z
-  .enum(['with_oauth2', 'with_api_key', 'no_credentials_required'])
-  .describe('Supported installation methods for an app.')
-
-export const appStatusWire = z
-  .enum(['ready', 'unauthorized'])
-  .describe('Connection status of an installed app.')
-
-export const updateLabelsWire = z
-  .record(z.string(), z.string())
-
-  .describe(
-    'Labels store metadata of an entity that can be used for filtering an entity list or for searching across entity types. Keys must be of length 1-63 characters, and cannot start with "kong", "konnect", "mesh", "kic", or "\\_".',
-  )
-
-export const installAppStripeWithApiKeyWire = z
-  .strictObject({
-    type: z.literal('stripe').describe('Type of the app.'),
-    name: z.string().describe('Name of the app.'),
-    create_billing_profile: z
-      .boolean()
-
-      .describe(
-        'If true, a billing profile will be created for the app. The Stripe app will be also set as the default billing profile if the current default is a Sandbox app.',
-      ),
-    api_key: z.string().describe('API key for the app.'),
-  })
-  .describe('Model for installing an app from the catalog with an API key.')
-
-export const installAppSandboxWire = z
-  .strictObject({
-    type: z.literal('sandbox').describe('Type of the app.'),
-    name: z.string().describe('Name of the app.'),
-    create_billing_profile: z
-      .boolean()
-
-      .describe(
-        'If true, a billing profile will be created for the app. The Stripe app will be also set as the default billing profile if the current default is a Sandbox app.',
-      ),
-  })
-  .describe('Base model for installing an app from the catalog.')
-
-export const installAppExternalInvoicingWire = z
-  .strictObject({
-    type: z.literal('external_invoicing').describe('Type of the app.'),
-    name: z.string().describe('Name of the app.'),
-    create_billing_profile: z
-      .boolean()
-
-      .describe(
-        'If true, a billing profile will be created for the app. The Stripe app will be also set as the default billing profile if the current default is a Sandbox app.',
-      ),
-  })
-  .describe('Base model for installing an app from the catalog.')
-
-export const taxIdentificationCodeWire = z
-  .string()
-  .min(1)
-  .max(32)
-
-  .describe(
-    'Tax identifier code is a normalized tax code shown on the original identity document.',
-  )
-
-export const workflowCollectionAlignmentSubscriptionWire = z
-  .strictObject({
-    type: z.literal('subscription').describe('The type of alignment.'),
-  })
-
-  .describe(
-    'BillingWorkflowCollectionAlignmentSubscription specifies the alignment for collecting the pending line items into an invoice.',
-  )
-
-export const workflowInvoicingSubscriptionEndProrationModeWire = z
-  .enum(['bill_full_period', 'bill_actual_period'])
-  .describe('Billing workflow subscription end proration mode.')
-
-export const workflowPaymentChargeAutomaticallySettingsWire = z
-  .strictObject({
-    collection_method: z
-      .literal('charge_automatically')
-      .describe('The collection method for the invoice.'),
-  })
-
-  .describe(
-    'Payment settings for a billing workflow when the collection method is charge automatically.',
-  )
-
-export const workflowPaymentSendInvoiceSettingsWire = z
-  .strictObject({
-    collection_method: z
-      .literal('send_invoice')
-      .describe('The collection method for the invoice.'),
-    due_after: z
-      .string()
-      .optional()
-
-      .describe(
-        "The period after which the invoice is due. With some payment solutions it's only applicable for manual collection method.",
-      ),
-  })
-
-  .describe(
-    'Payment settings for a billing workflow when the collection method is send invoice.',
-  )
-
 export const invoiceNumberWire = z
   .string()
   .min(1)
@@ -7776,9 +10595,14 @@ export const invoiceNumberWire = z
     'InvoiceNumber is a unique identifier for the invoice, generated by the invoicing app. The uniqueness depends on a lot of factors: - app setting (unique per app or unique per customer) - multiple app scenarios (multiple apps generating invoices with the same prefix)',
   )
 
-export const invoiceValidationIssueSeverityWire = z
-  .enum(['critical', 'warning'])
-  .describe('Severity level of an invoice validation issue.')
+export const taxIdentificationCodeWire = z
+  .string()
+  .min(1)
+  .max(32)
+
+  .describe(
+    'Tax identifier code is a normalized tax code shown on the original identity document.',
+  )
 
 export const invoiceExternalReferencesWire = z
   .strictObject({
@@ -7857,6 +10681,226 @@ export const invoiceWorkflowInvoicingSettingsWire = z
   .describe(
     'Invoice-level invoicing settings. A subset of BillingWorkflowInvoicingSettings limited to fields that are meaningful per-invoice. progressive_billing is omitted as it is a gather-time / profile-level decision.',
   )
+
+export const workflowPaymentChargeAutomaticallySettingsWire = z
+  .strictObject({
+    collection_method: z
+      .literal('charge_automatically')
+      .describe('The collection method for the invoice.'),
+  })
+
+  .describe(
+    'Payment settings for a billing workflow when the collection method is charge automatically.',
+  )
+
+export const workflowPaymentSendInvoiceSettingsWire = z
+  .strictObject({
+    collection_method: z
+      .literal('send_invoice')
+      .describe('The collection method for the invoice.'),
+    due_after: z
+      .string()
+      .optional()
+
+      .describe(
+        "The period after which the invoice is due. With some payment solutions it's only applicable for manual collection method.",
+      ),
+  })
+
+  .describe(
+    'Payment settings for a billing workflow when the collection method is send invoice.',
+  )
+
+export const chargeRealizationTypeWire = z
+  .enum(['final_realization', 'partial_invoice', 'outstanding', 'voided'])
+
+  .describe(
+    "Type of a charge realization run. Values: - `final_realization`: The run is the final realization of the charge for its service period; no further runs are expected to correct it. - `partial_invoice`: The run only realizes part of the charge, because the remainder is not yet due to be invoiced. - `outstanding`: The type an outstanding (not-yet-realized) projection would carry if it were realized now. Never returned on a booked realization run. - `voided`: The run's billing effect was undone (for example the charge's service period was extended while its invoice was still mutable); it is retained as audit history and excluded from aggregate and live calculations.",
+  )
+
+export const chargeRealizationPaymentStatusWire = z
+  .enum(['authorized', 'settled'])
+
+  .describe(
+    "Settlement status of a charge realization's payment. Values: - `authorized`: The payment has been authorized against the customer's ledger but has not settled yet. - `settled`: The payment has settled.",
+  )
+
+export const chargeRealizationDetailedLineCategoryWire = z
+  .enum(['regular', 'commitment'])
+
+  .describe(
+    'Cost category of a charge realization detailed line. Values: - `regular`: A regular charge line, based on usage or subscription pricing. - `commitment`: A commitment-derived line, such as minimum spend.',
+  )
+
+export const chargeFlatFeeDiscountsWire = z
+  .strictObject({
+    percentage: z
+      .number()
+      .nonnegative()
+      .lte(100)
+      .optional()
+      .describe('Percentage discount applied to the price (0–100).'),
+  })
+
+  .describe(
+    'Discounts applicable to flat fee charges. This is the same as `ProductCatalog.Discounts` but without the `usage` field, which is not applicable to flat fee charges.',
+  )
+
+export const featureLlmTokenTypeWire = z
+  .enum([
+    'input',
+    'output',
+    'cache_read',
+    'cache_write',
+    'reasoning',
+    'request',
+    'response',
+  ])
+  .describe('Token type for LLM cost lookup.')
+
+export const subscriptionCreateTimingEnumWire = z
+  .enum(['immediate'])
+
+  .describe(
+    'Subscription create timing. Only immediate is supported as an enum value — unlike edit timing, next_billing_cycle is not accepted on create, since a new subscription has no current billing cycle to schedule against.',
+  )
+
+export const subscriptionEditTimingEnumWire = z
+  .enum(['immediate', 'next_billing_cycle'])
+
+  .describe(
+    'Subscription edit timing. When immediate, the requested changes take effect immediately. When next_billing_cycle, the requested changes take effect at the next billing cycle.',
+  )
+
+export const subscriptionEditRemoveItemWire = z
+  .strictObject({
+    type: z
+      .literal('remove_item')
+      .describe('Discriminator for the remove-item operation.'),
+    phase_key: z
+      .string()
+      .describe('The key of the phase to remove the item from.'),
+    item_key: z.string().describe('The key of the item to remove.'),
+  })
+  .describe('Remove a rate card from a phase.')
+
+export const subscriptionRemovePhaseShiftingWire = z
+  .enum(['next', 'prev'])
+
+  .describe(
+    "The direction to shift surrounding phases when a phase is removed. - `next`: Shift all subsequent phases to start sooner by the removed phase's length. - `prev`: Extend the previous phase to end later by the removed phase's length.",
+  )
+
+export const subscriptionEditUnscheduleEditWire = z
+  .strictObject({
+    type: z
+      .literal('unschedule_edit')
+      .describe('Discriminator for the unschedule-edit operation.'),
+  })
+
+  .describe(
+    'Discard any scheduled edits on the current phase, reverting it to its previously persisted state.',
+  )
+
+export const appTypeWire = z
+  .enum(['sandbox', 'stripe', 'external_invoicing'])
+  .describe('The type of the app.')
+
+export const appCapabilityTypeWire = z
+  .enum([
+    'report_usage',
+    'report_events',
+    'calculate_tax',
+    'invoice_customers',
+    'collect_payments',
+  ])
+
+  .describe(
+    'Supported capability types for an App. Each capability defines an integration function that an App can perform.',
+  )
+
+export const appInstallMethodsWire = z
+  .enum(['with_oauth2', 'with_api_key', 'no_credentials_required'])
+  .describe('Supported installation methods for an app.')
+
+export const appStatusWire = z
+  .enum(['ready', 'unauthorized'])
+  .describe('Connection status of an installed app.')
+
+export const appActionTypeWire = z
+  .enum(['reconcile_webhook_events'])
+  .describe('App action type.')
+
+export const updateLabelsWire = z
+  .record(z.string(), z.string())
+
+  .describe(
+    'Labels store metadata of an entity that can be used for filtering an entity list or for searching across entity types. Keys must be of length 1-63 characters, and cannot start with "kong", "konnect", "mesh", "kic", or "\\_".',
+  )
+
+export const appReconcileWebhookEventsActionRequestWire = z
+  .strictObject({
+    action_type: z
+      .literal('reconcile_webhook_events')
+      .describe('The action to execute.'),
+  })
+
+  .describe(
+    "Request to reconcile the app's webhook events with the latest supported event set.",
+  )
+
+export const installAppStripeWithApiKeyWire = z
+  .strictObject({
+    type: z.literal('stripe').describe('Type of the app.'),
+    name: z.string().describe('Name of the app.'),
+    create_billing_profile: z
+      .boolean()
+
+      .describe(
+        'If true, a billing profile will be created for the app. The Stripe app will be also set as the default billing profile if the current default is a Sandbox app.',
+      ),
+    api_key: z.string().describe('API key for the app.'),
+  })
+  .describe('Model for installing an app from the catalog with an API key.')
+
+export const installAppSandboxWire = z
+  .strictObject({
+    type: z.literal('sandbox').describe('Type of the app.'),
+    name: z.string().describe('Name of the app.'),
+    create_billing_profile: z
+      .boolean()
+
+      .describe(
+        'If true, a billing profile will be created for the app. The Stripe app will be also set as the default billing profile if the current default is a Sandbox app.',
+      ),
+  })
+  .describe('Base model for installing an app from the catalog.')
+
+export const installAppExternalInvoicingWire = z
+  .strictObject({
+    type: z.literal('external_invoicing').describe('Type of the app.'),
+    name: z.string().describe('Name of the app.'),
+    create_billing_profile: z
+      .boolean()
+
+      .describe(
+        'If true, creates the Auto Collection preset with an OpenMeter supplier in the US (postal code 94114), without replacing the default profile.',
+      ),
+  })
+  .describe('Model for installing an External Invoicing app from the catalog.')
+
+export const workflowCollectionAlignmentSubscriptionWire = z
+  .strictObject({
+    type: z.literal('subscription').describe('The type of alignment.'),
+  })
+
+  .describe(
+    'BillingWorkflowCollectionAlignmentSubscription specifies the alignment for collecting the pending line items into an invoice.',
+  )
+
+export const workflowInvoicingSubscriptionEndProrationModeWire = z
+  .enum(['bill_full_period', 'bill_actual_period'])
+  .describe('Billing workflow subscription end proration mode.')
 
 export const invoiceDiscountReasonWire = z
   .enum(['maximum_spend', 'ratecard_percentage', 'ratecard_usage'])
@@ -7948,18 +10992,6 @@ export const currencyExpandWire = z
   .describe(
     "Expands for currencies. Values: - `cost_basis`: The currency's active and scheduled cost basis.",
   )
-
-export const featureLlmTokenTypeWire = z
-  .enum([
-    'input',
-    'output',
-    'cache_read',
-    'cache_write',
-    'reasoning',
-    'request',
-    'response',
-  ])
-  .describe('Token type for LLM cost lookup.')
 
 export const llmCostProviderWire = z
   .strictObject({
@@ -8060,6 +11092,80 @@ export const entitlementFeatureAccessReasonCodeWire = z
 export const entitlementAccessQueryErrorCodeWire = z
   .enum(['unknown', 'customer_not_found'])
   .describe('Error code for an entitlement access query failure.')
+
+export const booleanFieldFilterWire = z
+  .union([
+    z.boolean(),
+    z.strictObject({
+      eq: z
+        .boolean()
+        .describe('Value strictly equals the given boolean value.'),
+    }),
+  ])
+  .describe('Filter by a boolean value (true/false).')
+
+export const notificationChannelTypeWire = z
+  .enum(['webhook'])
+
+  .describe(
+    'The type of a notification channel. Currently the only supported channel type is `webhook`; the domain model anticipates additional channel types (e.g. email, Slack) in the future, so this is modeled as an enum rather than a boolean/constant even though it has a single member today.',
+  )
+
+export const notificationBalanceThresholdTypeWire = z
+  .enum(['balance_value', 'usage_percentage', 'usage_value'])
+  .describe('What a balance threshold is measured against.')
+
+export const notificationEventTypeWire = z
+  .enum([
+    'entitlements.balance.threshold',
+    'entitlements.reset',
+    'invoice.created',
+    'invoice.updated',
+  ])
+
+  .describe(
+    'The type of a notification event. It determines which payload variant the event carries.',
+  )
+
+export const notificationEventDeliveryStateWire = z
+  .enum(['success', 'failed', 'sending', 'pending', 'resending'])
+  .describe('The delivery state of a notification event for a single channel.')
+
+export const notificationEventDeliveryAttemptResponseWire = z
+  .strictObject({
+    status_code: z
+      .number()
+      .int()
+      .gte(-2147483648)
+      .lte(2147483647)
+      .optional()
+
+      .describe(
+        'The HTTP status code returned by the recipient. Absent when no response was received.',
+      ),
+    body: z
+      .string()
+
+      .describe(
+        'The response body returned by the recipient. Empty when no body was received.',
+      ),
+    duration_ms: z.coerce
+      .bigint()
+      .gte(-9223372036854775808n)
+      .lte(9223372036854775807n)
+      .describe('How long the delivery attempt took, in milliseconds.'),
+    url: z
+      .string()
+      .optional()
+
+      .describe(
+        'The URL the event was delivered to. Only set for webhook channels.',
+      ),
+  })
+
+  .describe(
+    'The response the recipient returned for a delivery attempt. For webhook channels this is the HTTP response.',
+  )
 
 export const queryFilterIntegerWire = z
   .strictObject({
@@ -8208,17 +11314,6 @@ export const publicLabelsWire = z
     'Public labels store information about an entity that can be used for filtering a list of objects.',
   )
 
-export const booleanFieldFilterWire = z
-  .union([
-    z.boolean(),
-    z.strictObject({
-      eq: z
-        .boolean()
-        .describe('Value strictly equals the given boolean value.'),
-    }),
-  ])
-  .describe('Filter by a boolean value (true/false).')
-
 export const numericFieldFilterWire = z
   .union([
     z.number(),
@@ -8261,6 +11356,10 @@ export const numericFieldFilterWire = z
     'Filter by a numeric value. All properties are optional; provide exactly one to specify the comparison.',
   )
 
+export const chargeCostBasisTypeWire = z
+  .enum(['dynamic', 'pinned', 'manual'])
+  .describe('Cost basis resolution mode of a charge.')
+
 export const chargeTypeWire = z
   .enum(['flat_fee', 'usage_based'])
 
@@ -8283,13 +11382,6 @@ export const priceTypeWire = z
     "The type of the price. - `free`: No charge, the rate card is included at no cost. - `flat`: A fixed amount charged once per billing period, regardless of usage. - `unit`: A fixed rate charged per billing unit consumed. - `graduated`: Tiered pricing where each tier's rate applies only to usage within that tier. - `volume`: Tiered pricing where the rate for the highest tier reached applies to all units in the period.",
   )
 
-export const collectionAlignmentWire = z
-  .enum(['subscription', 'anchored'])
-
-  .describe(
-    'BillingCollectionAlignment specifies when the pending line items should be collected into an invoice.',
-  )
-
 export const collectionMethodWire = z
   .enum(['charge_automatically', 'send_invoice'])
 
@@ -8297,9 +11389,30 @@ export const collectionMethodWire = z
     'Collection method specifies how the invoice should be collected (automatic or manual).',
   )
 
+export const collectionAlignmentWire = z
+  .enum(['subscription', 'anchored'])
+
+  .describe(
+    'BillingCollectionAlignment specifies when the pending line items should be collected into an invoice.',
+  )
+
 export const featureUnitCostTypeWire = z
   .enum(['llm', 'manual'])
   .describe('The type of unit cost.')
+
+export const subscriptionEditOperationTypeWire = z
+  .enum([
+    'add_item',
+    'remove_item',
+    'add_phase',
+    'remove_phase',
+    'stretch_phase',
+    'unschedule_edit',
+  ])
+
+  .describe(
+    'The type of a subscription edit operation. - `add_item`: Add a rate card to a phase. - `remove_item`: Remove a rate card from a phase. - `add_phase`: Add a new phase to the subscription. - `remove_phase`: Remove a phase from the subscription. - `stretch_phase`: Extend the duration of a phase. - `unschedule_edit`: Discard scheduled edits on the current phase.',
+  )
 
 export const systemAccountAccessTokenWire = z
   .strictObject({
@@ -8374,6 +11487,24 @@ export const appCustomerDataExternalInvoicingWire = z
     labels: labelsWire.optional(),
   })
   .describe('External invoicing customer data.')
+
+export const createChargeCostBasisDynamicWire = z
+  .strictObject({
+    type: z
+      .literal('dynamic')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiat_currency: currencyCodeWire,
+  })
+  .describe("Cost basis resolved at the charge's full service period start.")
+
+export const chargeCostBasisDynamicWire = z
+  .strictObject({
+    type: z
+      .literal('dynamic')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiat_currency: currencyCodeWire,
+  })
+  .describe("Cost basis resolved at the charge's full service period start.")
 
 export const currencyFiatWire = z
   .strictObject({
@@ -8484,12 +11615,89 @@ export const createCurrencyCustomRequestWire = z
   })
   .describe('CurrencyCustom create request.')
 
-export const currencyAmountWire = z
+export const entitlementAccessValueWire = z
+  .strictObject({
+    balance: numericWire,
+    usage: numericWire,
+    overage: numericWire,
+    total_available_grant_amount: numericWire,
+    grant_balances: z
+      .record(z.string(), numericWire)
+      .describe('The remaining balance of each grant, keyed by grant ID.'),
+  })
+
+  .describe(
+    'Balance details of a metered entitlement at the evaluation time, which is the `at` query parameter when given and the current time otherwise.',
+  )
+
+export const entitlementIssueAfterResetWire = z
   .strictObject({
     amount: numericWire,
-    currency: currencyCodeWire,
+    priority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(255)
+      .optional()
+
+      .describe(
+        'The priority of the grant created after each reset. Lower values have higher priority.',
+      ),
   })
-  .describe('Monetary amount in a specific currency.')
+
+  .describe(
+    'Usage granted automatically after each reset of a metered entitlement. The balance returns to `amount` after every reset.',
+  )
+
+export const entitlementBurndownBalanceWire = z
+  .strictObject({
+    start: numericWire,
+    end: numericWire,
+  })
+  .describe('Entitlement balance at the boundaries of a burndown segment.')
+
+export const entitlementBurndownGrantBalancesWire = z
+  .strictObject({
+    start: z
+      .record(z.string(), numericWire)
+
+      .describe(
+        'The balance of each active grant at the start of the segment.',
+      ),
+    end: z
+      .record(z.string(), numericWire)
+      .describe('The balance of each active grant at the end of the segment.'),
+  })
+
+  .describe(
+    'Grant balances at the boundaries of a burndown segment, keyed by grant ID.',
+  )
+
+export const createChargeCostBasisManualWire = z
+  .strictObject({
+    type: z
+      .literal('manual')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiat_currency: currencyCodeWire.optional(),
+    rate: numericWire,
+  })
+
+  .describe(
+    'Cost basis with an explicit conversion rate supplied with the charge.',
+  )
+
+export const chargeCostBasisManualWire = z
+  .strictObject({
+    type: z
+      .literal('manual')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiat_currency: currencyCodeWire.optional(),
+    rate: numericWire,
+  })
+
+  .describe(
+    'Cost basis with an explicit conversion rate supplied with the charge.',
+  )
 
 export const priceFlatWire = z
   .strictObject({
@@ -8505,7 +11713,17 @@ export const priceUnitWire = z
   })
 
   .describe(
-    'Unit price. Charges a fixed rate per billing unit. When UnitConfig is present on the rate card, billing units are the converted quantities (e.g. GB instead of bytes).',
+    'Unit price. Charges a fixed rate per billing unit. When UnitConfig is present on the object, billing units are the converted quantities (e.g. GB instead of bytes).',
+  )
+
+export const spendCommitmentsWire = z
+  .strictObject({
+    minimum_amount: numericWire.optional(),
+    maximum_amount: numericWire.optional(),
+  })
+
+  .describe(
+    'Spend commitments for a usage-based price. The customer is committed to spend at least the minimum amount and at most the maximum amount.',
   )
 
 export const rateCardDiscountsWire = z
@@ -8536,15 +11754,60 @@ export const totalsWire = z
     'Totals contains the summaries of all calculations for a billing resource.',
   )
 
-export const spendCommitmentsWire = z
+export const chargeRealizationDetailedLineCreditAppliedWire = z
   .strictObject({
-    minimum_amount: numericWire.optional(),
-    maximum_amount: numericWire.optional(),
+    amount: numericWire,
+    description: z
+      .string()
+      .optional()
+      .describe('Human-readable description of the credit allocation.'),
+    credit_realization_id: z
+      .string()
+
+      .describe(
+        'The ID of the credit realization (allocation) this credit was applied from.',
+      ),
   })
 
   .describe(
-    'Spend commitments for a rate card. The customer is committed to spend at least the minimum amount and at most the maximum amount.',
+    'A credit allocation applied to a charge realization detailed line.',
   )
+
+export const chargeRealizationAmountDiscountWire = z
+  .strictObject({
+    amount: numericWire,
+    reason: z
+      .string()
+      .describe('The reason for the discount applied to the charge.'),
+    description: z
+      .string()
+      .optional()
+      .describe('Optional human-readable description of the discount.'),
+    rounding_amount: numericWire.optional(),
+    child_unique_reference_id: z
+      .string()
+      .describe('Unique reference ID of the discount applied to the charge.'),
+  })
+  .describe('A discount applied to a charge realization detailed line.')
+
+export const featureManualUnitCostWire = z
+  .strictObject({
+    type: z
+      .literal('manual')
+      .describe('The type discriminator for manual unit cost.'),
+    amount: numericWire,
+  })
+  .describe('A fixed per-unit cost amount.')
+
+export const featureLlmUnitCostPricingWire = z
+  .strictObject({
+    input_per_token: numericWire,
+    output_per_token: numericWire,
+    cache_read_per_token: numericWire.optional(),
+    reasoning_per_token: numericWire.optional(),
+    cache_write_per_token: numericWire.optional(),
+  })
+  .describe('Resolved per-token pricing from the LLM cost database.')
 
 export const invoiceLineCreditsAppliedWire = z
   .strictObject({
@@ -8588,7 +11851,7 @@ export const updatePriceUnitWire = z
   })
 
   .describe(
-    'Unit price. Charges a fixed rate per billing unit. When UnitConfig is present on the rate card, billing units are the converted quantities (e.g. GB instead of bytes).',
+    'Unit price. Charges a fixed rate per billing unit. When UnitConfig is present on the object, billing units are the converted quantities (e.g. GB instead of bytes).',
   )
 
 export const updateDiscountsWire = z
@@ -8603,25 +11866,6 @@ export const updateDiscountsWire = z
   })
   .describe('Discount configuration for a rate card.')
 
-export const featureManualUnitCostWire = z
-  .strictObject({
-    type: z
-      .literal('manual')
-      .describe('The type discriminator for manual unit cost.'),
-    amount: numericWire,
-  })
-  .describe('A fixed per-unit cost amount.')
-
-export const featureLlmUnitCostPricingWire = z
-  .strictObject({
-    input_per_token: numericWire,
-    output_per_token: numericWire,
-    cache_read_per_token: numericWire.optional(),
-    reasoning_per_token: numericWire.optional(),
-    cache_write_per_token: numericWire.optional(),
-  })
-  .describe('Resolved per-token pricing from the LLM cost database.')
-
 export const llmCostModelPricingWire = z
   .strictObject({
     input_per_token: numericWire,
@@ -8631,6 +11875,13 @@ export const llmCostModelPricingWire = z
     reasoning_per_token: numericWire.optional(),
   })
   .describe('Token pricing for an LLM model, denominated per token.')
+
+export const fiatCurrencyAmountWire = z
+  .strictObject({
+    amount: numericWire,
+    currency: currencyCodeWire,
+  })
+  .describe('Monetary amount in a specific fiat currency.')
 
 export const queryFilterNumericWire = z
   .strictObject({
@@ -8722,11 +11973,50 @@ export const profileReferenceWire = z
   })
   .describe('Billing profile reference.')
 
+export const featureReferenceWire = z
+  .strictObject({
+    id: ulidWire,
+  })
+  .describe('Feature reference.')
+
+export const entitlementGrantUsageWire = z
+  .strictObject({
+    grant_id: ulidWire,
+    usage: numericWire,
+  })
+  .describe('Usage taken from a single grant.')
+
+export const createChargeCostBasisPinnedWire = z
+  .strictObject({
+    type: z
+      .literal('pinned')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiat_currency: currencyCodeWire,
+    cost_basis_id: ulidWire,
+  })
+
+  .describe(
+    'Cost basis pinned to a specific cost basis resource of the custom currency.',
+  )
+
 export const createResourceReferenceWire = z
   .strictObject({
     id: ulidWire,
   })
   .describe('TaxCode reference.')
+
+export const chargeCostBasisPinnedWire = z
+  .strictObject({
+    type: z
+      .literal('pinned')
+      .describe('Discriminator selecting the cost basis mode.'),
+    fiat_currency: currencyCodeWire,
+    cost_basis_id: ulidWire,
+  })
+
+  .describe(
+    'Cost basis pinned to a specific cost basis resource of the custom currency.',
+  )
 
 export const taxCodeReferenceWire = z
   .strictObject({
@@ -8746,15 +12036,33 @@ export const creditGrantInvoiceReferenceWire = z
   })
   .describe('Invoice references for the grant.')
 
-export const billingCustomerReferenceWire = z
+export const currencyCustomReferenceWire = z
   .strictObject({
     id: ulidWire,
   })
-  .describe('Customer reference.')
+  .describe('CurrencyCustom reference.')
+
+export const subscriptionCostBasisPinWire = z
+  .strictObject({
+    custom_currency_id: ulidWire,
+    invoice_currency: currencyCodeWire,
+    cost_basis_id: ulidWire,
+  })
+
+  .describe(
+    'A cost basis pinned to a custom-currency pair for the subscription.',
+  )
 
 export const subscriptionReferenceWire = z
   .strictObject({
     id: ulidWire,
+    name: z
+      .string()
+      .optional()
+
+      .describe(
+        'The display name of the subscription. Only populated where the referencing endpoint documents a `subscription` expand that resolves it.',
+      ),
     phase: z
       .strictObject({
         id: ulidWire,
@@ -8771,34 +12079,23 @@ export const subscriptionReferenceWire = z
     'Subscription reference represents a reference to the specific subscription item this entity represents.',
   )
 
-export const subscriptionCostBasisPinWire = z
+export const appReferenceWire = z
   .strictObject({
-    custom_currency_id: ulidWire,
-    invoice_currency: currencyCodeWire,
-    cost_basis_id: ulidWire,
+    id: ulidWire,
   })
+  .describe('App reference.')
 
-  .describe(
-    'A cost basis pinned to a custom-currency pair for the subscription.',
-  )
+export const chargeRealizationInvoiceReferenceWire = z
+  .strictObject({
+    id: ulidWire,
+  })
+  .describe('ChargeRealizationInvoice reference.')
 
 export const addonReferenceWire = z
   .strictObject({
     id: ulidWire,
   })
   .describe('Addon reference.')
-
-export const featureReferenceWire = z
-  .strictObject({
-    id: ulidWire,
-  })
-  .describe('Feature reference.')
-
-export const appReferenceWire = z
-  .strictObject({
-    id: ulidWire,
-  })
-  .describe('App reference.')
 
 export const chargeReferenceWire = z
   .strictObject({
@@ -8811,6 +12108,71 @@ export const updateResourceReferenceWire = z
     id: ulidWire,
   })
   .describe('TaxCode reference.')
+
+export const notificationChannelReferenceWire = z
+  .strictObject({
+    id: ulidWire,
+  })
+  .describe('NotificationChannel reference.')
+
+export const notificationEventFeatureReferenceWire = z
+  .strictObject({
+    id: ulidWire,
+    key: z.string().describe('The immutable key of the feature.'),
+  })
+  .describe('A reference to the feature of an entitlement notification event.')
+
+export const notificationEventInvoiceReferenceWire = z
+  .strictObject({
+    id: ulidWire,
+    number: z.string().describe('The human-readable invoice number.'),
+  })
+  .describe('A reference to the invoice of an invoice notification event.')
+
+export const resendBillingNotificationEventRequestWire = z
+  .strictObject({
+    channels: z
+      .array(ulidWire)
+      .optional()
+
+      .describe(
+        'The channels to resend the event to. When omitted or empty, the event is resent to every enabled channel of the rule. Channels not targeted by the rule or disabled are rejected.',
+      ),
+  })
+  .describe('Request body for resending a notification event.')
+
+export const billingCustomerReferenceWire = z
+  .strictObject({
+    id: ulidWire,
+    name: z
+      .string()
+      .optional()
+
+      .describe(
+        'The display name of the customer. Only populated where the referencing endpoint documents a `customer` expand that resolves it.',
+      ),
+  })
+  .describe('Customer reference.')
+
+export const chargeFeatureWire = z
+  .strictObject({
+    id: ulidWire,
+    key: z
+      .string()
+      .optional()
+      .describe('The key of the feature. Requires the `feature` expand.'),
+    name: z
+      .string()
+      .optional()
+
+      .describe(
+        'The display name of the feature. Requires the `feature` expand.',
+      ),
+  })
+
+  .describe(
+    'The feature associated with a charge. `key` is always present and is set at charge creation time. `id` and `name` are only resolved with the `feature` expand, since resolving them requires an additional lookup against the feature catalog.',
+  )
 
 export const dateTimeFieldFilterWire = z
   .union([
@@ -8955,6 +12317,38 @@ export const closedPeriodWire = z
 
   .describe(
     'A period with defined start and end dates. The period is always inclusive at the start and exclusive at the end.',
+  )
+
+export const resetCustomerEntitlementUsageRequestWire = z
+  .strictObject({
+    effective_at: dateTimeWire.optional(),
+    retain_anchor: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the usage period anchor is kept. When false, the anchor moves to `effective_at`.',
+      ),
+    preserve_overage: z
+      .boolean()
+      .optional()
+
+      .describe(
+        "Whether overage carries over into the new usage period. Defaults to the entitlement's own setting.",
+      ),
+  })
+  .describe('Request body for resetting the usage of a metered entitlement.')
+
+export const chargeResolvedCostBasisWire = z
+  .strictObject({
+    fiat_currency: currencyCodeWire,
+    rate: numericWire,
+    cost_basis_id: ulidWire.optional(),
+    resolved_at: dateTimeWire,
+  })
+
+  .describe(
+    'Fiat conversion rate a custom-currency charge is invoiced at. Present once the cost basis is resolved; dynamic cost bases are exposed only after the service period has started.',
   )
 
 export const subscriptionAddonTimelineSegmentWire = z
@@ -9248,29 +12642,16 @@ export const notImplementedWire = baseErrorWire.describe('Not Implemented.')
 
 export const notAvailableWire = baseErrorWire.describe('Not Available.')
 
-export const createCreditGrantFiltersWire = z
+export const subscriptionPlanReferenceWire = z
   .strictObject({
-    features: z
-      .array(resourceKeyWire)
-      .optional()
-
-      .describe(
-        'Limit the credit grant to specific features. If no features are specified, the credit grant can be used for any feature.',
-      ),
+    id: ulidWire,
+    key: resourceKeyWire,
+    version: z.number().int().gte(1).describe('The plan version.'),
   })
-  .describe('Filters for the credit grant.')
 
-export const creditGrantFiltersWire = z
-  .strictObject({
-    features: z
-      .array(resourceKeyWire)
-      .optional()
-
-      .describe(
-        'Limit the credit grant to specific features. If no features are specified, the credit grant can be used for any feature.',
-      ),
-  })
-  .describe('Filters for the credit grant.')
+  .describe(
+    'A reference to the plan a subscription was created from, pinned to an exact revision.',
+  )
 
 export const upsertPlanAddonRequestWire = z
   .strictObject({
@@ -9651,10 +13032,8 @@ export const customerStripeCreateCustomerPortalSessionRequestWire = z
     'Request to create a Stripe Customer Portal Session for the customer. Useful to redirect the customer to the Stripe Customer Portal to manage their payment methods, change their billing address and access their invoice history. Only returns URL if the customer billing profile is linked to a stripe app and customer.',
   )
 
-export const entitlementAccessResultWire = z
+export const entitlementAccessCheckResultWire = z
   .strictObject({
-    type: entitlementTypeWire,
-    feature_key: resourceKeyWire,
     has_access: z
       .boolean()
 
@@ -9668,16 +13047,26 @@ export const entitlementAccessResultWire = z
       .describe(
         'Only available for static entitlements. Config is the JSON parsable configuration of the entitlement. Useful to describe per customer configuration.',
       ),
+    type: entitlementTypeWire.optional(),
   })
-  .describe('Entitlement access result.')
+  .describe('Entitlement access check result.')
 
-export const createCreditGrantPurchaseWire = z
+export const recurringPeriodInputWire = z
   .strictObject({
-    currency: currencyCodeWire,
-    per_unit_cost_basis: numericWire.optional(),
-    availability_policy: creditAvailabilityPolicyWire.optional(),
+    interval: iso8601DurationWire,
+    anchor: dateTimeWire.optional(),
   })
-  .describe('Purchase and payment terms of the grant.')
+
+  .describe(
+    'Recurring period input. The anchor is optional; the owning resource defines the default, typically its creation time.',
+  )
+
+export const recurringPeriodWire = z
+  .strictObject({
+    anchor: dateTimeWire,
+    interval: iso8601DurationWire,
+  })
+  .describe('Recurring period with an anchor and an interval.')
 
 export const rateCardMeteredEntitlementWire = z
   .strictObject({
@@ -9703,39 +13092,43 @@ export const rateCardMeteredEntitlementWire = z
   })
   .describe('The entitlement template of a metered entitlement.')
 
-export const recurringPeriodWire = z
+export const subscriptionPhaseCreateWire = z
   .strictObject({
-    anchor: dateTimeWire,
-    interval: iso8601DurationWire,
-  })
-  .describe('Recurring period with an anchor and an interval.')
+    key: resourceKeyWire,
+    name: z.string().describe('The name of the phase.'),
+    description: z
+      .string()
+      .optional()
+      .describe('An optional description of the phase.'),
+    start_after: iso8601DurationWire
+      .nullable()
 
-export const creditGrantPurchaseWire = z
-  .strictObject({
-    currency: currencyCodeWire,
-    per_unit_cost_basis: numericWire.optional(),
-    amount: numericWire,
-    availability_policy: creditAvailabilityPolicyWire.optional(),
-    settlement_status: creditPurchasePaymentSettlementStatusWire.optional(),
+      .describe(
+        'The ISO-8601 interval after the subscription start at which the phase begins. When null, the phase starts immediately after the subscription starts.',
+      ),
+    duration: iso8601DurationWire.optional(),
   })
-  .describe('Purchase and payment terms of the grant.')
+  .describe('The definition of a new subscription phase to add via an edit.')
 
-export const updateCreditGrantExternalSettlementRequestWire = z
+export const subscriptionEditStretchPhaseWire = z
   .strictObject({
-    status: creditPurchasePaymentSettlementStatusWire,
+    type: z
+      .literal('stretch_phase')
+      .describe('Discriminator for the stretch-phase operation.'),
+    phase_key: z.string().describe('The key of the phase to stretch.'),
+    extend_by: iso8601DurationWire,
   })
 
   .describe(
-    'Request body for updating the external payment settlement status of a credit grant.',
+    'Extend the duration of a phase, shifting later phases by the same amount.',
   )
 
-export const listCreditGrantsParamsFilterWire = z
-  .strictObject({
-    status: creditGrantStatusWire.optional(),
-    currency: currencyCodeWire.optional(),
-    key: stringFieldFilterWire.optional(),
-  })
-  .describe('Filter options for listing credit grants.')
+export const entitlementMeasureUsageFromWire = z
+  .union([entitlementMeasureUsageFromPresetWire, dateTimeWire])
+
+  .describe(
+    'The time from which usage is measured, as a preset or an explicit timestamp.',
+  )
 
 export const getCreditBalanceParamsFilterWire = z
   .strictObject({
@@ -9743,12 +13136,6 @@ export const getCreditBalanceParamsFilterWire = z
     feature_key: stringFieldFilterWire.optional(),
   })
   .describe('Filter options for getting a credit balance.')
-
-export const listChargesParamsFilterWire = z
-  .strictObject({
-    status: stringFieldFilterExactWire.optional(),
-  })
-  .describe('Filter options for listing charges.')
 
 export const listPlansParamsFilterWire = z
   .strictObject({
@@ -9759,53 +13146,84 @@ export const listPlansParamsFilterWire = z
   })
   .describe('Filter options for listing plans.')
 
+export const createCreditGrantPlanFilterWire = z
+  .strictObject({
+    key: resourceKeyWire,
+    version: createVersionFilterWire.optional(),
+  })
+
+  .describe(
+    'A plan key and an optional version constraint for matching credit grants.',
+  )
+
+export const updateCreditGrantExternalSettlementRequestWire = z
+  .strictObject({
+    status: creditPurchasePaymentSettlementStatusWire,
+  })
+
+  .describe(
+    'Request body for updating the external payment settlement status of a credit grant.',
+  )
+
+export const creditGrantPlanFilterWire = z
+  .strictObject({
+    key: resourceKeyWire,
+    version: versionFilterWire.optional(),
+  })
+
+  .describe(
+    'A plan key and an optional version constraint for matching credit grants.',
+  )
+
+export const listCreditGrantsParamsFilterWire = z
+  .strictObject({
+    status: creditGrantStatusWire.optional(),
+    currency: currencyCodeWire.optional(),
+    key: stringFieldFilterWire.optional(),
+  })
+  .describe('Filter options for listing credit grants.')
+
+export const validationIssueWire = z
+  .strictObject({
+    code: z.string().describe('Machine-readable error code.'),
+    message: z.string().describe('Human-readable description of the error.'),
+    attributes: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe('Additional structured context.'),
+    severity: validationIssueSeverityWire,
+    field: z
+      .string()
+      .optional()
+
+      .describe(
+        'JSON path to the field that caused the validation issue, if applicable.',
+      ),
+    component: z
+      .string()
+      .optional()
+      .describe('Component that reported the validation issue, if applicable.'),
+  })
+  .describe('A validation issue found while processing a billing resource.')
+
 export const voidCreditGrantRequestWire = z
   .strictObject({
     payment_adjustment: creditGrantVoidPaymentAdjustmentWire.optional(),
   })
   .describe('Request body for voiding a credit grant.')
 
+export const subscriptionProRatingConfigWire = z
+  .strictObject({
+    enabled: z.boolean().describe('Whether pro-rating is enabled.'),
+    mode: rateCardProrationModeWire,
+  })
+  .describe('The pro-rating configuration of a subscription.')
+
 export const rateCardProrationConfigurationWire = z
   .strictObject({
     mode: rateCardProrationModeWire,
   })
   .describe('The proration configuration of the rate card.')
-
-export const subscriptionCreateWire = z
-  .strictObject({
-    labels: labelsWire.optional(),
-    settlement_mode: settlementModeWire.optional(),
-    customer: z
-      .strictObject({
-        id: ulidWire.optional(),
-        key: externalResourceKeyWire.optional(),
-      })
-      .describe('The customer to create the subscription for.'),
-    plan: z
-      .strictObject({
-        id: ulidWire.optional(),
-        key: resourceKeyWire.optional(),
-        version: z
-          .number()
-          .int()
-          .optional()
-
-          .describe(
-            'The plan version of the subscription, if any. If not provided, the latest version of the plan will be used.',
-          ),
-      })
-      .describe('The plan reference of the subscription.'),
-    billing_anchor: dateTimeWire.optional(),
-    cost_basis_mode: subscriptionCostBasisModeWire.optional(),
-  })
-  .describe('Subscription create request.')
-
-export const subscriptionEditTimingWire = z
-  .union([subscriptionEditTimingEnumWire, dateTimeWire])
-
-  .describe(
-    'Subscription edit timing defined when the changes should take effect. If the provided configuration is not supported by the subscription, an error will be returned.',
-  )
 
 export const unitConfigWire = z
   .strictObject({
@@ -9830,8 +13248,76 @@ export const unitConfigWire = z
   })
 
   .describe(
-    'Unit conversion configuration. Transforms raw metered quantities into billing-ready units before pricing and entitlement evaluation. Applied at the rate card level so the same feature can be billed in different units across plans. Examples: - Meter bytes, bill GB: operation=divide, conversionFactor=1e9, rounding=ceiling, displayUnit="GB" - Meter seconds, bill hours: operation=divide, conversionFactor=3600, rounding=ceiling, displayUnit="hours" - Cost + 20% margin: operation=multiply, conversionFactor=1.2 - Bill per million tokens: operation=divide, conversionFactor=1e6, rounding=ceiling, displayUnit="M" v1 equivalents: - DynamicPrice(multiplier): operation=multiply, conversionFactor=multiplier + UnitPrice(amount=1) - PackagePrice(amount, quantityPerPkg): operation=divide, conversionFactor=quantityPerPkg, rounding=ceiling + UnitPrice(amount)',
+    'Unit conversion configuration. Transforms raw metered quantities into billing-ready units before pricing and entitlement evaluation. Stored with a resource\'s rating configuration so the same metered feature can be billed in different units across plans and charges. Examples: - Meter bytes, bill GB: operation=divide, conversionFactor=1e9, rounding=ceiling, displayUnit="GB" - Meter seconds, bill hours: operation=divide, conversionFactor=3600, rounding=ceiling, displayUnit="hours" - Cost + 20% margin: operation=multiply, conversionFactor=1.2 - Bill per million tokens: operation=divide, conversionFactor=1e6, rounding=ceiling, displayUnit="M" v1 equivalents: - DynamicPrice(multiplier): operation=multiply, conversionFactor=multiplier + UnitPrice(amount=1) - PackagePrice(amount, quantityPerPkg): operation=divide, conversionFactor=quantityPerPkg, rounding=ceiling + UnitPrice(amount)',
   )
+
+export const partyTaxIdentityWire = z
+  .strictObject({
+    code: taxIdentificationCodeWire.optional(),
+  })
+
+  .describe(
+    'Identity stores the details required to identify an entity for tax purposes in a specific country.',
+  )
+
+export const updateBillingPartyTaxIdentityWire = z
+  .strictObject({
+    code: taxIdentificationCodeWire.optional(),
+  })
+
+  .describe(
+    'Identity stores the details required to identify an entity for tax purposes in a specific country.',
+  )
+
+export const invoiceAvailableActionsWire = z
+  .strictObject({
+    advance: invoiceAvailableActionDetailsWire.optional(),
+    approve: invoiceAvailableActionDetailsWire.optional(),
+    delete: invoiceAvailableActionDetailsWire.optional(),
+    retry: invoiceAvailableActionDetailsWire.optional(),
+    snapshot_quantities: invoiceAvailableActionDetailsWire.optional(),
+  })
+
+  .describe(
+    'The set of state-transition actions available for an invoice in its current status. A field is present only when that action is permitted from the current state.',
+  )
+
+export const workflowPaymentSettingsWire = z
+  .discriminatedUnion('collection_method', [
+    workflowPaymentChargeAutomaticallySettingsWire,
+    workflowPaymentSendInvoiceSettingsWire,
+  ])
+  .describe('Payment settings for a billing workflow.')
+
+export const chargeRealizationPaymentWire = z
+  .strictObject({
+    status: chargeRealizationPaymentStatusWire,
+  })
+  .describe('Payment state of a charge realization.')
+
+export const subscriptionCreateTimingWire = z
+  .union([subscriptionCreateTimingEnumWire, dateTimeWire])
+
+  .describe(
+    'When a subscription should start: immediate (the default) or a custom timestamp to schedule a future start.',
+  )
+
+export const subscriptionEditTimingWire = z
+  .union([subscriptionEditTimingEnumWire, dateTimeWire])
+
+  .describe(
+    'Subscription edit timing defined when the changes should take effect. If the provided configuration is not supported by the subscription, an error will be returned.',
+  )
+
+export const subscriptionEditRemovePhaseWire = z
+  .strictObject({
+    type: z
+      .literal('remove_phase')
+      .describe('Discriminator for the remove-phase operation.'),
+    phase_key: z.string().describe('The key of the phase to remove.'),
+    shift: subscriptionRemovePhaseShiftingWire,
+  })
+  .describe('Remove a phase from the subscription.')
 
 export const taxCodeAppMappingWire = z
   .strictObject({
@@ -9848,6 +13334,15 @@ export const appCapabilityWire = z
     description: z.string().describe('Description of the capability.'),
   })
   .describe('App capability describes a function that an App can perform.')
+
+export const appActionWire = z
+  .strictObject({
+    type: appActionTypeWire,
+    description: z
+      .string()
+      .describe('Human readable explanation of why the action is needed.'),
+  })
+  .describe('An action the operator should take on an installed app.')
 
 export const updateAppStripeRequestWire = z
   .strictObject({
@@ -9925,6 +13420,12 @@ export const updateAppExternalInvoicingRequestWire = z
   })
   .describe('AppExternalInvoicing update request.')
 
+export const appActionRequestWire = z
+  .discriminatedUnion('action_type', [
+    appReconcileWebhookEventsActionRequestWire,
+  ])
+  .describe('Request to execute an operator action on an installed app.')
+
 export const installAppRequestWire = z
   .discriminatedUnion('type', [
     installAppStripeWithApiKeyWire,
@@ -9932,24 +13433,6 @@ export const installAppRequestWire = z
     installAppExternalInvoicingWire,
   ])
   .describe('Request to install an app from the catalog.')
-
-export const partyTaxIdentityWire = z
-  .strictObject({
-    code: taxIdentificationCodeWire.optional(),
-  })
-
-  .describe(
-    'Identity stores the details required to identify an entity for tax purposes in a specific country.',
-  )
-
-export const updateBillingPartyTaxIdentityWire = z
-  .strictObject({
-    code: taxIdentificationCodeWire.optional(),
-  })
-
-  .describe(
-    'Identity stores the details required to identify an entity for tax purposes in a specific country.',
-  )
 
 export const workflowInvoicingSettingsWire = z
   .strictObject({
@@ -9975,48 +13458,6 @@ export const workflowInvoicingSettingsWire = z
       workflowInvoicingSubscriptionEndProrationModeWire.optional(),
   })
   .describe('Invoice settings for a billing workflow.')
-
-export const workflowPaymentSettingsWire = z
-  .discriminatedUnion('collection_method', [
-    workflowPaymentChargeAutomaticallySettingsWire,
-    workflowPaymentSendInvoiceSettingsWire,
-  ])
-  .describe('Payment settings for a billing workflow.')
-
-export const invoiceValidationIssueWire = z
-  .strictObject({
-    code: z.string().describe('Machine-readable error code.'),
-    message: z.string().describe('Human-readable description of the error.'),
-    attributes: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('Additional structured context.'),
-    severity: invoiceValidationIssueSeverityWire,
-    field: z
-      .string()
-      .optional()
-
-      .describe(
-        'JSON path to the field that caused this validation issue, if applicable. For example: `lines/0/rate_card/price`.',
-      ),
-  })
-
-  .describe(
-    'A validation issue found during invoice processing. Converges on the same structure used by plan and subscription validation errors: a machine-readable `code`, a human-readable `message`, optional structured `attributes`, plus a `severity` and optional `field` path.',
-  )
-
-export const invoiceAvailableActionsWire = z
-  .strictObject({
-    advance: invoiceAvailableActionDetailsWire.optional(),
-    approve: invoiceAvailableActionDetailsWire.optional(),
-    delete: invoiceAvailableActionDetailsWire.optional(),
-    retry: invoiceAvailableActionDetailsWire.optional(),
-    snapshot_quantities: invoiceAvailableActionDetailsWire.optional(),
-  })
-
-  .describe(
-    'The set of state-transition actions available for an invoice in its current status. A field is present only when that action is permitted from the current state.',
-  )
 
 export const invoiceLineAmountDiscountWire = z
   .strictObject({
@@ -10116,17 +13557,185 @@ export const entitlementAccessQueryErrorWire = z
     'Query error within a partially successful entitlement access query response.',
   )
 
+export const notificationChannelWire = z
+  .strictObject({
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: notificationChannelTypeWire,
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the channel is disabled. Disabled channels do not receive notification events.',
+      ),
+    url: z
+      .string()
+      .describe('The URL that webhook notification events are delivered to.'),
+    custom_headers: z
+      .record(z.string(), z.string())
+      .optional()
+
+      .describe(
+        'Custom HTTP headers to include on every webhook delivery request, keyed by header name.',
+      ),
+    signing_secret: z
+      .string()
+      .optional()
+
+      .describe(
+        'Secret used to sign outgoing webhook payloads so recipients can verify their authenticity. If omitted on create, a secret is generated automatically by the delivery provider. This is a sensitive credential returned in responses (unlike most secrets) specifically so clients can retrieve a server-generated value and verify webhook signatures; handle it with the same care as any other credential.',
+      ),
+  })
+
+  .describe(
+    'A notification channel delivers notification events, such as entitlement balance threshold crossings, to an external system. Today the only supported channel type is a webhook delivered via Svix.',
+  )
+
+export const createNotificationChannelRequestWire = z
+  .strictObject({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labelsWire.optional(),
+    type: notificationChannelTypeWire,
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the channel is disabled. Disabled channels do not receive notification events.',
+      ),
+    url: z
+      .string()
+      .describe('The URL that webhook notification events are delivered to.'),
+    custom_headers: z
+      .record(z.string(), z.string())
+      .optional()
+
+      .describe(
+        'Custom HTTP headers to include on every webhook delivery request, keyed by header name.',
+      ),
+    signing_secret: z
+      .string()
+      .optional()
+
+      .describe(
+        'Secret used to sign outgoing webhook payloads so recipients can verify their authenticity. If omitted on create, a secret is generated automatically by the delivery provider. This is a sensitive credential returned in responses (unlike most secrets) specifically so clients can retrieve a server-generated value and verify webhook signatures; handle it with the same care as any other credential.',
+      ),
+  })
+  .describe('NotificationChannel create request.')
+
+export const updateBillingNotificationChannelRequestWire = z
+  .strictObject({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    type: notificationChannelTypeWire,
+    url: z
+      .string()
+      .describe('The URL that webhook notification events are delivered to.'),
+    labels: labelsWire.optional(),
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the channel is disabled. Disabled channels do not receive notification events.',
+      ),
+    custom_headers: z
+      .record(z.string(), z.string())
+      .optional()
+
+      .describe(
+        'Custom HTTP headers to include on every webhook delivery request, keyed by header name.',
+      ),
+    signing_secret: z
+      .string()
+      .optional()
+
+      .describe(
+        'Secret used to sign outgoing webhook payloads so recipients can verify their authenticity. If omitted on create, a secret is generated automatically by the delivery provider. This is a sensitive credential returned in responses (unlike most secrets) specifically so clients can retrieve a server-generated value and verify webhook signatures; handle it with the same care as any other credential.',
+      ),
+  })
+
+  .describe(
+    "Request body for updating a notification channel. Updates replace the channel's mutable state rather than merging it: `type`, `name`, and `url` must always be provided, and omitting `disabled`, `labels`, or `custom_headers` resets them to their defaults (enabled, no labels, no custom headers). `signing_secret` is the one exception: omitting it keeps the channel's current signing secret instead of clearing the credential.",
+  )
+
+export const notificationBalanceThresholdWire = z
+  .strictObject({
+    type: notificationBalanceThresholdTypeWire,
+    value: z.number().describe('The threshold value.'),
+  })
+
+  .describe(
+    'A balance threshold of a notification rule. Crossing it generates an `entitlements.balance.threshold` event.',
+  )
+
+export const notificationRuleReferenceWire = z
+  .strictObject({
+    id: ulidWire,
+    type: notificationEventTypeWire,
+    name: z.string().describe('The user-provided name of the rule.'),
+  })
+  .describe('A reference to the notification rule that generated an event.')
+
+export const notificationEventDeliveryAttemptWire = z
+  .strictObject({
+    state: notificationEventDeliveryStateWire,
+    response: notificationEventDeliveryAttemptResponseWire,
+    timestamp: dateTimeWire,
+  })
+  .describe('A single delivery attempt to a channel.')
+
 export const appCustomerDataWire = z
   .strictObject({
-    stripe: appCustomerDataStripeWire.optional(),
-    external_invoicing: appCustomerDataExternalInvoicingWire.optional(),
+    stripe: appCustomerDataStripeWire
+      .nullable()
+      .optional()
+
+      .describe(
+        'Used if the customer has a linked Stripe app. Set to `null` to remove the Stripe data of the customer; omit to leave it unchanged.',
+      ),
+    external_invoicing: appCustomerDataExternalInvoicingWire
+      .nullable()
+      .optional()
+
+      .describe(
+        'Used if the customer has a linked external invoicing app. Set to `null` to remove the external invoicing data of the customer; omit to leave it unchanged.',
+      ),
   })
   .describe('App customer data.')
 
 export const upsertAppCustomerDataRequestWire = z
   .strictObject({
-    stripe: appCustomerDataStripeWire.optional(),
-    external_invoicing: appCustomerDataExternalInvoicingWire.optional(),
+    stripe: appCustomerDataStripeWire
+      .nullable()
+      .optional()
+
+      .describe(
+        'Used if the customer has a linked Stripe app. Set to `null` to remove the Stripe data of the customer; omit to leave it unchanged.',
+      ),
+    external_invoicing: appCustomerDataExternalInvoicingWire
+      .nullable()
+      .optional()
+
+      .describe(
+        'Used if the customer has a linked external invoicing app. Set to `null` to remove the external invoicing data of the customer; omit to leave it unchanged.',
+      ),
   })
   .describe('AppCustomerData upsert request.')
 
@@ -10151,15 +13760,6 @@ export const creditAdjustmentWire = z
   .describe(
     "A credit adjustment can be used to make manual adjustments to a customer's credit balance. Supported use-cases: - Usage correction",
   )
-
-export const creditBalanceWire = z
-  .strictObject({
-    currency: billingCurrencyCodeWire,
-    live: numericWire,
-    settled: numericWire,
-    pending: numericWire,
-  })
-  .describe('The credit balance by currency.')
 
 export const createCreditAdjustmentRequestWire = z
   .strictObject({
@@ -10190,38 +13790,56 @@ export const listCreditTransactionsParamsFilterWire = z
   })
   .describe('Filter options for listing credit transactions.')
 
-export const creditTransactionWire = z
+export const currencyAmountWire = z
   .strictObject({
-    id: ulidWire,
-    name: z
+    amount: numericWire,
+    currency: billingCurrencyCodeWire,
+  })
+  .describe('Monetary amount in a fiat or custom currency.')
+
+export const entitlementValueResultWire = z
+  .strictObject({
+    type: entitlementTypeWire,
+    feature_key: resourceKeyWire,
+    has_access: z
+      .boolean()
+
+      .describe(
+        'Whether the customer has access to the feature. Always true for `boolean` and `static` entitlements. Depends on balance for `metered` entitlements.',
+      ),
+    config: z
       .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
       .optional()
 
       .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
+        'Only available for static entitlements. Config is the JSON parsable configuration of the entitlement. Useful to describe per customer configuration.',
       ),
-    labels: labelsWire.optional(),
-    created_at: dateTimeWire,
-    booked_at: dateTimeWire,
-    type: creditTransactionTypeWire,
-    currency: billingCurrencyCodeWire,
-    amount: numericWire,
-    available_balance: z
-      .strictObject({
-        before: numericWire,
-        after: numericWire,
-      })
-      .describe('The available balance before and after the transaction.'),
+    value: entitlementAccessValueWire.optional(),
+  })
+  .describe('Entitlement value result.')
+
+export const entitlementFeatureValueResultWire = z
+  .strictObject({
+    feature_key: resourceKeyWire,
+    has_access: z
+      .boolean()
+
+      .describe(
+        'Whether the customer has access to the feature. Always true for `boolean` and `static` entitlements. Depends on balance for `metered` entitlements.',
+      ),
+    config: z
+      .string()
+      .optional()
+
+      .describe(
+        'Only available for static entitlements. Config is the JSON parsable configuration of the entitlement. Useful to describe per customer configuration.',
+      ),
+    value: entitlementAccessValueWire.optional(),
+    type: entitlementTypeWire.optional(),
   })
 
   .describe(
-    "A credit transaction represents a single credit movement on the customer's balance. Credit transactions are immutable.",
+    'Entitlement value looked up by feature key. A missing entitlement has no type and does not grant access.',
   )
 
 export const priceTierWire = z
@@ -10232,7 +13850,7 @@ export const priceTierWire = z
   })
 
   .describe(
-    'A price tier used in graduated and volume pricing. At least one price component (flat_price or unit_price) must be set. When UnitConfig is present on the rate card, up_to_amount is expressed in converted billing units.',
+    'A price tier used in graduated and volume pricing. At least one price component (flat_price or unit_price) must be set. When UnitConfig is present on the containing resource, up_to_amount is expressed in converted billing units.',
   )
 
 export const chargeTotalsWire = z
@@ -10242,18 +13860,7 @@ export const chargeTotalsWire = z
   })
 
   .describe(
-    'The totals of a change. RealTime is only expanded when the `real_time_usage` expand is used.',
-  )
-
-export const updatePriceTierWire = z
-  .strictObject({
-    up_to_amount: numericWire.optional(),
-    flat_price: updatePriceFlatWire.optional(),
-    unit_price: updatePriceUnitWire.optional(),
-  })
-
-  .describe(
-    'A price tier used in graduated and volume pricing. At least one price component (flat_price or unit_price) must be set. When UnitConfig is present on the rate card, up_to_amount is expressed in converted billing units.',
+    'The totals of a charge. `realtime` is only populated when the `real_time_usage` expand is used.',
   )
 
 export const featureLlmUnitCostWire = z
@@ -10304,6 +13911,17 @@ export const featureLlmUnitCostWire = z
     'LLM cost lookup configuration. Each dimension (provider, model, token type) can be specified as either a static value or a meter group-by property name (mutually exclusive).',
   )
 
+export const updatePriceTierWire = z
+  .strictObject({
+    up_to_amount: numericWire.optional(),
+    flat_price: updatePriceFlatWire.optional(),
+    unit_price: updatePriceUnitWire.optional(),
+  })
+
+  .describe(
+    'A price tier used in graduated and volume pricing. At least one price component (flat_price or unit_price) must be set. When UnitConfig is present on the containing resource, up_to_amount is expressed in converted billing units.',
+  )
+
 export const llmCostPriceWire = z
   .strictObject({
     id: ulidWire,
@@ -10348,6 +13966,30 @@ export const listCustomersParamsFilterWire = z
   })
   .describe('Filter options for listing customers.')
 
+export const listCustomerEntitlementsParamsFilterWire = z
+  .strictObject({
+    feature_id: ulidFieldFilterWire.optional(),
+    feature_key: stringFieldFilterExactWire.optional(),
+    type: stringFieldFilterExactWire.optional(),
+  })
+  .describe('Filter options for listing customer entitlements.')
+
+export const listEntitlementsParamsFilterWire = z
+  .strictObject({
+    feature_id: ulidFieldFilterWire.optional(),
+    feature_key: stringFieldFilterExactWire.optional(),
+    type: stringFieldFilterExactWire.optional(),
+    customer_id: ulidFieldFilterWire.optional(),
+  })
+  .describe('Filter options for listing entitlements.')
+
+export const listGrantsParamsFilterWire = z
+  .strictObject({
+    customer_id: ulidFieldFilterWire.optional(),
+    feature_id: ulidFieldFilterWire.optional(),
+  })
+  .describe('Filter options for listing grants.')
+
 export const listSubscriptionsParamsFilterWire = z
   .strictObject({
     id: ulidFieldFilterWire.optional(),
@@ -10357,6 +13999,22 @@ export const listSubscriptionsParamsFilterWire = z
     plan_key: stringFieldFilterExactWire.optional(),
   })
   .describe('Filter options for listing subscriptions.')
+
+export const listAppsParamsFilterWire = z
+  .strictObject({
+    id: ulidFieldFilterWire.optional(),
+    name: stringFieldFilterWire.optional(),
+    type: stringFieldFilterExactWire.optional(),
+    status: stringFieldFilterExactWire.optional(),
+  })
+  .describe('Filter options for listing apps.')
+
+export const listBillingProfilesParamsFilterWire = z
+  .strictObject({
+    id: ulidFieldFilterWire.optional(),
+    name: stringFieldFilterWire.optional(),
+  })
+  .describe('Filter options for listing billing profiles.')
 
 export const listFeatureParamsFilterWire = z
   .strictObject({
@@ -10376,24 +14034,57 @@ export const listAddonsParamsFilterWire = z
   })
   .describe('Filter options for listing add-ons.')
 
-export const createCreditGrantTaxConfigWire = z
+export const listPlanAddonsParamsFilterWire = z
   .strictObject({
-    behavior: taxBehaviorWire.optional(),
-    tax_code: createResourceReferenceWire.optional(),
+    id: ulidFieldFilterWire.optional(),
+    plan_key: stringFieldFilterWire.optional(),
+    addon_id: ulidFieldFilterWire.optional(),
+    addon_key: stringFieldFilterWire.optional(),
+    addon_name: stringFieldFilterWire.optional(),
+    plan_currency: stringFieldFilterWire.optional(),
   })
+  .describe('Filter options for listing plan add-ons.')
+
+export const createChargeCostBasisWire = z
+  .discriminatedUnion('type', [
+    createChargeCostBasisDynamicWire,
+    createChargeCostBasisPinnedWire,
+    createChargeCostBasisManualWire,
+  ])
 
   .describe(
-    'Tax configuration for a credit grant. Tax configuration should be provided to ensure correct revenue recognition, including for externally funded grants.',
+    'Cost basis selection for a custom-currency charge. The variant chosen fixes when and how the conversion rate is determined.',
   )
 
-export const creditGrantTaxConfigWire = z
+export const createTaxCodeConfigWire = z
   .strictObject({
     behavior: taxBehaviorWire.optional(),
-    tax_code: taxCodeReferenceWire.optional(),
+    code: createResourceReferenceWire.optional(),
   })
 
   .describe(
-    'Tax configuration for a credit grant. Tax configuration should be provided to ensure correct revenue recognition, including for externally funded grants.',
+    'Tax configuration for a billable resource. Applies a tax code and tax behavior to the resulting invoice line items. When not set, the applicable default is used: the billing profile default tax configuration, then the organization default tax code.',
+  )
+
+export const chargeCostBasisWire = z
+  .discriminatedUnion('type', [
+    chargeCostBasisDynamicWire,
+    chargeCostBasisPinnedWire,
+    chargeCostBasisManualWire,
+  ])
+
+  .describe(
+    'Cost basis selection for a custom-currency charge. The variant chosen fixes when and how the conversion rate is determined.',
+  )
+
+export const taxCodeConfigWire = z
+  .strictObject({
+    behavior: taxBehaviorWire.optional(),
+    code: taxCodeReferenceWire.optional(),
+  })
+
+  .describe(
+    'Tax configuration for a billable resource. Applies a tax code and tax behavior to the resulting invoice line items. When not set, the applicable default is used: the billing profile default tax configuration, then the organization default tax code.',
   )
 
 export const taxConfigWire = z
@@ -10405,13 +14096,6 @@ export const taxConfigWire = z
     tax_code: taxCodeReferenceWire.optional(),
   })
   .describe('Set of provider specific tax configs.')
-
-export const rateCardTaxConfigWire = z
-  .strictObject({
-    behavior: taxBehaviorWire.optional(),
-    code: taxCodeReferenceWire,
-  })
-  .describe('The tax config of the rate card.')
 
 export const organizationDefaultTaxCodesWire = z
   .strictObject({
@@ -10432,28 +14116,69 @@ export const updateOrganizationDefaultTaxCodesRequestWire = z
   })
   .describe('OrganizationDefaultTaxCodes update request.')
 
-export const subscriptionWire = z
+export const creditBalanceWire = z
+  .strictObject({
+    currency: billingCurrencyCodeWire,
+    custom_currency: currencyCustomReferenceWire.optional(),
+    live: numericWire,
+    settled: numericWire,
+    pending: numericWire,
+  })
+  .describe('The credit balance by currency.')
+
+export const creditTransactionWire = z
   .strictObject({
     id: ulidWire,
-    labels: labelsWire.optional(),
-    created_at: dateTimeWire,
-    updated_at: dateTimeWire,
-    deleted_at: dateTimeWire.optional(),
-    customer_id: ulidWire,
-    plan_id: ulidWire.optional(),
-    invoice_currency: currencyCodeWire,
-    cost_basis_mode: subscriptionCostBasisModeWire,
-    cost_basis_pins: z
-      .array(subscriptionCostBasisPinWire)
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
 
       .describe(
-        'Cost bases pinned to custom-currency pairs for this subscription.',
+        'Optional description of the resource. Maximum 1024 characters.',
       ),
-    billing_anchor: dateTimeWire,
-    status: subscriptionStatusWire,
-    settlement_mode: settlementModeWire.optional(),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    booked_at: dateTimeWire,
+    type: creditTransactionTypeWire,
+    currency: billingCurrencyCodeWire,
+    custom_currency: currencyCustomReferenceWire.optional(),
+    amount: numericWire,
+    available_balance: z
+      .strictObject({
+        before: numericWire,
+        after: numericWire,
+      })
+      .describe('The available balance before and after the transaction.'),
   })
-  .describe('Subscription.')
+
+  .describe(
+    "A credit transaction represents a single credit movement on the customer's balance. Credit transactions are immutable.",
+  )
+
+export const invoiceWorkflowAppsReferencesWire = z
+  .strictObject({
+    tax: appReferenceWire,
+    invoicing: appReferenceWire,
+    payment: appReferenceWire,
+  })
+
+  .describe(
+    'BillingInvoiceWorkflowAppsReferences represents the references (id) to the apps used by a billing profile',
+  )
+
+export const profileAppReferencesWire = z
+  .strictObject({
+    tax: appReferenceWire,
+    invoicing: appReferenceWire,
+    payment: appReferenceWire,
+  })
+  .describe('References to the applications used by a billing profile.')
 
 export const planAddonWire = z
   .strictObject({
@@ -10526,31 +14251,245 @@ export const createPlanAddonRequestWire = z
   })
   .describe('PlanAddon create request.')
 
-export const profileAppReferencesWire = z
+export const updateTaxCodeConfigWire = z
   .strictObject({
-    tax: appReferenceWire,
-    invoicing: appReferenceWire,
-    payment: appReferenceWire,
-  })
-  .describe('References to the applications used by a billing profile.')
-
-export const invoiceWorkflowAppsReferencesWire = z
-  .strictObject({
-    tax: appReferenceWire,
-    invoicing: appReferenceWire,
-    payment: appReferenceWire,
+    behavior: taxBehaviorWire.optional(),
+    code: updateResourceReferenceWire.optional(),
   })
 
   .describe(
-    'BillingInvoiceWorkflowAppsReferences represents the references (id) to the apps used by a billing profile',
+    'Tax configuration for a billable resource. Applies a tax code and tax behavior to the resulting invoice line items. When not set, the applicable default is used: the billing profile default tax configuration, then the organization default tax code.',
   )
 
-export const updateRateCardTaxConfigWire = z
+export const notificationRuleEntitlementResetWire = z
   .strictObject({
-    behavior: taxBehaviorWire.optional(),
-    code: updateResourceReferenceWire,
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z
+      .literal('entitlements.reset')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReferenceWire)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+    features: z
+      .array(featureReferenceWire)
+      .optional()
+
+      .describe(
+        'The features the rule applies to. When omitted, the rule applies to every feature.',
+      ),
   })
-  .describe('The tax config of the rate card.')
+
+  .describe(
+    'A rule that generates an event when an entitlement usage period is reset.',
+  )
+
+export const notificationRuleInvoiceCreatedWire = z
+  .strictObject({
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z
+      .literal('invoice.created')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReferenceWire)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+  })
+  .describe('A rule that generates an event when an invoice is created.')
+
+export const notificationRuleInvoiceUpdatedWire = z
+  .strictObject({
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z
+      .literal('invoice.updated')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReferenceWire)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+  })
+  .describe('A rule that generates an event when an invoice is updated.')
+
+export const notificationRuleEntitlementResetRequestWire = z
+  .strictObject({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labelsWire.optional(),
+    type: z
+      .literal('entitlements.reset')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReferenceWire)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+    features: z
+      .array(featureReferenceWire)
+      .optional()
+
+      .describe(
+        'The features the rule applies to. When omitted, the rule applies to every feature.',
+      ),
+  })
+  .describe('Request body for an entitlement reset rule.')
+
+export const notificationRuleInvoiceCreatedRequestWire = z
+  .strictObject({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labelsWire.optional(),
+    type: z
+      .literal('invoice.created')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReferenceWire)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+  })
+  .describe('Request body for an invoice created rule.')
+
+export const notificationRuleInvoiceUpdatedRequestWire = z
+  .strictObject({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labelsWire.optional(),
+    type: z
+      .literal('invoice.updated')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReferenceWire)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+  })
+  .describe('Request body for an invoice updated rule.')
+
+export const notificationEventInvoiceDataWire = z
+  .strictObject({
+    invoice: notificationEventInvoiceReferenceWire,
+    customer_id: ulidWire.optional(),
+    currency: currencyCodeWire,
+    status: z
+      .string()
+
+      .describe(
+        'The status of the invoice at the time the event was generated.',
+      ),
+    total: numericWire,
+  })
+  .describe('The invoice an invoice notification event refers to.')
 
 export const listEventsParamsFilterWire = z
   .strictObject({
@@ -10565,6 +14504,16 @@ export const listEventsParamsFilterWire = z
   })
   .describe('Filter options for listing ingested events.')
 
+export const listCustomerChargesParamsFilterWire = z
+  .strictObject({
+    status: stringFieldFilterExactWire.optional(),
+    feature_id: ulidFieldFilterWire.optional(),
+    feature_key: stringFieldFilterExactWire.optional(),
+    service_period_from: dateTimeFieldFilterWire.optional(),
+    service_period_to: dateTimeFieldFilterWire.optional(),
+  })
+  .describe('Filter options for listing charges.')
+
 export const listInvoicesParamsFilterWire = z
   .strictObject({
     status: stringFieldFilterExactWire.optional(),
@@ -10574,6 +14523,55 @@ export const listInvoicesParamsFilterWire = z
     created_at: dateTimeFieldFilterWire.optional(),
   })
   .describe('Filter options for listing invoices.')
+
+export const listChargesParamsFilterWire = z
+  .strictObject({
+    status: stringFieldFilterExactWire.optional(),
+    feature_id: ulidFieldFilterWire.optional(),
+    feature_key: stringFieldFilterExactWire.optional(),
+    service_period_from: dateTimeFieldFilterWire.optional(),
+    service_period_to: dateTimeFieldFilterWire.optional(),
+    customer_id: ulidFieldFilterWire.optional(),
+  })
+  .describe('Filter options for listing charges across customers.')
+
+export const listNotificationChannelsParamsFilterWire = z
+  .strictObject({
+    id: ulidFieldFilterWire.optional(),
+    name: stringFieldFilterWire.optional(),
+    type: stringFieldFilterExactWire.optional(),
+    disabled: booleanFieldFilterWire.optional(),
+    created_at: dateTimeFieldFilterWire.optional(),
+    updated_at: dateTimeFieldFilterWire.optional(),
+  })
+  .describe('Filter options for listing notification channels.')
+
+export const listNotificationRulesParamsFilterWire = z
+  .strictObject({
+    id: ulidFieldFilterWire.optional(),
+    name: stringFieldFilterWire.optional(),
+    type: stringFieldFilterExactWire.optional(),
+    disabled: booleanFieldFilterWire.optional(),
+    created_at: dateTimeFieldFilterWire.optional(),
+    updated_at: dateTimeFieldFilterWire.optional(),
+    channel_id: ulidFieldFilterWire.optional(),
+  })
+  .describe('Filter options for listing notification rules.')
+
+export const listNotificationEventsParamsFilterWire = z
+  .strictObject({
+    id: ulidFieldFilterWire.optional(),
+    type: stringFieldFilterExactWire.optional(),
+    created_at: dateTimeFieldFilterWire.optional(),
+    rule_id: ulidFieldFilterWire.optional(),
+    channel_id: ulidFieldFilterWire.optional(),
+    delivery_status: stringFieldFilterExactWire.optional(),
+    subject_key: stringFieldFilterExactWire.optional(),
+    subject_id: ulidFieldFilterWire.optional(),
+    feature_key: stringFieldFilterExactWire.optional(),
+    feature_id: ulidFieldFilterWire.optional(),
+  })
+  .describe('Filter options for listing notification events.')
 
 export const resourceFiltersWire = z
   .strictObject({
@@ -10623,6 +14621,87 @@ export const meterQueryResultWire = z
       ),
   })
   .describe('Meter query result.')
+
+export const entitlementHistoryWindowWire = z
+  .strictObject({
+    period: closedPeriodWire,
+    usage: numericWire,
+    balance_at_start: numericWire,
+  })
+  .describe('Usage and balance of a single history window.')
+
+export const entitlementBurndownSegmentWire = z
+  .strictObject({
+    period: closedPeriodWire,
+    usage: numericWire,
+    overage: numericWire,
+    balance: entitlementBurndownBalanceWire,
+    grant_balances: entitlementBurndownGrantBalancesWire,
+    grant_usages: z
+      .array(entitlementGrantUsageWire)
+
+      .describe(
+        'The grants consumed in the segment and the usage taken from each.',
+      ),
+  })
+  .describe('A period in which grants were consumed in a fixed order.')
+
+export const chargeRealizationDetailedLineFlatFeeWire = z
+  .strictObject({
+    id: ulidWire,
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z
+      .literal('flat_fee')
+      .describe('The type of the charge the realization belongs to.'),
+    service_period: closedPeriodWire,
+    totals: totalsWire,
+    category: chargeRealizationDetailedLineCategoryWire,
+    credits_applied: z
+      .array(chargeRealizationDetailedLineCreditAppliedWire)
+      .optional()
+      .describe('Credits applied to this detailed line.'),
+    unit_price: numericWire,
+    amount_discounts: z
+      .array(chargeRealizationAmountDiscountWire)
+      .describe('The amount discounts applied to the detailed line.'),
+  })
+  .describe("A detailed line produced by a flat fee charge's realization run.")
+
+export const chargeRealizationDetailedLineUsageBasedWire = z
+  .strictObject({
+    id: ulidWire,
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z
+      .literal('usage_based')
+      .describe('The type of the charge the realization belongs to.'),
+    service_period: closedPeriodWire,
+    totals: totalsWire,
+    category: chargeRealizationDetailedLineCategoryWire,
+    credits_applied: z
+      .array(chargeRealizationDetailedLineCreditAppliedWire)
+      .optional()
+      .describe('Credits applied to this detailed line.'),
+    unit_price: numericWire,
+    amount_discounts: z
+      .array(chargeRealizationAmountDiscountWire)
+      .describe('The amount discounts applied to the detailed line.'),
+    quantity: numericWire,
+    corrects_run_id: z
+      .string()
+      .optional()
+
+      .describe(
+        "The ID of a prior realization run this detailed line corrects. Only set if the detailed line's totals are negative.",
+      ),
+  })
+
+  .describe(
+    "A detailed line produced by a usage-based charge's realization run.",
+  )
 
 export const currencyCustomWire = z
   .strictObject({
@@ -10879,23 +14958,171 @@ export const appStripeCreateCheckoutSessionConsentCollectionWire = z
   })
   .describe('Checkout Session consent collection configuration.')
 
-export const listCustomerEntitlementAccessResponseDataWire = z
+export const entitlementGrantCreateRequestWire = z
   .strictObject({
-    data: z
-      .array(entitlementAccessResultWire)
-      .describe('The list of entitlement access results.'),
-  })
-  .describe('List customer entitlement access response data.')
+    amount: numericWire,
+    priority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(255)
+      .optional()
 
-export const rateCardEntitlementWire = z
-  .discriminatedUnion('type', [
-    rateCardMeteredEntitlementWire,
-    rateCardStaticEntitlementWire,
-    rateCardBooleanEntitlementWire,
-  ])
+      .describe(
+        'The priority of the grant. Lower values have higher priority. Grants are consumed in priority order, then by closest expiration, then by earliest creation.',
+      ),
+    effective_at: dateTimeWire,
+    expires_after: iso8601DurationWire.optional(),
+    max_rollover_amount: numericWire.optional(),
+    min_rollover_amount: numericWire.optional(),
+    labels: labelsWire.optional(),
+    recurrence: recurringPeriodInputWire.optional(),
+  })
+  .describe('A grant to issue for a metered entitlement.')
+
+export const createEntitlementStaticRequestWire = z
+  .strictObject({
+    type: z.literal('static').describe('The type of the entitlement.'),
+    feature: featureReferenceWire,
+    labels: labelsWire.optional(),
+    config: z
+      .unknown()
+
+      .describe(
+        'The entitlement configuration as a JSON value. Returned when checking entitlement access.',
+      ),
+    usage_period: recurringPeriodInputWire.optional(),
+  })
+  .describe('Static entitlement create request.')
+
+export const createEntitlementBooleanRequestWire = z
+  .strictObject({
+    type: z.literal('boolean').describe('The type of the entitlement.'),
+    feature: featureReferenceWire,
+    labels: labelsWire.optional(),
+    usage_period: recurringPeriodInputWire.optional(),
+  })
+  .describe('Boolean entitlement create request.')
+
+export const entitlementMeteredWire = z
+  .strictObject({
+    id: ulidWire,
+    type: z.literal('metered').describe('The type of the entitlement.'),
+    feature: featureReferenceWire,
+    customer: customerReferenceWire,
+    labels: labelsWire.optional(),
+    active_from: dateTimeWire,
+    active_to: dateTimeWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    usage_period: recurringPeriodWire,
+    current_usage_period: closedPeriodWire,
+    is_soft_limit: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'If true, the customer keeps access to the feature after the balance is exhausted.',
+      ),
+    issue: entitlementIssueAfterResetWire.optional(),
+    issue_after_reset: numericWire.optional(),
+    issue_after_reset_priority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(255)
+      .optional()
+      .describe('The priority of the grant created after each reset.'),
+    preserve_overage_at_reset: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'If true, the overage is preserved at reset. If false, the usage is reset to 0.',
+      ),
+    measure_usage_from: dateTimeWire,
+    last_reset: dateTimeWire,
+  })
 
   .describe(
-    'Entitlement template configured on a rate card. The feature is taken from the rate card itself, so it is omitted here.',
+    'A metered entitlement grants a usage allowance for a feature. Access is determined by the balance: the allowance provided by grants is burnt down by usage.',
+  )
+
+export const entitlementStaticWire = z
+  .strictObject({
+    id: ulidWire,
+    type: z.literal('static').describe('The type of the entitlement.'),
+    feature: featureReferenceWire,
+    customer: customerReferenceWire,
+    labels: labelsWire.optional(),
+    usage_period: recurringPeriodWire.optional(),
+    current_usage_period: closedPeriodWire.optional(),
+    active_from: dateTimeWire,
+    active_to: dateTimeWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    config: z
+      .unknown()
+
+      .describe(
+        'The entitlement configuration as a JSON value. Returned when checking entitlement access.',
+      ),
+  })
+
+  .describe(
+    'A static entitlement grants access to a feature together with a configuration.',
+  )
+
+export const entitlementBooleanWire = z
+  .strictObject({
+    id: ulidWire,
+    type: z.literal('boolean').describe('The type of the entitlement.'),
+    feature: featureReferenceWire,
+    customer: customerReferenceWire,
+    labels: labelsWire.optional(),
+    usage_period: recurringPeriodWire.optional(),
+    current_usage_period: closedPeriodWire.optional(),
+    active_from: dateTimeWire,
+    active_to: dateTimeWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+  })
+  .describe('A boolean entitlement grants access to a feature.')
+
+export const entitlementGrantWire = z
+  .strictObject({
+    id: ulidWire,
+    entitlement_id: ulidWire,
+    customer_id: ulidWire.optional(),
+    amount: numericWire,
+    priority: z
+      .number()
+      .int()
+      .nonnegative()
+      .lte(255)
+
+      .describe(
+        'The priority of the grant. Lower values are consumed first: a grant with priority 1 is consumed before one with priority 2. Among equal priorities, the grant closest to expiration is consumed first, then the earliest created.',
+      ),
+    effective_at: dateTimeWire,
+    expires_after: iso8601DurationWire.optional(),
+    expires_at: dateTimeWire.optional(),
+    max_rollover_amount: numericWire,
+    min_rollover_amount: numericWire,
+    recurrence: recurringPeriodWire.optional(),
+    next_recurrence: dateTimeWire.optional(),
+    voided_at: dateTimeWire.optional(),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+  })
+
+  .describe(
+    "A grant issued for a metered entitlement. Each grant adds its amount to the entitlement's balance from its effective time until it expires, and usage is deducted from the grants in priority order. Grants are immutable, so the balance is deterministic regardless of when it is queried. Deleting a grant ends it at the time of the deletion.",
   )
 
 export const workflowCollectionAlignmentAnchoredWire = z
@@ -10908,35 +15135,136 @@ export const workflowCollectionAlignmentAnchoredWire = z
     'BillingWorkflowCollectionAlignmentAnchored specifies the alignment for collecting the pending line items into an invoice.',
   )
 
-export const chargeFlatFeeSystemIntentWire = z
+export const rateCardEntitlementWire = z
+  .discriminatedUnion('type', [
+    rateCardMeteredEntitlementWire,
+    rateCardStaticEntitlementWire,
+    rateCardBooleanEntitlementWire,
+  ])
+
+  .describe(
+    'Entitlement template configured on a rate card. The feature is taken from the rate card itself, so it is omitted here.',
+  )
+
+export const subscriptionEditAddPhaseWire = z
   .strictObject({
+    type: z
+      .literal('add_phase')
+      .describe('Discriminator for the add-phase operation.'),
+    phase: subscriptionPhaseCreateWire,
+  })
+
+  .describe(
+    'Add a new phase to the subscription. The phase is created without items; use add-item operations to populate it.',
+  )
+
+export const createCreditGrantFiltersWire = z
+  .strictObject({
+    features: z
+      .array(resourceKeyWire)
+      .optional()
+
+      .describe(
+        'Limit the credit grant to specific features. If no features are specified, the credit grant can be used for any feature.',
+      ),
+    plans: z
+      .array(createCreditGrantPlanFilterWire)
+      .optional()
+
+      .describe(
+        'Limit credits to charges from these plans. Entries are alternatives; when features are also specified, both dimensions must match. Omission or an empty list leaves plans unrestricted.',
+      ),
+  })
+  .describe('Filters for the credit grant.')
+
+export const creditGrantFiltersWire = z
+  .strictObject({
+    features: z
+      .array(resourceKeyWire)
+      .optional()
+
+      .describe(
+        'Limit the credit grant to specific features. If no features are specified, the credit grant can be used for any feature.',
+      ),
+    plans: z
+      .array(creditGrantPlanFilterWire)
+      .optional()
+
+      .describe(
+        'Limit credits to charges from these plans. Entries are alternatives; when features are also specified, both dimensions must match. Omission or an empty list leaves plans unrestricted.',
+      ),
+  })
+  .describe('Filters for the credit grant.')
+
+export const subscriptionBaseWire = z
+  .strictObject({
+    id: ulidWire,
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
     name: z
       .string()
       .min(1)
       .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
+
+      .describe(
+        'Display name of the subscription. Defaults to the plan name when the subscription is created from a plan.',
+      ),
     description: z
       .string()
       .max(1024)
       .optional()
+      .describe('Optional description of the subscription.'),
+    active_from: dateTimeWire,
+    active_to: dateTimeWire.optional(),
+    customer_id: ulidWire,
+    plan_id: ulidWire.optional(),
+    plan: subscriptionPlanReferenceWire.optional(),
+    invoice_currency: currencyCodeWire,
+    cost_basis_mode: subscriptionCostBasisModeWire,
+    cost_basis_pins: z
+      .array(subscriptionCostBasisPinWire)
 
       .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
+        'Cost bases pinned to custom-currency pairs for this subscription.',
       ),
-    labels: labelsWire.optional(),
-    invoice_at: dateTimeWire,
-    service_period: closedPeriodWire,
-    full_service_period: closedPeriodWire,
-    billing_period: closedPeriodWire,
-    payment_term: pricePaymentTermWire,
-    discounts: chargeFlatFeeDiscountsWire.optional(),
-    proration_configuration: rateCardProrationConfigurationWire,
-    amount_before_proration: currencyAmountWire,
-    deleted_at: dateTimeWire.optional(),
+    billing_cadence: iso8601DurationWire,
+    pro_rating_config: subscriptionProRatingConfigWire.optional(),
+    billing_anchor: dateTimeWire,
+    status: subscriptionStatusWire,
+    settlement_mode: settlementModeWire.optional(),
+  })
+
+  .describe('Subscription fields without phases or the current billing period.')
+
+export const invoiceStatusDetailsWire = z
+  .strictObject({
+    immutable: z
+      .boolean()
+
+      .describe(
+        'Whether the invoice is immutable (i.e. cannot be modified or deleted).',
+      ),
+    failed: z.boolean().describe('Whether the invoice is in a failed state.'),
+    extended_status: z
+      .string()
+
+      .describe(
+        'Fine-grained internal status string providing additional workflow detail beyond the top-level status enum.',
+      ),
+    available_actions: invoiceAvailableActionsWire,
+  })
+  .describe('Detailed status information for a standard invoice.')
+
+export const invoiceWorkflowWire = z
+  .strictObject({
+    invoicing: invoiceWorkflowInvoicingSettingsWire.optional(),
+    payment: workflowPaymentSettingsWire.optional(),
   })
 
   .describe(
-    'Flat fee intent fields from the system lifecycle controller shadowed by a manual override.',
+    'Invoice-level snapshot of the workflow configuration. Contains only the settings that are meaningful for an already-created invoice: invoicing behaviour and payment settings. Collection alignment and tax policy are gather-time / profile-wide concerns and are not included.',
   )
 
 export const subscriptionCancelWire = z
@@ -10945,35 +15273,32 @@ export const subscriptionCancelWire = z
   })
   .describe('Request for canceling a subscription.')
 
-export const subscriptionChangeWire = z
+export const subscriptionMigrateWire = z
   .strictObject({
-    labels: labelsWire.optional(),
-    settlement_mode: settlementModeWire.optional(),
-    customer: z
-      .strictObject({
-        id: ulidWire.optional(),
-        key: externalResourceKeyWire.optional(),
-      })
-      .describe('The customer to create the subscription for.'),
-    plan: z
-      .strictObject({
-        id: ulidWire.optional(),
-        key: resourceKeyWire.optional(),
-        version: z
-          .number()
-          .int()
-          .optional()
+    timing: subscriptionEditTimingWire.optional(),
+    target_version: z
+      .number()
+      .int()
+      .gte(1)
+      .optional()
 
-          .describe(
-            'The plan version of the subscription, if any. If not provided, the latest version of the plan will be used.',
-          ),
-      })
-      .describe('The plan reference of the subscription.'),
+      .describe(
+        'A strictly later version of the current plan. Omit to use its latest version.',
+      ),
+    starting_phase: z
+      .string()
+      .min(1)
+      .optional()
+
+      .describe(
+        'Explicitly replace the subscription, starting in this target plan phase. Always selects replacement, even when the phase matches the current one. Replacement may produce billing adjustments and does not transfer addons.',
+      ),
     billing_anchor: dateTimeWire.optional(),
-    cost_basis_mode: subscriptionCostBasisModeWire.optional(),
-    timing: subscriptionEditTimingWire,
   })
-  .describe('Request for changing a subscription.')
+
+  .describe(
+    "Request for migrating to a later version of the subscription's current plan.",
+  )
 
 export const createSubscriptionAddonRequestWire = z
   .strictObject({
@@ -10990,6 +15315,23 @@ export const createSubscriptionAddonRequestWire = z
     timing: subscriptionEditTimingWire,
   })
   .describe('SubscriptionAddon create request.')
+
+export const subscriptionAddonUpdateWire = z
+  .strictObject({
+    quantity: z
+      .number()
+      .int()
+      .nonnegative()
+
+      .describe(
+        'The new quantity of the add-on. Must be at least 0. A quantity of 0 removes the add-on from the point the timing resolves to.',
+      ),
+    timing: subscriptionEditTimingWire,
+  })
+
+  .describe(
+    'Request for updating a subscription add-on. Only the quantity can be changed; the timing controls when the new quantity takes effect.',
+  )
 
 export const createTaxCodeRequestWire = z
   .strictObject({
@@ -11088,35 +15430,6 @@ export const updateAppRequestWire = z
   ])
   .describe('Request to update an installed app.')
 
-export const invoiceWorkflowWire = z
-  .strictObject({
-    invoicing: invoiceWorkflowInvoicingSettingsWire.optional(),
-    payment: workflowPaymentSettingsWire.optional(),
-  })
-
-  .describe(
-    'Invoice-level snapshot of the workflow configuration. Contains only the settings that are meaningful for an already-created invoice: invoicing behaviour and payment settings. Collection alignment and tax policy are gather-time / profile-wide concerns and are not included.',
-  )
-
-export const invoiceStatusDetailsWire = z
-  .strictObject({
-    immutable: z
-      .boolean()
-
-      .describe(
-        'Whether the invoice is immutable (i.e. cannot be modified or deleted).',
-      ),
-    failed: z.boolean().describe('Whether the invoice is in a failed state.'),
-    extended_status: z
-      .string()
-
-      .describe(
-        'Fine-grained internal status string providing additional workflow detail beyond the top-level status enum.',
-      ),
-    available_actions: invoiceAvailableActionsWire,
-  })
-  .describe('Detailed status information for a standard invoice.')
-
 export const invoiceLineDiscountsWire = z
   .strictObject({
     amount: z
@@ -11155,6 +15468,127 @@ export const entitlementFeatureAccessWire = z
   })
   .describe('Access status for a single feature.')
 
+export const notificationChannelPagePaginatedResponseWire = z
+  .strictObject({
+    data: z.array(notificationChannelWire),
+    meta: paginatedMetaWire,
+  })
+  .describe('Page paginated response.')
+
+export const notificationRuleBalanceThresholdWire = z
+  .strictObject({
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z
+      .literal('entitlements.balance.threshold')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReferenceWire)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+    thresholds: z
+      .array(notificationBalanceThresholdWire)
+      .min(1)
+      .max(10)
+      .describe('The thresholds that generate an event when crossed.'),
+    features: z
+      .array(featureReferenceWire)
+      .optional()
+
+      .describe(
+        'The features the rule applies to. When omitted, the rule applies to every feature.',
+      ),
+  })
+
+  .describe(
+    'A rule that generates an event when an entitlement balance crosses one of its thresholds.',
+  )
+
+export const notificationRuleBalanceThresholdRequestWire = z
+  .strictObject({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    labels: labelsWire.optional(),
+    type: z
+      .literal('entitlements.balance.threshold')
+
+      .describe(
+        'The type of event the rule generates. Immutable after creation.',
+      ),
+    disabled: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'Whether the rule is disabled. Disabled rules do not generate events.',
+      ),
+    channels: z
+      .array(notificationChannelReferenceWire)
+      .max(5)
+
+      .describe(
+        'The channels the rule delivers its events to. At least one and at most five channels are required. Responses omit channels that have since been disabled or deleted.',
+      ),
+    thresholds: z
+      .array(notificationBalanceThresholdWire)
+      .min(1)
+      .max(10)
+      .describe('The thresholds that generate an event when crossed.'),
+    features: z
+      .array(featureReferenceWire)
+      .optional()
+
+      .describe(
+        'The features the rule applies to. When omitted, the rule applies to every feature.',
+      ),
+  })
+  .describe('Request body for a balance threshold rule.')
+
+export const notificationEventDeliveryStatusWire = z
+  .strictObject({
+    channel_id: ulidWire,
+    state: notificationEventDeliveryStateWire,
+    reason: z
+      .string()
+
+      .describe(
+        'The reason for the last state change. Empty for successful deliveries.',
+      ),
+    updated_at: dateTimeWire,
+    next_attempt: dateTimeWire.optional(),
+    attempts: z
+      .array(notificationEventDeliveryAttemptWire)
+      .describe('The delivery attempts made so far, most recent first.'),
+  })
+
+  .describe(
+    'The delivery status of a notification event for one channel of the generating rule.',
+  )
+
 export const customerDataWire = z
   .strictObject({
     billing_profile: profileReferenceWire.optional(),
@@ -11169,21 +15603,72 @@ export const upsertCustomerBillingDataRequestWire = z
   })
   .describe('CustomerBillingData upsert request.')
 
-export const creditBalancesWire = z
+export const chargeFlatFeeSystemIntentWire = z
   .strictObject({
-    retrieved_at: dateTimeWire,
-    balances: z
-      .array(creditBalanceWire)
-      .describe('The balances by currencies.'),
-  })
-  .describe('The balances of the credits of a customer.')
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
 
-export const creditTransactionPaginatedResponseWire = z
-  .strictObject({
-    data: z.array(creditTransactionWire),
-    meta: cursorMetaWire,
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labelsWire.optional(),
+    invoice_at: dateTimeWire,
+    service_period: closedPeriodWire,
+    full_service_period: closedPeriodWire,
+    billing_period: closedPeriodWire,
+    payment_term: pricePaymentTermWire,
+    discounts: chargeFlatFeeDiscountsWire.optional(),
+    proration_configuration: rateCardProrationConfigurationWire,
+    amount_before_proration: currencyAmountWire,
+    deleted_at: dateTimeWire.optional(),
   })
-  .describe('Cursor paginated response.')
+
+  .describe(
+    'Flat fee intent fields from the system lifecycle controller shadowed by a manual override.',
+  )
+
+export const listCustomerEntitlementAccessResponseDataWire = z
+  .strictObject({
+    data: z
+      .array(entitlementValueResultWire)
+      .describe('The list of entitlement access results.'),
+  })
+  .describe('List customer entitlement access response data.')
+
+export const notificationEventBalanceThresholdDataWire = z
+  .strictObject({
+    entitlement_id: ulidWire,
+    feature: notificationEventFeatureReferenceWire,
+    subject_key: z
+      .string()
+      .describe('The key of the subject the entitlement belongs to.'),
+    customer_id: ulidWire.optional(),
+    value: entitlementValueResultWire,
+    threshold: notificationBalanceThresholdWire,
+  })
+  .describe('The entities and threshold a balance threshold event refers to.')
+
+export const notificationEventEntitlementDataWire = z
+  .strictObject({
+    entitlement_id: ulidWire,
+    feature: notificationEventFeatureReferenceWire,
+    subject_key: z
+      .string()
+      .describe('The key of the subject the entitlement belongs to.'),
+    customer_id: ulidWire.optional(),
+    value: entitlementValueResultWire,
+  })
+
+  .describe(
+    'The entitlement, feature, and subject an entitlement notification event refers to.',
+  )
 
 export const priceGraduatedWire = z
   .strictObject({
@@ -11198,7 +15683,7 @@ export const priceGraduatedWire = z
   })
 
   .describe(
-    "Graduated tiered price. Each tier's rate applies only to the usage within that tier. Pricing can change as cumulative usage crosses tier boundaries. When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are expressed in converted billing units.",
+    "Graduated tiered price. Each tier's rate applies only to the usage within that tier. Pricing can change as cumulative usage crosses tier boundaries. When UnitConfig is present on the containing resource, tier boundaries (up_to_amount) are expressed in converted billing units.",
   )
 
 export const priceVolumeWire = z
@@ -11214,7 +15699,17 @@ export const priceVolumeWire = z
   })
 
   .describe(
-    'Volume tiered price. The maximum quantity within a period determines the per-unit price for all units in that period. When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are expressed in converted billing units.',
+    'Volume tiered price. The maximum quantity within a period determines the per-unit price for all units in that period. When UnitConfig is present on the containing resource, tier boundaries (up_to_amount) are expressed in converted billing units.',
+  )
+
+export const featureUnitCostWire = z
+  .discriminatedUnion('type', [
+    featureManualUnitCostWire,
+    featureLlmUnitCostWire,
+  ])
+
+  .describe(
+    'Per-unit cost configuration for a feature. Either a fixed manual amount or a dynamic LLM cost lookup.',
   )
 
 export const updatePriceGraduatedWire = z
@@ -11230,7 +15725,7 @@ export const updatePriceGraduatedWire = z
   })
 
   .describe(
-    "Graduated tiered price. Each tier's rate applies only to the usage within that tier. Pricing can change as cumulative usage crosses tier boundaries. When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are expressed in converted billing units.",
+    "Graduated tiered price. Each tier's rate applies only to the usage within that tier. Pricing can change as cumulative usage crosses tier boundaries. When UnitConfig is present on the containing resource, tier boundaries (up_to_amount) are expressed in converted billing units.",
   )
 
 export const updatePriceVolumeWire = z
@@ -11246,17 +15741,7 @@ export const updatePriceVolumeWire = z
   })
 
   .describe(
-    'Volume tiered price. The maximum quantity within a period determines the per-unit price for all units in that period. When UnitConfig is present on the rate card, tier boundaries (up_to_amount) are expressed in converted billing units.',
-  )
-
-export const featureUnitCostWire = z
-  .discriminatedUnion('type', [
-    featureManualUnitCostWire,
-    featureLlmUnitCostWire,
-  ])
-
-  .describe(
-    'Per-unit cost configuration for a feature. Either a fixed manual amount or a dynamic LLM cost lookup.',
+    'Volume tiered price. The maximum quantity within a period determines the per-unit price for all units in that period. When UnitConfig is present on the containing resource, tier boundaries (up_to_amount) are expressed in converted billing units.',
   )
 
 export const pricePagePaginatedResponseWire = z
@@ -11266,91 +15751,25 @@ export const pricePagePaginatedResponseWire = z
   })
   .describe('Page paginated response.')
 
-export const createCreditGrantRequestWire = z
+export const createCreditGrantPurchaseWire = z
   .strictObject({
-    name: z
-      .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
-      .optional()
-
-      .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
-      ),
-    labels: createLabelsWire.optional(),
-    funding_method: creditFundingMethodWire,
-    currency: createCurrencyCodeWire,
-    amount: numericWire,
-    purchase: createCreditGrantPurchaseWire.optional(),
-    tax_config: createCreditGrantTaxConfigWire.optional(),
-    filters: createCreditGrantFiltersWire.optional(),
-    priority: z
-      .number()
-      .int()
-      .gte(1)
-      .lte(1000)
-      .optional()
-
-      .describe(
-        'Draw-down priority of the grant. Lower values have higher priority.',
-      ),
-    effective_at: dateTimeWire.optional(),
-    expires_after: iso8601DurationWire.optional(),
-    key: externalResourceKeyWire.optional(),
+    currency: currencyCodeWire,
+    per_unit_cost_basis: numericWire.optional(),
+    cost_basis: createChargeCostBasisWire.optional(),
+    availability_policy: creditAvailabilityPolicyWire.optional(),
   })
-  .describe('CreditGrant create request.')
+  .describe('Purchase and payment terms of the grant.')
 
-export const creditGrantWire = z
+export const creditGrantPurchaseWire = z
   .strictObject({
-    id: ulidWire,
-    name: z
-      .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
-      .optional()
-
-      .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
-      ),
-    labels: labelsWire.optional(),
-    created_at: dateTimeWire,
-    updated_at: dateTimeWire,
-    deleted_at: dateTimeWire.optional(),
-    funding_method: creditFundingMethodWire,
-    currency: billingCurrencyCodeWire,
-    amount: numericWire,
-    purchase: creditGrantPurchaseWire.optional(),
-    tax_config: creditGrantTaxConfigWire.optional(),
-    invoice: creditGrantInvoiceReferenceWire.optional(),
-    filters: creditGrantFiltersWire.optional(),
-    priority: z
-      .number()
-      .int()
-      .gte(1)
-      .lte(1000)
-      .optional()
-
-      .describe(
-        'Draw-down priority of the grant. Lower values have higher priority.',
-      ),
-    effective_at: dateTimeWire.optional(),
-    key: externalResourceKeyWire.optional(),
-    expires_at: dateTimeWire.optional(),
-    voided_at: dateTimeWire.optional(),
-    status: creditGrantStatusWire,
+    currency: currencyCodeWire,
+    per_unit_cost_basis: numericWire.optional(),
+    resolved_cost_basis: chargeResolvedCostBasisWire.optional(),
+    amount: numericWire.optional(),
+    availability_policy: creditAvailabilityPolicyWire.optional(),
+    settlement_status: creditPurchasePaymentSettlementStatusWire.optional(),
   })
-
-  .describe(
-    'A credit grant allocates credits to a customer. Credits are drawn down against charges according to the settlement mode configured on the rate card.',
-  )
+  .describe('Purchase and payment terms of the grant.')
 
 export const createChargeFlatFeeRequestWire = z
   .strictObject({
@@ -11369,7 +15788,8 @@ export const createChargeFlatFeeRequestWire = z
       ),
     labels: labelsWire.optional(),
     type: z.literal('flat_fee').describe('The type of the charge.'),
-    currency: currencyCodeWire,
+    currency: billingCurrencyCodeWire,
+    cost_basis: chargeCostBasisWire.optional(),
     invoice_at: dateTimeWire,
     service_period: closedPeriodWire,
     unique_reference_id: z
@@ -11380,12 +15800,9 @@ export const createChargeFlatFeeRequestWire = z
     tax_config: taxConfigWire.optional(),
     payment_term: pricePaymentTermWire,
     discounts: chargeFlatFeeDiscountsWire.optional(),
-    feature_id: z
-      .string()
-      .optional()
-      .describe('The feature ID associated with the charge.'),
     proration_configuration: rateCardProrationConfigurationWire,
     amount_before_proration: currencyAmountWire,
+    feature: featureReferenceWire.optional(),
     full_service_period: closedPeriodWire.optional(),
     billing_period: closedPeriodWire.optional(),
   })
@@ -11411,19 +15828,21 @@ export const workflowTaxSettingsWire = z
   })
   .describe('Tax settings for a billing workflow.')
 
-export const subscriptionPagePaginatedResponseWire = z
+export const creditBalancesWire = z
   .strictObject({
-    data: z.array(subscriptionWire),
-    meta: paginatedMetaWire,
+    retrieved_at: dateTimeWire,
+    balances: z
+      .array(creditBalanceWire)
+      .describe('The balances by currencies.'),
   })
-  .describe('Page paginated response.')
+  .describe('The balances of the credits of a customer.')
 
-export const subscriptionChangeResponseWire = z
+export const creditTransactionPaginatedResponseWire = z
   .strictObject({
-    current: subscriptionWire,
-    next: subscriptionWire,
+    data: z.array(creditTransactionWire),
+    meta: cursorMetaWire,
   })
-  .describe('Response for changing a subscription.')
+  .describe('Cursor paginated response.')
 
 export const planAddonPagePaginatedResponseWire = z
   .strictObject({
@@ -11432,12 +15851,57 @@ export const planAddonPagePaginatedResponseWire = z
   })
   .describe('Page paginated response.')
 
+export const notificationEventInvoiceCreatedPayloadWire = z
+  .strictObject({
+    id: ulidWire,
+    type: z.literal('invoice.created').describe('The type of the event.'),
+    timestamp: dateTimeWire,
+    data: notificationEventInvoiceDataWire,
+  })
+  .describe('An invoice created notification event payload.')
+
+export const notificationEventInvoiceUpdatedPayloadWire = z
+  .strictObject({
+    id: ulidWire,
+    type: z.literal('invoice.updated').describe('The type of the event.'),
+    timestamp: dateTimeWire,
+    data: notificationEventInvoiceDataWire,
+  })
+  .describe('An invoice updated notification event payload.')
+
 export const ingestedEventPaginatedResponseWire = z
   .strictObject({
     data: z.array(ingestedEventWire),
     meta: cursorMetaWire,
   })
   .describe('Cursor paginated response.')
+
+export const entitlementHistoryWire = z
+  .strictObject({
+    windowed_history: z
+      .array(entitlementHistoryWindowWire)
+
+      .describe(
+        'Usage in half-open windows of the requested size, aligned to the requested time zone. Empty windows are included; windows before usage measurement began are omitted.',
+      ),
+    burndown_history: z
+      .array(entitlementBurndownSegmentWire)
+
+      .describe(
+        'Periods in which grants were consumed in a fixed order. A new segment starts whenever grant priorities change or a usage period starts.',
+      ),
+  })
+  .describe('Balance and usage history of a metered entitlement.')
+
+export const chargeRealizationDetailedLineWire = z
+  .discriminatedUnion('type', [
+    chargeRealizationDetailedLineFlatFeeWire,
+    chargeRealizationDetailedLineUsageBasedWire,
+  ])
+
+  .describe(
+    "A detailed (child) line type of a charge realization run. This is distinct from an invoice's own detailed lines: it represents the rated/priced breakdown produced by the realization run itself, before that breakdown is (or is not yet) reflected on an invoice line. Credit-then-invoice runs include credit allocations in these lines, while credits-only runs keep the gross rated detail.",
+  )
 
 export const currencyWire = z
   .discriminatedUnion('type', [currencyFiatWire, currencyCustomWire])
@@ -11476,18 +15940,9 @@ export const customerPagePaginatedResponseWire = z
   })
   .describe('Page paginated response.')
 
-export const partyWire = z
-  .strictObject({
-    id: z.string().optional().describe('Unique identifier for the party.'),
-    key: externalResourceKeyWire.optional(),
-    name: z
-      .string()
-      .optional()
-      .describe('Legal name or representation of the party.'),
-    tax_id: partyTaxIdentityWire.optional(),
-    addresses: partyAddressesWire.optional(),
-  })
-  .describe('Party represents a person or business entity.')
+export const customerOrReferenceWire = z
+  .union([customerWire, customerReferenceWire])
+  .describe('Customer or reference.')
 
 export const supplierWire = z
   .strictObject({
@@ -11503,6 +15958,19 @@ export const supplierWire = z
   .describe(
     "Snapshot of the supplier's information at the time the invoice was issued. Structurally a read-only subset of `BillingParty` (the type configured on the billing profile), so the snapshot stays aligned with the source. `key` is omitted because it is not part of the snapshotted supplier data.",
   )
+
+export const partyWire = z
+  .strictObject({
+    id: z.string().optional().describe('Unique identifier for the party.'),
+    key: externalResourceKeyWire.optional(),
+    name: z
+      .string()
+      .optional()
+      .describe('Legal name or representation of the party.'),
+    tax_id: partyTaxIdentityWire.optional(),
+    addresses: partyAddressesWire.optional(),
+  })
+  .describe('Party represents a person or business entity.')
 
 export const updateSupplierWire = z
   .strictObject({
@@ -11598,6 +16066,61 @@ export const appStripeCreateCheckoutSessionRequestOptionsWire = z
     "Configuration options for creating a Stripe Checkout Session. Based on Stripe's [Checkout Session API parameters](https://docs.stripe.com/api/checkout/sessions/create).",
   )
 
+export const createEntitlementMeteredRequestWire = z
+  .strictObject({
+    type: z.literal('metered').describe('The type of the entitlement.'),
+    feature: featureReferenceWire,
+    labels: labelsWire.optional(),
+    is_soft_limit: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'If true, the customer keeps access to the feature after the balance is exhausted.',
+      ),
+    issue: entitlementIssueAfterResetWire.optional(),
+    issue_after_reset: numericWire.optional(),
+    issue_after_reset_priority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(255)
+      .optional()
+      .describe('The priority of the grant created after each reset.'),
+    preserve_overage_at_reset: z
+      .boolean()
+      .optional()
+
+      .describe(
+        'If true, the overage is preserved at reset. If false, the usage is reset to 0.',
+      ),
+    usage_period: recurringPeriodInputWire,
+    measure_usage_from: entitlementMeasureUsageFromWire.optional(),
+    grants: z
+      .array(entitlementGrantCreateRequestWire)
+      .optional()
+
+      .describe(
+        'Grants created together with the entitlement. Cannot be combined with `issue`.',
+      ),
+  })
+  .describe('Metered entitlement create request.')
+
+export const entitlementWire = z
+  .discriminatedUnion('type', [
+    entitlementMeteredWire,
+    entitlementStaticWire,
+    entitlementBooleanWire,
+  ])
+  .describe('An entitlement grants a customer access to a feature.')
+
+export const entitlementGrantPagePaginatedResponseWire = z
+  .strictObject({
+    data: z.array(entitlementGrantWire),
+    meta: paginatedMetaWire,
+  })
+  .describe('Page paginated response.')
+
 export const workflowCollectionAlignmentWire = z
   .discriminatedUnion('type', [
     workflowCollectionAlignmentSubscriptionWire,
@@ -11606,6 +16129,17 @@ export const workflowCollectionAlignmentWire = z
 
   .describe(
     'The alignment for collecting the pending line items into an invoice. Defaults to subscription, which means that we are to create a new invoice every time the a subscription period starts (for in advance items) or ends (for in arrears items).',
+  )
+
+export const invoiceWorkflowSettingsWire = z
+  .strictObject({
+    apps: invoiceWorkflowAppsReferencesWire.optional(),
+    source_billing_profile: profileReferenceWire,
+    workflow: invoiceWorkflowWire,
+  })
+
+  .describe(
+    'Snapshot of the billing workflow configuration captured at invoice creation.',
   )
 
 export const taxCodePagePaginatedResponseWire = z
@@ -11638,6 +16172,13 @@ export const appStripeWire = z
     type: z.literal('stripe').describe('The app type.'),
     definition: appCatalogItemWire,
     status: appStatusWire,
+    actions: z
+      .array(appActionWire)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
     account_id: z
       .string()
 
@@ -11682,6 +16223,13 @@ export const appSandboxWire = z
     type: z.literal('sandbox').describe('The app type.'),
     definition: appCatalogItemWire,
     status: appStatusWire,
+    actions: z
+      .array(appActionWire)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
   })
   .describe('Sandbox app can be used for testing billing features.')
 
@@ -11708,6 +16256,13 @@ export const appExternalInvoicingWire = z
     type: z.literal('external_invoicing').describe('The app type.'),
     definition: appCatalogItemWire,
     status: appStatusWire,
+    actions: z
+      .array(appActionWire)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
     enable_draft_sync_hook: z
       .boolean()
 
@@ -11733,16 +16288,143 @@ export const appCatalogItemPagePaginatedResponseWire = z
   })
   .describe('Page paginated response.')
 
-export const invoiceWorkflowSettingsWire = z
+export const installedAppStripeWire = z
   .strictObject({
-    apps: invoiceWorkflowAppsReferencesWire.optional(),
-    source_billing_profile: profileReferenceWire,
-    workflow: invoiceWorkflowWire,
-  })
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
 
-  .describe(
-    'Snapshot of the billing workflow configuration captured at invoice creation.',
-  )
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z.literal('stripe').describe('The app type.'),
+    definition: appCatalogItemWire,
+    status: appStatusWire,
+    actions: z
+      .array(appActionWire)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
+    account_id: z
+      .string()
+
+      .describe(
+        'The Stripe account ID associated with the connected Stripe account.',
+      ),
+    livemode: z
+      .boolean()
+
+      .describe(
+        'Indicates whether the app is connected to a live Stripe account.',
+      ),
+    masked_api_key: z
+      .string()
+
+      .describe(
+        'The masked Stripe API key that only exposes the first and last few characters.',
+      ),
+    default_for_capability_types: z
+      .array(appCapabilityTypeWire)
+      .describe('Default capabilities of the installed app.'),
+  })
+  .describe('Response of an installed app.')
+
+export const installedAppSandboxWire = z
+  .strictObject({
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z.literal('sandbox').describe('The app type.'),
+    definition: appCatalogItemWire,
+    status: appStatusWire,
+    actions: z
+      .array(appActionWire)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
+    default_for_capability_types: z
+      .array(appCapabilityTypeWire)
+      .describe('Default capabilities of the installed app.'),
+  })
+  .describe('Response of an installed app.')
+
+export const installedAppExternalInvoicingWire = z
+  .strictObject({
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z.literal('external_invoicing').describe('The app type.'),
+    definition: appCatalogItemWire,
+    status: appStatusWire,
+    actions: z
+      .array(appActionWire)
+      .optional()
+
+      .describe(
+        'Actions the operator should take to bring the app up to date. Omitted when no action is required.',
+      ),
+    enable_draft_sync_hook: z
+      .boolean()
+
+      .describe(
+        'Enable draft synchronization hook. When enabled, invoices will pause at the draft state and wait for the integration to call the draft synchronized endpoint before progressing to the issuing state. This allows the external system to validate and prepare the invoice data. When disabled, invoices automatically progress through the draft state based on the configured workflow timing.',
+      ),
+    enable_issuing_sync_hook: z
+      .boolean()
+
+      .describe(
+        'Enable issuing synchronization hook. When enabled, invoices will pause at the issuing state and wait for the integration to call the issuing synchronized endpoint before progressing to the issued state. This ensures the external invoicing system has successfully created and finalized the invoice before it is marked as issued. When disabled, invoices automatically progress through the issuing state and are immediately marked as issued.',
+      ),
+    default_for_capability_types: z
+      .array(appCapabilityTypeWire)
+      .describe('Default capabilities of the installed app.'),
+  })
+  .describe('Response of an installed app.')
 
 export const invoiceDetailedLineWire = z
   .strictObject({
@@ -11809,6 +16491,50 @@ export const entitlementAccessQueryResultWire = z
   })
   .describe('Access evaluation result for a single resolved customer.')
 
+export const notificationRuleWire = z
+  .discriminatedUnion('type', [
+    notificationRuleBalanceThresholdWire,
+    notificationRuleEntitlementResetWire,
+    notificationRuleInvoiceCreatedWire,
+    notificationRuleInvoiceUpdatedWire,
+  ])
+
+  .describe(
+    'A notification rule selects the type of event to generate, the conditions specific to that type, and the channels to deliver the events to.',
+  )
+
+export const notificationRuleRequestWire = z
+  .discriminatedUnion('type', [
+    notificationRuleBalanceThresholdRequestWire,
+    notificationRuleEntitlementResetRequestWire,
+    notificationRuleInvoiceCreatedRequestWire,
+    notificationRuleInvoiceUpdatedRequestWire,
+  ])
+
+  .describe(
+    "Request body for creating or updating a notification rule. Updates replace the rule's mutable state: omitting `disabled`, `labels`, or `features` resets them to their defaults. The `type` must match the existing rule on update.",
+  )
+
+export const notificationEventBalanceThresholdPayloadWire = z
+  .strictObject({
+    id: ulidWire,
+    type: z
+      .literal('entitlements.balance.threshold')
+      .describe('The type of the event.'),
+    timestamp: dateTimeWire,
+    data: notificationEventBalanceThresholdDataWire,
+  })
+  .describe('A balance threshold notification event payload.')
+
+export const notificationEventResetPayloadWire = z
+  .strictObject({
+    id: ulidWire,
+    type: z.literal('entitlements.reset').describe('The type of the event.'),
+    timestamp: dateTimeWire,
+    data: notificationEventEntitlementDataWire,
+  })
+  .describe('An entitlement reset notification event payload.')
+
 export const priceWire = z
   .discriminatedUnion('type', [
     priceFreeWire,
@@ -11827,18 +16553,8 @@ export const priceUsageBasedWire = z
   ])
 
   .describe(
-    'Usage-based price types that can appear on a usage-based rate card. When UnitConfig is present on the rate card, these price types operate on billing units (i.e. post-conversion quantities), not raw metered units.',
+    'Usage-based price types for a rate card or charge. When UnitConfig is present on the object, these price types operate on billing units (i.e. post-conversion quantities), not raw metered units.',
   )
-
-export const updatePriceWire = z
-  .discriminatedUnion('type', [
-    updatePriceFreeWire,
-    updatePriceFlatWire,
-    updatePriceUnitWire,
-    updatePriceGraduatedWire,
-    updatePriceVolumeWire,
-  ])
-  .describe('Price.')
 
 export const featureWire = z
   .strictObject({
@@ -11903,12 +16619,108 @@ export const updateFeatureRequestWire = z
     'Request body for updating a feature. Currently only the unit_cost field can be updated.',
   )
 
-export const creditGrantPagePaginatedResponseWire = z
+export const updatePriceWire = z
+  .discriminatedUnion('type', [
+    updatePriceFreeWire,
+    updatePriceFlatWire,
+    updatePriceUnitWire,
+    updatePriceGraduatedWire,
+    updatePriceVolumeWire,
+  ])
+  .describe('Price.')
+
+export const createCreditGrantRequestWire = z
   .strictObject({
-    data: z.array(creditGrantWire),
-    meta: paginatedMetaWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: createLabelsWire.optional(),
+    funding_method: creditFundingMethodWire,
+    currency: createCurrencyCodeWire,
+    amount: numericWire,
+    purchase: createCreditGrantPurchaseWire.optional(),
+    tax_config: createTaxCodeConfigWire.optional(),
+    filters: createCreditGrantFiltersWire.optional(),
+    priority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(1000)
+      .optional()
+
+      .describe(
+        'Draw-down priority of the grant. Lower values have higher priority.',
+      ),
+    effective_at: dateTimeWire.optional(),
+    expires_after: iso8601DurationWire.optional(),
+    key: externalResourceKeyWire.optional(),
   })
-  .describe('Page paginated response.')
+  .describe('CreditGrant create request.')
+
+export const creditGrantWire = z
+  .strictObject({
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    funding_method: creditFundingMethodWire,
+    currency: billingCurrencyCodeWire,
+    amount: numericWire,
+    purchase: creditGrantPurchaseWire.optional(),
+    tax_config: taxCodeConfigWire.optional(),
+    invoice: creditGrantInvoiceReferenceWire.optional(),
+    filters: creditGrantFiltersWire.optional(),
+    priority: z
+      .number()
+      .int()
+      .gte(1)
+      .lte(1000)
+      .optional()
+
+      .describe(
+        'Draw-down priority of the grant. Lower values have higher priority.',
+      ),
+    effective_at: dateTimeWire.optional(),
+    key: externalResourceKeyWire.optional(),
+    expires_at: dateTimeWire.optional(),
+    voided_at: dateTimeWire.optional(),
+    status: creditGrantStatusWire,
+    validation_issues: z
+      .array(validationIssueWire)
+      .optional()
+
+      .describe(
+        'Validation issues found while processing the credit grant. Present only when there are one or more validation findings. An empty list is omitted.',
+      ),
+  })
+
+  .describe(
+    'A credit grant allocates credits to a customer. Credits are drawn down against charges according to the settlement mode configured on the rate card.',
+  )
 
 export const currencyPagePaginatedResponseWire = z
   .strictObject({
@@ -11948,7 +16760,7 @@ export const invoiceBaseWire = z
     totals: totalsWire,
     service_period: closedPeriodWire,
     validation_issues: z
-      .array(invoiceValidationIssueWire)
+      .array(validationIssueWire)
       .optional()
 
       .describe(
@@ -11970,6 +16782,21 @@ export const customerStripeCreateCheckoutSessionRequestWire = z
     'Request to create a Stripe Checkout Session for the customer. Checkout Sessions are used to collect payment method information from customers in a secure, Stripe-hosted interface. This integration uses setup mode to collect payment methods that can be charged later for subscription billing.',
   )
 
+export const createEntitlementRequestWire = z
+  .discriminatedUnion('type', [
+    createEntitlementMeteredRequestWire,
+    createEntitlementStaticRequestWire,
+    createEntitlementBooleanRequestWire,
+  ])
+  .describe('Entitlement create request.')
+
+export const entitlementPagePaginatedResponseWire = z
+  .strictObject({
+    data: z.array(entitlementWire),
+    meta: paginatedMetaWire,
+  })
+  .describe('Page paginated response.')
+
 export const workflowCollectionSettingsWire = z
   .strictObject({
     alignment: workflowCollectionAlignmentWire.optional(),
@@ -11986,6 +16813,52 @@ export const workflowCollectionSettingsWire = z
     'Workflow collection specifies how to collect the pending line items for an invoice.',
   )
 
+export const chargeRealizationInvoiceWire = z
+  .strictObject({
+    id: ulidWire,
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    number: invoiceNumberWire,
+    currency: currencyCodeWire,
+    supplier: supplierWire,
+    totals: totalsWire,
+    service_period: closedPeriodWire,
+    validation_issues: z
+      .array(validationIssueWire)
+      .optional()
+
+      .describe(
+        'Validation issues found during invoice processing. Present only when there are one or more validation findings. An empty list is omitted.',
+      ),
+    external_references: invoiceExternalReferencesWire.optional(),
+    type: z
+      .literal('standard')
+      .describe('Discriminator field identifying this as a standard invoice.'),
+    status: invoiceStandardStatusWire,
+    status_details: invoiceStatusDetailsWire,
+    issued_at: dateTimeWire.optional(),
+    draft_until: dateTimeWire.optional(),
+    quantity_snapshotted_at: dateTimeWire.optional(),
+    collection_at: dateTimeWire.optional(),
+    due_at: dateTimeWire.optional(),
+    sent_to_customer_at: dateTimeWire.optional(),
+    workflow: invoiceWorkflowSettingsWire,
+  })
+
+  .describe(
+    'The invoice a charge realization was booked to, embedded as a header. Matches the standard invoice entity, except that it carries no `customer` snapshot (the charge context already identifies the customer) and `lines` are never populated (the realization itself is the line-level breakdown). The shared invoice contract stays untouched: this model exists so the charges API can slim the embedding without loosening the invoices API.',
+  )
+
 export const appWire = z
   .discriminatedUnion('type', [
     appStripeWire,
@@ -11993,6 +16866,14 @@ export const appWire = z
     appExternalInvoicingWire,
   ])
   .describe('Installed application.')
+
+export const billingInstallAppResponseWire = z
+  .discriminatedUnion('type', [
+    installedAppStripeWire,
+    installedAppSandboxWire,
+    installedAppExternalInvoicingWire,
+  ])
+  .describe('Response of the app install.')
 
 export const entitlementAccessQueryResponseWire = z
   .strictObject({
@@ -12006,124 +16887,24 @@ export const entitlementAccessQueryResponseWire = z
   })
   .describe('Response of the entitlement access query.')
 
-export const chargeFlatFeeWire = z
+export const notificationRulePagePaginatedResponseWire = z
   .strictObject({
-    id: ulidWire,
-    name: z
-      .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
-      .optional()
-
-      .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
-      ),
-    labels: labelsWire.optional(),
-    created_at: dateTimeWire,
-    updated_at: dateTimeWire,
-    deleted_at: dateTimeWire.optional(),
-    type: z.literal('flat_fee').describe('The type of the charge.'),
-    customer: billingCustomerReferenceWire,
-    lifecycle_controller: lifecycleControllerWire,
-    subscription: subscriptionReferenceWire.optional(),
-    currency: currencyCodeWire,
-    status: chargeStatusWire,
-    invoice_at: dateTimeWire,
-    service_period: closedPeriodWire,
-    full_service_period: closedPeriodWire,
-    billing_period: closedPeriodWire,
-    advance_after: dateTimeWire.optional(),
-    unique_reference_id: z
-      .string()
-      .optional()
-      .describe('Unique reference ID of the charge.'),
-    settlement_mode: settlementModeWire,
-    tax_config: taxConfigWire.optional(),
-    payment_term: pricePaymentTermWire,
-    discounts: chargeFlatFeeDiscountsWire.optional(),
-    feature_key: z
-      .string()
-      .optional()
-      .describe('The feature associated with the charge, when applicable.'),
-    feature_id: z
-      .string()
-      .optional()
-      .describe('The feature ID associated with the charge.'),
-    proration_configuration: rateCardProrationConfigurationWire,
-    amount_after_proration: currencyAmountWire,
-    price: priceWire,
-    system_intent: chargeFlatFeeSystemIntentWire.optional(),
+    data: z.array(notificationRuleWire),
+    meta: paginatedMetaWire,
   })
-  .describe('A flat fee charge for a customer.')
+  .describe('Page paginated response.')
 
-export const chargeUsageBasedSystemIntentWire = z
-  .strictObject({
-    name: z
-      .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
-      .optional()
-
-      .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
-      ),
-    labels: labelsWire.optional(),
-    invoice_at: dateTimeWire,
-    service_period: closedPeriodWire,
-    full_service_period: closedPeriodWire,
-    billing_period: closedPeriodWire,
-    discounts: rateCardDiscountsWire.optional(),
-    price: priceWire,
-    deleted_at: dateTimeWire.optional(),
-  })
+export const notificationEventPayloadWire = z
+  .discriminatedUnion('type', [
+    notificationEventBalanceThresholdPayloadWire,
+    notificationEventResetPayloadWire,
+    notificationEventInvoiceCreatedPayloadWire,
+    notificationEventInvoiceUpdatedPayloadWire,
+  ])
 
   .describe(
-    'Usage-based intent fields from the system lifecycle controller shadowed by a manual override.',
+    'The payload delivered to the channels, discriminated by the event type.',
   )
-
-export const createChargeUsageBasedRequestWire = z
-  .strictObject({
-    name: z
-      .string()
-      .min(1)
-      .max(256)
-      .describe('Display name of the resource. Between 1 and 256 characters.'),
-    description: z
-      .string()
-      .max(1024)
-      .optional()
-
-      .describe(
-        'Optional description of the resource. Maximum 1024 characters.',
-      ),
-    labels: labelsWire.optional(),
-    type: z.literal('usage_based').describe('The type of the charge.'),
-    currency: currencyCodeWire,
-    invoice_at: dateTimeWire,
-    service_period: closedPeriodWire,
-    unique_reference_id: z
-      .string()
-      .optional()
-      .describe('Unique reference ID of the charge.'),
-    settlement_mode: settlementModeWire,
-    tax_config: taxConfigWire.optional(),
-    discounts: rateCardDiscountsWire.optional(),
-    feature_id: z
-      .string()
-      .describe('The feature ID associated with the charge.'),
-    price: priceWire,
-    full_service_period: closedPeriodWire.optional(),
-    billing_period: closedPeriodWire.optional(),
-  })
-  .describe('Usage-based charge create request.')
 
 export const rateCardWire = z
   .strictObject({
@@ -12150,7 +16931,7 @@ export const rateCardWire = z
     payment_term: pricePaymentTermWire.optional(),
     commitments: spendCommitmentsWire.optional(),
     discounts: rateCardDiscountsWire.optional(),
-    tax_config: rateCardTaxConfigWire.optional(),
+    tax_config: taxCodeConfigWire.optional(),
     entitlement: rateCardEntitlementWire.optional(),
   })
 
@@ -12161,63 +16942,15 @@ export const rateCardWire = z
 export const invoiceLineRateCardWire = z
   .strictObject({
     price: priceWire,
-    tax_config: rateCardTaxConfigWire.optional(),
+    tax_config: taxCodeConfigWire.optional(),
     feature_key: resourceKeyWire.optional(),
     discounts: rateCardDiscountsWire.optional(),
     unit_config: unitConfigWire.optional(),
   })
   .describe('Rate card configuration snapshot for a usage-based invoice line.')
 
-export const updateInvoiceLineRateCardWire = z
+export const chargeUsageBasedSystemIntentWire = z
   .strictObject({
-    price: updatePriceWire,
-    tax_config: updateRateCardTaxConfigWire.optional(),
-    feature_key: resourceKeyWire.optional(),
-    discounts: updateDiscountsWire.optional(),
-  })
-  .describe('Rate card configuration snapshot for a usage-based invoice line.')
-
-export const featurePagePaginatedResponseWire = z
-  .strictObject({
-    data: z.array(featureWire),
-    meta: paginatedMetaWire,
-  })
-  .describe('Page paginated response.')
-
-export const workflowWire = z
-  .strictObject({
-    collection: workflowCollectionSettingsWire.optional(),
-    invoicing: workflowInvoicingSettingsWire.optional(),
-    payment: workflowPaymentSettingsWire.optional(),
-    tax: workflowTaxSettingsWire.optional(),
-  })
-  .describe('Billing workflow settings.')
-
-export const appPagePaginatedResponseWire = z
-  .strictObject({
-    data: z.array(appWire),
-    meta: paginatedMetaWire,
-  })
-  .describe('Page paginated response.')
-
-export const billingInstallAppResponseWire = z
-  .strictObject({
-    app: appWire,
-    default_for_capability_types: z.array(appCapabilityTypeWire),
-  })
-  .describe('Response of the app install.')
-
-export const profileAppsWire = z
-  .strictObject({
-    tax: appWire,
-    invoicing: appWire,
-    payment: appWire,
-  })
-  .describe('Applications used by a billing profile.')
-
-export const chargeUsageBasedWire = z
-  .strictObject({
-    id: ulidWire,
     name: z
       .string()
       .min(1)
@@ -12232,20 +16965,42 @@ export const chargeUsageBasedWire = z
         'Optional description of the resource. Maximum 1024 characters.',
       ),
     labels: labelsWire.optional(),
-    created_at: dateTimeWire,
-    updated_at: dateTimeWire,
-    deleted_at: dateTimeWire.optional(),
-    type: z.literal('usage_based').describe('The type of the charge.'),
-    customer: billingCustomerReferenceWire,
-    lifecycle_controller: lifecycleControllerWire,
-    subscription: subscriptionReferenceWire.optional(),
-    currency: currencyCodeWire,
-    status: chargeStatusWire,
     invoice_at: dateTimeWire,
     service_period: closedPeriodWire,
     full_service_period: closedPeriodWire,
     billing_period: closedPeriodWire,
-    advance_after: dateTimeWire.optional(),
+    discounts: rateCardDiscountsWire.optional(),
+    price: priceUsageBasedWire,
+    commitments: spendCommitmentsWire.optional(),
+    unit_config: unitConfigWire.optional(),
+    deleted_at: dateTimeWire.optional(),
+  })
+
+  .describe(
+    'Usage-based intent fields from the system lifecycle controller shadowed by a manual override.',
+  )
+
+export const createChargeUsageBasedRequestWire = z
+  .strictObject({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labelsWire.optional(),
+    type: z.literal('usage_based').describe('The type of the charge.'),
+    currency: billingCurrencyCodeWire,
+    cost_basis: chargeCostBasisWire.optional(),
+    invoice_at: dateTimeWire,
+    service_period: closedPeriodWire,
     unique_reference_id: z
       .string()
       .optional()
@@ -12253,34 +17008,100 @@ export const chargeUsageBasedWire = z
     settlement_mode: settlementModeWire,
     tax_config: taxConfigWire.optional(),
     discounts: rateCardDiscountsWire.optional(),
-    feature_key: z.string().describe('The feature associated with the charge.'),
-    feature_id: z
-      .string()
-      .describe('The feature ID associated with the charge.'),
-    totals: chargeTotalsWire,
-    price: priceWire,
-    system_intent: chargeUsageBasedSystemIntentWire.optional(),
+    price: priceUsageBasedWire,
+    commitments: spendCommitmentsWire.optional(),
+    unit_config: unitConfigWire.optional(),
+    feature: featureReferenceWire,
+    full_service_period: closedPeriodWire.optional(),
+    billing_period: closedPeriodWire.optional(),
   })
-  .describe('A usage-based charge for a customer.')
+  .describe('Usage-based charge create request.')
 
-export const createChargeRequestWire = z
-  .discriminatedUnion('type', [
-    createChargeFlatFeeRequestWire,
-    createChargeUsageBasedRequestWire,
-  ])
-  .describe('Customer charge.')
+export const featureOrReferenceWire = z
+  .union([featureWire, featureReferenceWire])
+  .describe('Feature or reference.')
 
-export const subscriptionAddonRateCardWire = z
+export const featurePagePaginatedResponseWire = z
   .strictObject({
-    rate_card: rateCardWire,
-    affected_subscription_item_ids: z
-      .array(ulidWire)
+    data: z.array(featureWire),
+    meta: paginatedMetaWire,
+  })
+  .describe('Page paginated response.')
+
+export const updateInvoiceLineRateCardWire = z
+  .strictObject({
+    price: updatePriceWire,
+    tax_config: updateTaxCodeConfigWire.optional(),
+    feature_key: resourceKeyWire.optional(),
+    discounts: updateDiscountsWire.optional(),
+  })
+  .describe('Rate card configuration snapshot for a usage-based invoice line.')
+
+export const creditGrantPagePaginatedResponseWire = z
+  .strictObject({
+    data: z.array(creditGrantWire),
+    meta: paginatedMetaWire,
+  })
+  .describe('Page paginated response.')
+
+export const workflowWire = z
+  .strictObject({
+    collection: workflowCollectionSettingsWire.optional(),
+    invoicing: workflowInvoicingSettingsWire.optional(),
+    payment: workflowPaymentSettingsWire.optional(),
+    tax: workflowTaxSettingsWire.optional(),
+  })
+  .describe('Billing workflow settings.')
+
+export const chargeRealizationInvoiceOrReferenceWire = z
+  .union([chargeRealizationInvoiceWire, chargeRealizationInvoiceReferenceWire])
+  .describe('ChargeRealizationInvoice or reference.')
+
+export const appPagePaginatedResponseWire = z
+  .strictObject({
+    data: z.array(appWire),
+    meta: paginatedMetaWire,
+  })
+  .describe('Page paginated response.')
+
+export const profileAppsWire = z
+  .strictObject({
+    tax: appWire,
+    invoicing: appWire,
+    payment: appWire,
+  })
+  .describe('Applications used by a billing profile.')
+
+export const notificationEventWire = z
+  .strictObject({
+    id: ulidWire,
+    type: notificationEventTypeWire,
+    created_at: dateTimeWire,
+    rule: notificationRuleReferenceWire,
+    delivery_status: z
+      .array(notificationEventDeliveryStatusWire)
 
       .describe(
-        'The IDs of the subscription items that this rate card belongs to.',
+        'The delivery status of the event, one entry per channel of the rule.',
       ),
+    payload: notificationEventPayloadWire,
   })
-  .describe('A rate card for a subscription add-on.')
+
+  .describe(
+    'A notification event records that a notification rule fired and tracks the delivery of its payload to each channel of the rule. Events are created by the system and cannot be modified.',
+  )
+
+export const subscriptionItemWire = z
+  .strictObject({
+    id: ulidWire,
+    active_from: dateTimeWire,
+    active_to: dateTimeWire.optional(),
+    rate_card: rateCardWire,
+  })
+
+  .describe(
+    'A subscription item pins a rate card to a cadence within a subscription phase.',
+  )
 
 export const planPhaseWire = z
   .strictObject({
@@ -12306,6 +17127,31 @@ export const planPhaseWire = z
   .describe(
     "The plan phase or pricing ramp allows changing a plan's rate cards over time as a subscription progresses.",
   )
+
+export const subscriptionEditAddItemWire = z
+  .strictObject({
+    type: z
+      .literal('add_item')
+      .describe('Discriminator for the add-item operation.'),
+    phase_key: z.string().describe('The key of the phase to add the item to.'),
+    rate_card: rateCardWire,
+  })
+
+  .describe(
+    'Add a new rate card to a phase. Adding an item to the current phase closes the active version of the same item key and appends a new version.',
+  )
+
+export const subscriptionAddonRateCardWire = z
+  .strictObject({
+    rate_card: rateCardWire,
+    affected_subscription_item_ids: z
+      .array(ulidWire)
+
+      .describe(
+        'The IDs of the subscription items that this rate card belongs to.',
+      ),
+  })
+  .describe('A rate card for a subscription add-on.')
 
 export const addonWire = z
   .strictObject({
@@ -12444,6 +17290,13 @@ export const invoiceStandardLineWire = z
     'A top-level line item on an invoice. Each line represents a single charge, typically associated with a rate card from a subscription. Detailed (child) lines are nested under `detailed_lines` when present.',
   )
 
+export const createChargeRequestWire = z
+  .discriminatedUnion('type', [
+    createChargeFlatFeeRequestWire,
+    createChargeUsageBasedRequestWire,
+  ])
+  .describe('Customer charge.')
+
 export const updateInvoiceStandardLineWire = z
   .strictObject({
     name: z
@@ -12547,17 +17400,51 @@ export const upsertBillingProfileRequestWire = z
   })
   .describe('BillingProfile upsert request.')
 
-export const chargeWire = z
-  .discriminatedUnion('type', [chargeFlatFeeWire, chargeUsageBasedWire])
-  .describe('Customer charge.')
+export const chargeRealizationWire = z
+  .strictObject({
+    id: z
+      .string()
+      .optional()
 
-export const subscriptionAddonWire = z
+      .describe(
+        'The ID of the realization run. Not present on `outstanding` entries, which are projections rather than persisted runs.',
+      ),
+    line_id: z
+      .string()
+      .optional()
+
+      .describe(
+        'The ID of the invoice line this realization was booked to, when the realization has been invoiced.',
+      ),
+    invoice: chargeRealizationInvoiceOrReferenceWire.optional(),
+    type: chargeRealizationTypeWire,
+    service_period: closedPeriodWire,
+    usage: numericWire.optional(),
+    payment: chargeRealizationPaymentWire.optional(),
+    totals: totalsWire.optional(),
+    detailed_lines: z
+      .array(chargeRealizationDetailedLineWire)
+      .optional()
+
+      .describe(
+        'The detailed (rated) lines produced by the realization run. Requires the `realization.detailed_lines` expand.',
+      ),
+  })
+
+  .describe(
+    "A realization run of a charge. `totals` and `detailed_lines` are only populated with the `realization.totals` and `realization.detailed_lines` expands, respectively, since computing them requires re-deriving the run's rated breakdown. `invoice` is an ID reference unless the `realization.invoice` expand is used, which resolves it to the invoice header of the run's booked line: the invoice entity without its `lines` and without the `customer` snapshot (the charge itself already identifies the customer).",
+  )
+
+export const notificationEventPagePaginatedResponseWire = z
+  .strictObject({
+    data: z.array(notificationEventWire),
+    meta: paginatedMetaWire,
+  })
+  .describe('Page paginated response.')
+
+export const subscriptionPhaseWire = z
   .strictObject({
     id: ulidWire,
-    labels: labelsWire.optional(),
-    created_at: dateTimeWire,
-    updated_at: dateTimeWire,
-    deleted_at: dateTimeWire.optional(),
     name: z
       .string()
       .min(1)
@@ -12571,29 +17458,59 @@ export const subscriptionAddonWire = z
       .describe(
         'Optional description of the resource. Maximum 1024 characters.',
       ),
-    addon: addonReferenceWire,
-    quantity: z
-      .number()
-      .int()
-      .gte(1)
-
-      .describe(
-        'The quantity of the add-on. Always 1 for single instance add-ons.',
-      ),
-    quantity_at: dateTimeWire,
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    key: resourceKeyWire,
     active_from: dateTimeWire,
     active_to: dateTimeWire.optional(),
-    timeline: z
-      .array(subscriptionAddonTimelineSegmentWire)
+    items: z
+      .array(subscriptionItemWire)
 
       .describe(
-        'The timeline of the add-on. The returned periods are sorted and continuous.',
+        'The rate cards in effect for this phase, resolved to the version active at the queried time (the currently active version for the current phase, the first version for future phases, and the last version for past phases).',
       ),
-    rate_cards: z
-      .array(subscriptionAddonRateCardWire)
-      .describe('The rate cards of the add-on.'),
   })
-  .describe('Addon purchased with a subscription.')
+
+  .describe(
+    "A subscription phase groups the rate cards in effect for a segment of the subscription's lifetime. Analogous to plan phases.",
+  )
+
+export const subscriptionCustomPlanWire = z
+  .strictObject({
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labelsWire.optional(),
+    currency: billingCurrencyCodeWire,
+    billing_cadence: iso8601DurationWire,
+    pro_rating_enabled: z
+      .boolean()
+      .optional()
+      .describe('Whether pro-rating is enabled for this plan.'),
+    phases: z
+      .array(planPhaseWire)
+      .min(1)
+
+      .describe(
+        'The plan phases define the pricing ramp for a subscription. A phase switch occurs only at the end of a billing period. At least one phase is required.',
+      ),
+  })
+
+  .describe(
+    'An inline (custom) plan definition used to create or change a subscription without referencing a published plan. Mirrors the plan create shape without a key or version, since a custom plan is not persisted or versioned on its own. `settlement_mode` is also omitted: it is a subscription-level concern set via the `settlement_mode` field on the create/change request, not on the inline plan.',
+  )
 
 export const planWire = z
   .strictObject({
@@ -12640,7 +17557,7 @@ export const planWire = z
       .describe(
         'The plan phases define the pricing ramp for a subscription. A phase switch occurs only at the end of a billing period. At least one phase is required.',
       ),
-    settlement_mode: settlementModeWire.optional(),
+    settlement_mode: settlementModeWire,
     validation_errors: z
       .array(productCatalogValidationErrorWire)
       .optional()
@@ -12681,8 +17598,12 @@ export const createPlanRequestWire = z
       .describe(
         'The plan phases define the pricing ramp for a subscription. A phase switch occurs only at the end of a billing period. At least one phase is required.',
       ),
+    settlement_mode: settlementModeWire.optional(),
   })
-  .describe('Plan create request.')
+
+  .describe(
+    'Plan create request. `settlement_mode` is re-declared as optional with a `credit_then_invoice` default, applied only on create.',
+  )
 
 export const upsertPlanRequestWire = z
   .strictObject({
@@ -12711,8 +17632,70 @@ export const upsertPlanRequestWire = z
       .describe(
         'The plan phases define the pricing ramp for a subscription. A phase switch occurs only at the end of a billing period. At least one phase is required.',
       ),
+    settlement_mode: settlementModeWire.optional(),
   })
-  .describe('Plan upsert request.')
+
+  .describe(
+    "Plan upsert (update) request. `settlement_mode` is re-declared as optional with no default, so an omitted value leaves the plan's existing settlement mode unchanged.",
+  )
+
+export const subscriptionEditOperationWire = z
+  .discriminatedUnion('type', [
+    subscriptionEditAddItemWire,
+    subscriptionEditRemoveItemWire,
+    subscriptionEditAddPhaseWire,
+    subscriptionEditRemovePhaseWire,
+    subscriptionEditStretchPhaseWire,
+    subscriptionEditUnscheduleEditWire,
+  ])
+
+  .describe(
+    'A single customization to apply to a running subscription. The `type` field discriminates which operation is performed.',
+  )
+
+export const subscriptionAddonWire = z
+  .strictObject({
+    id: ulidWire,
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    addon: addonReferenceWire,
+    quantity: z
+      .number()
+      .int()
+      .gte(1)
+
+      .describe(
+        'The quantity of the add-on. Always 1 for single instance add-ons.',
+      ),
+    quantity_at: dateTimeWire,
+    active_from: dateTimeWire,
+    active_to: dateTimeWire.optional(),
+    timeline: z
+      .array(subscriptionAddonTimelineSegmentWire)
+
+      .describe(
+        'The timeline of the add-on. The returned periods are sorted and continuous.',
+      ),
+    rate_cards: z
+      .array(subscriptionAddonRateCardWire)
+      .describe('The rate cards of the add-on.'),
+  })
+  .describe('Addon purchased with a subscription.')
 
 export const addonPagePaginatedResponseWire = z
   .strictObject({
@@ -12742,23 +17725,164 @@ export const profilePagePaginatedResponseWire = z
   })
   .describe('Page paginated response.')
 
-export const chargePagePaginatedResponseWire = z
+export const subscriptionWire = z
   .strictObject({
-    data: z.array(chargeWire),
-    meta: paginatedMetaWire,
-  })
-  .describe('Page paginated response.')
+    id: ulidWire,
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    name: z
+      .string()
+      .min(1)
+      .max(256)
 
-export const subscriptionAddonPagePaginatedResponseWire = z
-  .strictObject({
-    data: z.array(subscriptionAddonWire),
-    meta: paginatedMetaWire,
+      .describe(
+        'Display name of the subscription. Defaults to the plan name when the subscription is created from a plan.',
+      ),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+      .describe('Optional description of the subscription.'),
+    active_from: dateTimeWire,
+    active_to: dateTimeWire.optional(),
+    customer_id: ulidWire,
+    plan_id: ulidWire.optional(),
+    plan: subscriptionPlanReferenceWire.optional(),
+    invoice_currency: currencyCodeWire,
+    cost_basis_mode: subscriptionCostBasisModeWire,
+    cost_basis_pins: z
+      .array(subscriptionCostBasisPinWire)
+
+      .describe(
+        'Cost bases pinned to custom-currency pairs for this subscription.',
+      ),
+    billing_cadence: iso8601DurationWire,
+    pro_rating_config: subscriptionProRatingConfigWire.optional(),
+    billing_anchor: dateTimeWire,
+    status: subscriptionStatusWire,
+    settlement_mode: settlementModeWire.optional(),
+    current_period: closedPeriodWire.optional(),
+    phases: z
+      .array(subscriptionPhaseWire)
+
+      .describe(
+        "The phases of the subscription in chronological order. A phase groups the rate cards that are in effect for a segment of the subscription's lifetime.",
+      ),
   })
-  .describe('Page paginated response.')
+  .describe('Subscription.')
+
+export const subscriptionCreateWire = z.strictObject({
+  labels: labelsWire.optional(),
+  settlement_mode: settlementModeWire.optional(),
+  customer: z
+    .strictObject({
+      id: ulidWire.optional(),
+      key: externalResourceKeyWire.optional(),
+    })
+    .describe('The customer to create the subscription for.'),
+  plan: z
+    .strictObject({
+      id: ulidWire.optional(),
+      key: resourceKeyWire.optional(),
+      version: z
+        .number()
+        .int()
+        .optional()
+
+        .describe(
+          'The plan version of the subscription, if any. If not provided, the latest version of the plan will be used.',
+        ),
+    })
+    .optional()
+
+    .describe(
+      'A reference to a published plan the subscription is created from. Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the subscription on an existing published plan; use `custom_plan` to define the plan inline.',
+    ),
+  custom_plan: subscriptionCustomPlanWire.optional(),
+  starting_phase: z
+    .string()
+    .min(1)
+    .optional()
+
+    .describe(
+      'The key of the phase to start the subscription in. If not provided, the subscription starts in the first phase of the plan. Only applies when creating from a published `plan`; custom plans define their own phases inline.',
+    ),
+  timing: subscriptionCreateTimingWire.optional(),
+  billing_anchor: dateTimeWire.optional(),
+  cost_basis_mode: subscriptionCostBasisModeWire.optional(),
+})
+
+export const subscriptionChangeWire = z
+  .strictObject({
+    labels: labelsWire.optional(),
+    settlement_mode: settlementModeWire.optional(),
+    customer: z
+      .strictObject({
+        id: ulidWire.optional(),
+        key: externalResourceKeyWire.optional(),
+      })
+      .describe('The customer to create the subscription for.'),
+    plan: z
+      .strictObject({
+        id: ulidWire.optional(),
+        key: resourceKeyWire.optional(),
+        version: z
+          .number()
+          .int()
+          .optional()
+
+          .describe(
+            'The plan version of the subscription, if any. If not provided, the latest version of the plan will be used.',
+          ),
+      })
+      .optional()
+
+      .describe(
+        'A reference to a published plan the subscription is created from. Exactly one of `plan` or `custom_plan` must be provided. Use `plan` to base the subscription on an existing published plan; use `custom_plan` to define the plan inline.',
+      ),
+    custom_plan: subscriptionCustomPlanWire.optional(),
+    starting_phase: z
+      .string()
+      .min(1)
+      .optional()
+
+      .describe(
+        'The key of the phase to start the subscription in. If not provided, the subscription starts in the first phase of the plan. Only applies when creating from a published `plan`; custom plans define their own phases inline.',
+      ),
+    billing_anchor: dateTimeWire.optional(),
+    cost_basis_mode: subscriptionCostBasisModeWire.optional(),
+    timing: subscriptionEditTimingWire,
+  })
+  .describe('Request for changing a subscription.')
 
 export const planPagePaginatedResponseWire = z
   .strictObject({
     data: z.array(planWire),
+    meta: paginatedMetaWire,
+  })
+  .describe('Page paginated response.')
+
+export const subscriptionEditWire = z
+  .strictObject({
+    customizations: z
+      .array(subscriptionEditOperationWire)
+      .max(100)
+
+      .describe(
+        'The ordered batch of customizations to apply to the running subscription.',
+      ),
+    timing: subscriptionEditTimingWire.optional(),
+  })
+
+  .describe(
+    "Request for editing a running subscription. Applies an ordered batch of customizations to the subscription's phases and items. A later customization observes the state produced by earlier ones.",
+  )
+
+export const subscriptionAddonPagePaginatedResponseWire = z
+  .strictObject({
+    data: z.array(subscriptionAddonWire),
     meta: paginatedMetaWire,
   })
   .describe('Page paginated response.')
@@ -12785,7 +17909,7 @@ export const invoiceStandardWire = z
     totals: totalsWire,
     service_period: closedPeriodWire,
     validation_issues: z
-      .array(invoiceValidationIssueWire)
+      .array(validationIssueWire)
       .optional()
 
       .describe(
@@ -12841,6 +17965,31 @@ export const updateInvoiceStandardRequestWire = z
   })
   .describe('InvoiceStandard update request.')
 
+export const subscriptionOrReferenceWire = z
+  .union([subscriptionWire, subscriptionReferenceWire])
+  .describe('Subscription or reference.')
+
+export const subscriptionPagePaginatedResponseWire = z
+  .strictObject({
+    data: z.array(subscriptionWire),
+    meta: paginatedMetaWire,
+  })
+  .describe('Page paginated response.')
+
+export const subscriptionChangeResponseWire = z
+  .strictObject({
+    current: subscriptionWire,
+    next: subscriptionWire,
+  })
+  .describe('Response for changing a subscription.')
+
+export const subscriptionMigrateResponseWire = z
+  .strictObject({
+    current: subscriptionBaseWire,
+    next: subscriptionWire,
+  })
+  .describe('Response for migrating a subscription.')
+
 export const invoiceWire = z
   .discriminatedUnion('type', [invoiceStandardWire])
 
@@ -12852,9 +18001,137 @@ export const updateInvoiceRequestWire = z
   .discriminatedUnion('type', [updateInvoiceStandardRequestWire])
   .describe('UpdateInvoiceRequest update request.')
 
+export const chargeFlatFeeWire = z
+  .strictObject({
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z.literal('flat_fee').describe('The type of the charge.'),
+    customer: customerOrReferenceWire,
+    lifecycle_controller: lifecycleControllerWire,
+    subscription: subscriptionOrReferenceWire.optional(),
+    currency: billingCurrencyCodeWire,
+    resolved_cost_basis: chargeResolvedCostBasisWire.optional(),
+    status: chargeStatusWire,
+    validation_issues: z
+      .array(validationIssueWire)
+      .optional()
+
+      .describe(
+        'Validation issues found while processing the charge. Present only when there are one or more validation findings. An empty list is omitted.',
+      ),
+    invoice_at: dateTimeWire,
+    service_period: closedPeriodWire,
+    full_service_period: closedPeriodWire,
+    billing_period: closedPeriodWire,
+    advance_after: dateTimeWire.optional(),
+    unique_reference_id: z
+      .string()
+      .optional()
+      .describe('Unique reference ID of the charge.'),
+    settlement_mode: settlementModeWire,
+    tax_config: taxConfigWire.optional(),
+    realizations: z
+      .array(chargeRealizationWire)
+      .describe('The realization runs of the charge, sorted by `created_at`.'),
+    payment_term: pricePaymentTermWire,
+    discounts: chargeFlatFeeDiscountsWire.optional(),
+    feature: featureOrReferenceWire.optional(),
+    proration_configuration: rateCardProrationConfigurationWire,
+    amount_after_proration: currencyAmountWire,
+    price: priceFlatWire,
+    system_intent: chargeFlatFeeSystemIntentWire.optional(),
+  })
+  .describe('A flat fee charge for a customer.')
+
+export const chargeUsageBasedWire = z
+  .strictObject({
+    id: ulidWire,
+    name: z
+      .string()
+      .min(1)
+      .max(256)
+      .describe('Display name of the resource. Between 1 and 256 characters.'),
+    description: z
+      .string()
+      .max(1024)
+      .optional()
+
+      .describe(
+        'Optional description of the resource. Maximum 1024 characters.',
+      ),
+    labels: labelsWire.optional(),
+    created_at: dateTimeWire,
+    updated_at: dateTimeWire,
+    deleted_at: dateTimeWire.optional(),
+    type: z.literal('usage_based').describe('The type of the charge.'),
+    customer: customerOrReferenceWire,
+    lifecycle_controller: lifecycleControllerWire,
+    subscription: subscriptionOrReferenceWire.optional(),
+    currency: billingCurrencyCodeWire,
+    resolved_cost_basis: chargeResolvedCostBasisWire.optional(),
+    status: chargeStatusWire,
+    validation_issues: z
+      .array(validationIssueWire)
+      .optional()
+
+      .describe(
+        'Validation issues found while processing the charge. Present only when there are one or more validation findings. An empty list is omitted.',
+      ),
+    invoice_at: dateTimeWire,
+    service_period: closedPeriodWire,
+    full_service_period: closedPeriodWire,
+    billing_period: closedPeriodWire,
+    advance_after: dateTimeWire.optional(),
+    unique_reference_id: z
+      .string()
+      .optional()
+      .describe('Unique reference ID of the charge.'),
+    settlement_mode: settlementModeWire,
+    tax_config: taxConfigWire.optional(),
+    realizations: z
+      .array(chargeRealizationWire)
+      .describe('The realization runs of the charge, sorted by `created_at`.'),
+    discounts: rateCardDiscountsWire.optional(),
+    feature: featureOrReferenceWire,
+    totals: chargeTotalsWire,
+    usage: numericWire.optional(),
+    price: priceUsageBasedWire,
+    commitments: spendCommitmentsWire.optional(),
+    unit_config: unitConfigWire.optional(),
+    system_intent: chargeUsageBasedSystemIntentWire.optional(),
+  })
+  .describe('A usage-based charge for a customer.')
+
 export const invoicePagePaginatedResponseWire = z
   .strictObject({
     data: z.array(invoiceWire),
+    meta: paginatedMetaWire,
+  })
+  .describe('Page paginated response.')
+
+export const chargeWire = z
+  .discriminatedUnion('type', [chargeFlatFeeWire, chargeUsageBasedWire])
+  .describe('Customer charge.')
+
+export const chargePagePaginatedResponseWire = z
+  .strictObject({
+    data: z.array(chargeWire),
     meta: paginatedMetaWire,
   })
   .describe('Page paginated response.')
@@ -13046,6 +18323,254 @@ export const listCustomerEntitlementAccessPathParamsWire = z.object({
 export const listCustomerEntitlementAccessResponseWire =
   listCustomerEntitlementAccessResponseDataWire
 
+export const getCustomerEntitlementAccessPathParamsWire = z.object({
+  customerId: ulidWire,
+  featureKey: resourceKeyWire,
+})
+
+export const getCustomerEntitlementAccessResponseWire =
+  entitlementAccessCheckResultWire
+
+export const getCustomerEntitlementValueByFeatureKeyPathParamsWire = z.object({
+  customerId: ulidWire,
+  featureKey: resourceKeyWire,
+})
+
+export const getCustomerEntitlementValueByFeatureKeyQueryParamsWire = z.object({
+  expand: z
+    .array(entitlementAccessExpandWire)
+    .optional()
+
+    .describe(
+      'Expand computed fields. Supported values are: - `value`: Expand the balance details of a metered entitlement; it sets the `value` field.',
+    ),
+  at: dateTimeWire.optional(),
+})
+
+export const getCustomerEntitlementValueByFeatureKeyResponseWire =
+  entitlementFeatureValueResultWire
+
+export const createCustomerEntitlementPathParamsWire = z.object({
+  customerId: ulidWire,
+})
+
+export const createCustomerEntitlementBodyWire = createEntitlementRequestWire
+
+export const createCustomerEntitlementResponseWire = entitlementWire
+
+export const overrideCustomerEntitlementPathParamsWire = z.object({
+  customerId: ulidWire,
+  entitlementId: ulidWire,
+})
+
+export const overrideCustomerEntitlementBodyWire = createEntitlementRequestWire
+
+export const overrideCustomerEntitlementResponseWire = entitlementWire
+
+export const getCustomerEntitlementHistoryPathParamsWire = z.object({
+  customerId: ulidWire,
+  entitlementId: ulidWire,
+})
+
+export const getCustomerEntitlementHistoryQueryParamsWire = z.object({
+  from: dateTimeWire.optional(),
+  to: dateTimeWire.optional(),
+  window_size: entitlementHistoryWindowSizeWire,
+  time_zone: z.coerce
+    .string()
+    .optional()
+    .describe('The IANA time zone the windows are aligned to.'),
+})
+
+export const getCustomerEntitlementHistoryResponseWire = entitlementHistoryWire
+
+export const getCustomerEntitlementPathParamsWire = z.object({
+  customerId: ulidWire,
+  entitlementId: ulidWire,
+})
+
+export const getCustomerEntitlementResponseWire = entitlementWire
+
+export const listCustomerEntitlementsPathParamsWire = z.object({
+  customerId: ulidWire,
+})
+
+export const listCustomerEntitlementsQueryParamsWire = z.object({
+  page: z
+    .strictObject({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort entitlements returned in the response. Supported sort attributes are: - `created_at` (default) - `updated_at` The `asc` suffix is optional as the default sort order is ascending. The `desc` suffix is used to specify a descending order.',
+    ),
+  filter: listCustomerEntitlementsParamsFilterWire.optional(),
+})
+
+export const listCustomerEntitlementsResponseWire = z.strictObject({
+  data: z.array(entitlementWire),
+  meta: paginatedMetaWire,
+})
+
+export const resetCustomerEntitlementUsagePathParamsWire = z.object({
+  customerId: ulidWire,
+  entitlementId: ulidWire,
+})
+
+export const resetCustomerEntitlementUsageBodyWire =
+  resetCustomerEntitlementUsageRequestWire
+
+export const deleteCustomerEntitlementPathParamsWire = z.object({
+  customerId: ulidWire,
+  entitlementId: ulidWire,
+})
+
+export const listEntitlementsQueryParamsWire = z.object({
+  page: z
+    .strictObject({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort entitlements returned in the response. Supported sort attributes are: - `created_at` (default) - `updated_at` The `asc` suffix is optional as the default sort order is ascending. The `desc` suffix is used to specify a descending order.',
+    ),
+  filter: listEntitlementsParamsFilterWire.optional(),
+})
+
+export const listEntitlementsResponseWire = z.strictObject({
+  data: z.array(entitlementWire),
+  meta: paginatedMetaWire,
+})
+
+export const getEntitlementPathParamsWire = z.object({
+  entitlementId: ulidWire,
+})
+
+export const getEntitlementResponseWire = entitlementWire
+
+export const createCustomerEntitlementGrantPathParamsWire = z.object({
+  customerId: ulidWire,
+  entitlementId: ulidWire,
+})
+
+export const createCustomerEntitlementGrantBodyWire =
+  entitlementGrantCreateRequestWire
+
+export const createCustomerEntitlementGrantResponseWire = entitlementGrantWire
+
+export const listCustomerEntitlementGrantsPathParamsWire = z.object({
+  customerId: ulidWire,
+  entitlementId: ulidWire,
+})
+
+export const listCustomerEntitlementGrantsQueryParamsWire = z.object({
+  page: z
+    .strictObject({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort grants returned in the response. Supported sort attributes are: - `created_at` (default) - `updated_at` - `effective_at` - `expires_at` The `asc` suffix is optional as the default sort order is ascending. The `desc` suffix is used to specify a descending order.',
+    ),
+  include_deleted: z.coerce
+    .boolean()
+    .optional()
+    .describe('Include deleted grants in the response.'),
+})
+
+export const listCustomerEntitlementGrantsResponseWire = z.strictObject({
+  data: z.array(entitlementGrantWire),
+  meta: paginatedMetaWire,
+})
+
+export const getCustomerEntitlementValuePathParamsWire = z.object({
+  customerId: ulidWire,
+  entitlementId: ulidWire,
+})
+
+export const getCustomerEntitlementValueQueryParamsWire = z.object({
+  expand: z
+    .array(entitlementAccessExpandWire)
+    .optional()
+
+    .describe(
+      'Expand computed fields. Supported values are: - `value`: Expand the balance details of a metered entitlement; it sets the `value` field.',
+    ),
+  at: dateTimeWire.optional(),
+})
+
+export const getCustomerEntitlementValueResponseWire =
+  entitlementValueResultWire
+
+export const listGrantsQueryParamsWire = z.object({
+  page: z
+    .strictObject({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort grants returned in the response. Supported sort attributes are: - `created_at` (default) - `updated_at` - `effective_at` - `expires_at` The `asc` suffix is optional as the default sort order is ascending. The `desc` suffix is used to specify a descending order.',
+    ),
+  filter: listGrantsParamsFilterWire.optional(),
+  include_deleted: z.coerce
+    .boolean()
+    .optional()
+    .describe('Include deleted grants in the response.'),
+})
+
+export const listGrantsResponseWire = z.strictObject({
+  data: z.array(entitlementGrantWire),
+  meta: paginatedMetaWire,
+})
+
+export const voidGrantPathParamsWire = z.object({
+  grantId: ulidWire,
+})
+
+export const voidGrantQueryParamsWire = z.object({
+  voided_at: dateTimeWire.optional(),
+})
+
 export const createCreditGrantPathParamsWire = z.object({
   customerId: ulidWire,
 })
@@ -13160,13 +18685,13 @@ export const listCustomerChargesQueryParamsWire = z.object({
     .describe(
       'Sort charges returned in the response. Supported sort attributes are: - `id` - `created_at` - `service_period.from` - `billing_period.from`',
     ),
-  filter: listChargesParamsFilterWire.optional(),
+  filter: listCustomerChargesParamsFilterWire.optional(),
   expand: z
     .array(chargesExpandWire)
     .optional()
 
     .describe(
-      "Expand full objects for referenced entities. Supported values are: - `real_time_usage`: Expand the charge's real-time usage.",
+      "Expand full objects for referenced entities. Supported values are: - `real_time_usage`: Expand the charge's real-time usage; it sets the `usage` and the `totals.realtime` fields. - `customer`: Expand the charge's customer to the complete entity. - `feature`: Expand the charge's feature to the complete entity. - `subscription`: Expand the charge's subscription to the complete entity. - `realization.invoice`: Expand each realization's invoice to the complete entity. - `realization.totals`: Expand each realization run's `totals`. - `realization.detailed_lines`: Expand each realization run's `detailed_lines`.",
     ),
 })
 
@@ -13234,6 +18759,16 @@ export const unscheduleCancelationPathParamsWire = z.object({
 
 export const unscheduleCancelationResponseWire = subscriptionWire
 
+export const unscheduleSubscriptionPathParamsWire = z.object({
+  subscriptionId: ulidWire,
+})
+
+export const restoreSubscriptionPathParamsWire = z.object({
+  subscriptionId: ulidWire,
+})
+
+export const restoreSubscriptionResponseWire = subscriptionWire
+
 export const changeSubscriptionPathParamsWire = z.object({
   subscriptionId: ulidWire,
 })
@@ -13241,6 +18776,22 @@ export const changeSubscriptionPathParamsWire = z.object({
 export const changeSubscriptionBodyWire = subscriptionChangeWire
 
 export const changeSubscriptionResponseWire = subscriptionChangeResponseWire
+
+export const migrateSubscriptionPathParamsWire = z.object({
+  subscriptionId: ulidWire,
+})
+
+export const migrateSubscriptionBodyWire = subscriptionMigrateWire
+
+export const migrateSubscriptionResponseWire = subscriptionMigrateResponseWire
+
+export const editSubscriptionPathParamsWire = z.object({
+  subscriptionId: ulidWire,
+})
+
+export const editSubscriptionBodyWire = subscriptionEditWire
+
+export const editSubscriptionResponseWire = subscriptionWire
 
 export const createSubscriptionAddonPathParamsWire = z.object({
   subscriptionId: ulidWire,
@@ -13288,6 +18839,15 @@ export const getSubscriptionAddonPathParamsWire = z.object({
 
 export const getSubscriptionAddonResponseWire = subscriptionAddonWire
 
+export const updateSubscriptionAddonPathParamsWire = z.object({
+  subscriptionId: ulidWire,
+  subscriptionAddonId: ulidWire,
+})
+
+export const updateSubscriptionAddonBodyWire = subscriptionAddonUpdateWire
+
+export const updateSubscriptionAddonResponseWire = subscriptionAddonWire
+
 export const listAppsQueryParamsWire = z.object({
   page: z
     .strictObject({
@@ -13300,6 +18860,14 @@ export const listAppsQueryParamsWire = z.object({
     })
     .optional()
     .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort apps returned in the response. Supported sort attributes are: - `id` - `created_at` (default) The `asc` suffix is optional as the default sort order is ascending. The `desc` suffix is used to specify a descending order.',
+    ),
+  filter: listAppsParamsFilterWire.optional(),
 })
 
 export const listAppsResponseWire = z.strictObject({
@@ -13324,6 +18892,14 @@ export const updateAppPathParamsWire = z.object({
 export const updateAppBodyWire = updateAppRequestWire
 
 export const updateAppResponseWire = appWire
+
+export const executeAppActionPathParamsWire = z.object({
+  appId: ulidWire,
+})
+
+export const executeAppActionBodyWire = appActionRequestWire
+
+export const executeAppActionResponseWire = appWire
 
 export const listAppCatalogQueryParamsWire = z.object({
   page: z
@@ -13366,6 +18942,14 @@ export const listBillingProfilesQueryParamsWire = z.object({
     })
     .optional()
     .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort billing profiles returned in the response. Supported sort attributes are: - `id` - `name` - `created_at` (default) The `asc` suffix is optional as the default sort order is ascending. The `desc` suffix is used to specify a descending order.',
+    ),
+  filter: listBillingProfilesParamsFilterWire.optional(),
 })
 
 export const listBillingProfilesResponseWire = z.strictObject({
@@ -13463,6 +19047,40 @@ export const snapshotQuantitiesInvoicePathParamsWire = z.object({
 })
 
 export const snapshotQuantitiesInvoiceResponseWire = invoiceWire
+
+export const listChargesQueryParamsWire = z.object({
+  page: z
+    .strictObject({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort charges returned in the response. Supported sort attributes are: - `id` - `created_at` - `service_period.from` - `billing_period.from`',
+    ),
+  filter: listChargesParamsFilterWire.optional(),
+  expand: z
+    .array(chargesExpandWire)
+    .optional()
+
+    .describe(
+      "Expand full objects for referenced entities. Supported values are: - `real_time_usage`: Expand the charge's real-time usage; it sets the `usage` and the `totals.realtime` fields. - `customer`: Expand the charge's customer to the complete entity. - `feature`: Expand the charge's feature to the complete entity. - `subscription`: Expand the charge's subscription to the complete entity. - `realization.invoice`: Expand each realization's invoice to the complete entity. - `realization.totals`: Expand each realization run's `totals`. - `realization.detailed_lines`: Expand each realization run's `detailed_lines`.",
+    ),
+})
+
+export const listChargesResponseWire = z.strictObject({
+  data: z.array(chargeWire),
+  meta: paginatedMetaWire,
+})
 
 export const createTaxCodeBodyWire = createTaxCodeRequestWire
 
@@ -13841,6 +19459,14 @@ export const listPlanAddonsQueryParamsWire = z.object({
     })
     .optional()
     .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort plan add-ons returned in the response. Supported sort attributes are: - `id` (default) - `created_at` - `updated_at` The `asc` suffix is optional as the default sort order is ascending. The `desc` suffix is used to specify a descending order.',
+    ),
+  filter: listPlanAddonsParamsFilterWire.optional(),
 })
 
 export const listPlanAddonsResponseWire = z.strictObject({
@@ -13894,3 +19520,149 @@ export const queryEntitlementAccessBodyWire = entitlementAccessQueryRequestWire
 
 export const queryEntitlementAccessResponseWire =
   entitlementAccessQueryResponseWire
+
+export const listNotificationChannelsQueryParamsWire = z.object({
+  page: z
+    .strictObject({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort notification channels returned in the response. Supported sort attributes are: - `id` (default) - `type` - `created_at` - `updated_at` The `asc` suffix is optional as the default sort order is ascending. The `desc` suffix is used to specify a descending order.',
+    ),
+  filter: listNotificationChannelsParamsFilterWire.optional(),
+})
+
+export const listNotificationChannelsResponseWire = z.strictObject({
+  data: z.array(notificationChannelWire),
+  meta: paginatedMetaWire,
+})
+
+export const createNotificationChannelBodyWire =
+  createNotificationChannelRequestWire
+
+export const createNotificationChannelResponseWire = notificationChannelWire
+
+export const getNotificationChannelPathParamsWire = z.object({
+  notificationChannelId: ulidWire,
+})
+
+export const getNotificationChannelResponseWire = notificationChannelWire
+
+export const updateNotificationChannelPathParamsWire = z.object({
+  notificationChannelId: ulidWire,
+})
+
+export const updateNotificationChannelBodyWire =
+  updateBillingNotificationChannelRequestWire
+
+export const updateNotificationChannelResponseWire = notificationChannelWire
+
+export const deleteNotificationChannelPathParamsWire = z.object({
+  notificationChannelId: ulidWire,
+})
+
+export const listNotificationRulesQueryParamsWire = z.object({
+  page: z
+    .strictObject({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort notification rules returned in the response. Supported sort attributes are: - `id` (default) - `type` - `created_at` - `updated_at` The `asc` suffix is optional as the default sort order is ascending. The `desc` suffix is used to specify a descending order.',
+    ),
+  filter: listNotificationRulesParamsFilterWire.optional(),
+})
+
+export const listNotificationRulesResponseWire = z.strictObject({
+  data: z.array(notificationRuleWire),
+  meta: paginatedMetaWire,
+})
+
+export const createNotificationRuleBodyWire = notificationRuleRequestWire
+
+export const createNotificationRuleResponseWire = notificationRuleWire
+
+export const getNotificationRulePathParamsWire = z.object({
+  notificationRuleId: ulidWire,
+})
+
+export const getNotificationRuleResponseWire = notificationRuleWire
+
+export const updateNotificationRulePathParamsWire = z.object({
+  notificationRuleId: ulidWire,
+})
+
+export const updateNotificationRuleBodyWire = notificationRuleRequestWire
+
+export const updateNotificationRuleResponseWire = notificationRuleWire
+
+export const deleteNotificationRulePathParamsWire = z.object({
+  notificationRuleId: ulidWire,
+})
+
+export const testNotificationRulePathParamsWire = z.object({
+  notificationRuleId: ulidWire,
+})
+
+export const testNotificationRuleResponseWire = notificationEventWire
+
+export const listNotificationEventsQueryParamsWire = z.object({
+  page: z
+    .strictObject({
+      size: z.coerce
+        .number()
+        .int()
+        .optional()
+        .describe('The number of items to include per page.'),
+      number: z.coerce.number().int().optional().describe('The page number.'),
+    })
+    .optional()
+    .describe('Determines which page of the collection to retrieve.'),
+  sort: z
+    .string()
+    .optional()
+
+    .describe(
+      'Sort notification events returned in the response. Supported sort attributes are: - `created_at` (default) - `id` - `type` The `asc` suffix is optional as the default sort order is ascending. The `desc` suffix is used to specify a descending order. Without a `sort` parameter, events are returned newest first.',
+    ),
+  filter: listNotificationEventsParamsFilterWire.optional(),
+})
+
+export const listNotificationEventsResponseWire = z.strictObject({
+  data: z.array(notificationEventWire),
+  meta: paginatedMetaWire,
+})
+
+export const getNotificationEventPathParamsWire = z.object({
+  notificationEventId: ulidWire,
+})
+
+export const getNotificationEventResponseWire = notificationEventWire
+
+export const resendNotificationEventPathParamsWire = z.object({
+  notificationEventId: ulidWire,
+})
+
+export const resendNotificationEventBodyWire =
+  resendBillingNotificationEventRequestWire

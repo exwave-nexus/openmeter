@@ -21,6 +21,20 @@ import (
 	"github.com/openmeterio/openmeter/pkg/framework/entutils"
 )
 
+type ChargeValidationIssuesMixin struct {
+	mixin.Schema
+}
+
+func (ChargeValidationIssuesMixin) Fields() []ent.Field {
+	return []ent.Field{
+		field.JSON("validation_issues", billing.ValidationIssues(nil)).
+			SchemaType(map[string]string{
+				dialect.Postgres: "jsonb",
+			}).
+			Optional(),
+	}
+}
+
 var chargesSearchV1Columns = []string{
 	"id",
 	"namespace",
@@ -94,7 +108,8 @@ func (ChargesSearchV1) buildChargesSearchV1TableSelector(s *sql.Selector, table 
 		AppendSelectExprAs(baseIntentDeletedAt, "base_intent_deleted_at").
 		AppendSelectExprAs(sql.Raw("'"+string(chargeType)+"'"), "type").
 		AppendSelectExprAs(featureID, "feature_id").
-		AppendSelectExprAs(featureKey, "feature_key")
+		AppendSelectExprAs(featureKey, "feature_key").
+		AppendSelect("subscription_plan")
 }
 
 func (ChargesSearchV1) Fields() []ent.Field {
@@ -269,6 +284,14 @@ func (chargesMetaMixin) Fields() []ent.Field {
 			GoType(billing.InvoiceLineManagedBy("")).
 			Immutable(),
 
+		field.String("subscription_plan").
+			GoType(&meta.SubscriptionPlan{}).
+			ValueScanner(entutils.JSONStringValueScanner[*meta.SubscriptionPlan]()).
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Optional().
+			Nillable().
+			Immutable(),
+
 		// Subscriptions metadata
 		field.String("subscription_id").
 			Optional().
@@ -277,8 +300,7 @@ func (chargesMetaMixin) Fields() []ent.Field {
 
 		field.String("subscription_phase_id").
 			Optional().
-			Nillable().
-			Immutable(),
+			Nillable(),
 
 		field.String("subscription_item_id").
 			Optional().
