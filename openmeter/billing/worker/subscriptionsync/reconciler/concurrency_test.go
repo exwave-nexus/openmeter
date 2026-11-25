@@ -37,6 +37,7 @@ func TestAllReconcilesCustomersConcurrentlyInSubscriptionOrder(t *testing.T) {
 			expectedByCustomer[customerID] = append(expectedByCustomer[customerID], sub.NamespacedID)
 		}
 	}
+
 	firstFailure := errors.New("first failed subscription")
 	middleFailure := errors.New("middle failed subscription")
 	lastFailure := errors.New("last failed subscription")
@@ -76,6 +77,7 @@ func TestAllReconcilesCustomersConcurrentlyInSubscriptionOrder(t *testing.T) {
 			t.Fatal("independent customer workers did not start concurrently")
 		}
 	}
+
 	require.ElementsMatch(t, []models.NamespacedID{subs[0].NamespacedID, subs[1].NamespacedID, subs[2].NamespacedID}, started)
 	close(release)
 	var err error
@@ -92,7 +94,6 @@ func TestAllReconcilesCustomersConcurrentlyInSubscriptionOrder(t *testing.T) {
 	require.Equal(t, "failed to reconcile subscription: first failed subscription\nfailed to reconcile subscription: middle failed subscription\nfailed to reconcile subscription: last failed subscription", err.Error())
 	require.Equal(t, 3, spy.peak)
 	require.False(t, spy.customerOverlap)
-	require.False(t, spy.missingSkipOption)
 	require.Len(t, spy.calls, len(subs))
 	for customerID, expected := range expectedByCustomer {
 		actual := make([]models.NamespacedID, 0, len(expected))
@@ -101,6 +102,7 @@ func TestAllReconcilesCustomersConcurrentlyInSubscriptionOrder(t *testing.T) {
 				actual = append(actual, call)
 			}
 		}
+
 		require.Equal(t, expected, actual)
 	}
 }
@@ -128,6 +130,7 @@ func TestAllDefaultAndCallerTransactionKeepExactSerialOrder(t *testing.T) {
 				ctx, err = transaction.SetDriverOnContext(ctx, reconciliationTransaction{})
 				require.NoError(t, err)
 			}
+
 			spy := &customerReconciliationSpy{subscriptions: subs}
 			r := Reconciler{
 				subscriptionService: &reconciliationSubscriptions{subscriptions: subs},
@@ -158,6 +161,7 @@ func TestAllConcurrentReconciliationPreservesEligibilityAndForce(t *testing.T) {
 			CustomerId:   "customer",
 		}
 	}
+
 	states := []subscriptionsync.SyncState{
 		{SubscriptionID: subs[1].NamespacedID, HasBillables: false},
 		{SubscriptionID: subs[2].NamespacedID, HasBillables: true},
@@ -188,6 +192,7 @@ func TestAllConcurrentReconciliationPreservesEligibilityAndForce(t *testing.T) {
 					expected = append(expected, sub.NamespacedID)
 				}
 			}
+
 			require.Equal(t, expected, spy.calls)
 		})
 	}
@@ -202,6 +207,7 @@ func (s *reconciliationSubscriptions) List(_ context.Context, in subscription.Li
 	if in.PageNumber != 1 || in.DeletedAt != nil {
 		return subscription.SubscriptionList{}, nil
 	}
+
 	return subscription.SubscriptionList{Items: slices.Clone(s.subscriptions)}, nil
 }
 
@@ -213,13 +219,12 @@ type customerReconciliationSpy struct {
 	release       <-chan struct{}
 	started       chan models.NamespacedID
 
-	mu                sync.Mutex
-	calls             []models.NamespacedID
-	active            int
-	peak              int
-	activeCustomers   map[models.NamespacedID]int
-	customerOverlap   bool
-	missingSkipOption bool
+	mu              sync.Mutex
+	calls           []models.NamespacedID
+	active          int
+	peak            int
+	activeCustomers map[models.NamespacedID]int
+	customerOverlap bool
 }
 
 func (s *customerReconciliationSpy) GetSyncStates(context.Context, subscriptionsync.GetSyncStatesInput) ([]subscriptionsync.SyncState, error) {
@@ -232,25 +237,22 @@ func (s *customerReconciliationSpy) customerByID(id models.NamespacedID) models.
 			return models.NamespacedID(sub.GetCustomerID())
 		}
 	}
+
 	return models.NamespacedID{}
 }
 
-func (s *customerReconciliationSpy) SyncByID(ctx context.Context, id models.NamespacedID, _ time.Time, opts ...subscriptionsync.SynchronizeSubscriptionOption) error {
-	options := subscriptionsync.SynchronizeSubscriptionOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
+func (s *customerReconciliationSpy) SyncByID(ctx context.Context, id models.NamespacedID, _ time.Time, _ ...subscriptionsync.SynchronizeSubscriptionOption) error {
 	customerID := s.customerByID(id)
 	s.mu.Lock()
 	if s.activeCustomers == nil {
 		s.activeCustomers = make(map[models.NamespacedID]int)
 	}
+
 	s.calls = append(s.calls, id)
 	s.active++
 	s.peak = max(s.peak, s.active)
 	s.activeCustomers[customerID]++
 	s.customerOverlap = s.customerOverlap || s.activeCustomers[customerID] > 1
-	s.missingSkipOption = s.missingSkipOption || !options.SkipCustomCurrencySubscriptions
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -261,6 +263,7 @@ func (s *customerReconciliationSpy) SyncByID(ctx context.Context, id models.Name
 	if s.started != nil {
 		s.started <- id
 	}
+
 	if s.release != nil {
 		select {
 		case <-s.release:
@@ -268,6 +271,7 @@ func (s *customerReconciliationSpy) SyncByID(ctx context.Context, id models.Name
 			return ctx.Err()
 		}
 	}
+
 	return s.failures[id]
 }
 
