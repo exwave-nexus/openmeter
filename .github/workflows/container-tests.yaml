@@ -19,7 +19,7 @@ jobs:
 
   fork:
     name: Fork
-    if: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') }}
+    if: ${{ github.repository != 'openmeterio/openmeter' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]')) }}
     runs-on: ubuntu-24.04
     env:
       OPENMETER_IMAGE: openmeter-ci:${{ github.sha }}
@@ -107,7 +107,7 @@ jobs:
 
   registry-image:
     name: Build
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]') }}
+    if: ${{ github.repository == 'openmeterio/openmeter' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read

@@ -15,6 +15,7 @@ permissions:
 jobs:
   openmeter:
     name: OpenMeter image
+    if: github.repository == 'openmeterio/openmeter'
     runs-on: depot-ubuntu-24.04
 
     permissions:
@@ -75,6 +76,7 @@ jobs:
 
   benthos-collector:
     name: Benthos Collector image
+    if: github.repository == 'openmeterio/openmeter'
     runs-on: depot-ubuntu-24.04
 
     permissions:

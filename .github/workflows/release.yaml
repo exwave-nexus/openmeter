@@ -18,7 +18,7 @@ jobs:
   helm-release:
     name: Helm Charts
     # Helm chart releases are tag-only.
-    if: github.ref_type == 'tag'
+    if: github.repository == 'openmeterio/openmeter' && github.ref_type == 'tag'
     runs-on: depot-ubuntu-latest-8
     environment: prod
 
@@ -88,7 +88,7 @@ jobs:
   binary-build:
     name: Binary (${{ matrix.goos }}/${{ matrix.goarch }})
     # Release binaries are tag-only.
-    if: github.ref_type == 'tag'
+    if: github.repository == 'openmeterio/openmeter' && github.ref_type == 'tag'
     runs-on: depot-ubuntu-latest-8
 
     strategy:
@@ -173,7 +173,7 @@ jobs:
   github-release:
     name: GitHub Release
     # GitHub release creation is tag-only.
-    if: github.ref_type == 'tag'
+    if: github.repository == 'openmeterio/openmeter' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     needs: [ binary-build ]
     environment: prod
@@ -224,6 +224,7 @@ jobs:
   # per-commit beta.
   sdk-javascript-meta:
     name: JavaScript SDK Release Meta
+    if: github.repository == 'openmeterio/openmeter'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.meta.outputs.version }}
@@ -276,7 +277,7 @@ jobs:
   sdk-python-release:
     name: Python SDK Release
     # Python SDK releases are tag-only (dev Python releases live in release-sdk-python-dev.yaml).
-    if: github.ref_type == 'tag'
+    if: github.repository == 'openmeterio/openmeter' && github.ref_type == 'tag'
     runs-on: depot-ubuntu-latest-8
     environment: prod
 

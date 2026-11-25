@@ -48,6 +48,7 @@ jobs:
 
   release-label:
     name: Release note label
+    if: github.repository == 'openmeterio/openmeter'
     runs-on: ubuntu-latest
     permissions:
       checks: write

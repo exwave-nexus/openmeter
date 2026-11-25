@@ -12,6 +12,7 @@ on:
 jobs:
   release-beta-sdk:
     name: Python SDK Beta Release
+    if: github.repository == 'openmeterio/openmeter'
     runs-on: depot-ubuntu-latest-8
     environment: dev
 

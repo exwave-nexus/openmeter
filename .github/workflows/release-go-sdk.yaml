@@ -27,6 +27,7 @@ permissions:
 jobs:
   release:
     name: Go SDK Release
+    if: github.repository == 'openmeterio/openmeter'
     runs-on: ubuntu-latest
     environment: prod
 

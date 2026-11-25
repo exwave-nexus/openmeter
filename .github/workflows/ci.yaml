@@ -138,7 +138,7 @@ jobs:
 
   generators-go:
     name: Code Generators / Go
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ${{ github.repository == 'openmeterio/openmeter' && 'depot-ubuntu-24.04-4' || 'ubuntu-24.04' }}
 
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -168,7 +168,7 @@ jobs:
             ${{ runner.os }}-openmeter-go-modules-
 
       - name: Verify Depot Go cache
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        if: ${{ github.repository == 'openmeterio/openmeter' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: |
           cache_program="$(go env GOCACHEPROG)"
 
@@ -242,9 +242,9 @@ jobs:
 
   test:
     name: Test
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: ${{ github.repository == 'openmeterio/openmeter' && 'depot-ubuntu-24.04-16' || 'ubuntu-24.04' }}
     env:
-      COMPOSE_FILE: docker-compose.yaml:docker-compose.postgres-test.yaml:.github/docker-compose.depot-registry.yaml
+      COMPOSE_FILE: docker-compose.yaml:docker-compose.postgres-test.yaml${{ github.repository == 'openmeterio/openmeter' && ':.github/docker-compose.depot-registry.yaml' || '' }}
       COMPOSE_PROFILES: redis,depot-registry-svix
 
     steps:
@@ -271,7 +271,7 @@ jobs:
           cache: false
 
       - name: Verify Depot Go cache
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        if: ${{ github.repository == 'openmeterio/openmeter' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: |
           cache_program="$(go env GOCACHEPROG)"
 
@@ -377,7 +377,7 @@ jobs:
 
   lint-go:
     name: Lint / Go
-    runs-on: depot-ubuntu-24.04-8
+    runs-on: ${{ github.repository == 'openmeterio/openmeter' && 'depot-ubuntu-24.04-8' || 'ubuntu-24.04' }}
 
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -409,7 +409,7 @@ jobs:
           skip-cache: true
 
       - name: Verify Depot Go cache
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        if: ${{ github.repository == 'openmeterio/openmeter' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: |
           cache_program="$(go env GOCACHEPROG)"
 

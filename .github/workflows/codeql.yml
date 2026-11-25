@@ -58,7 +58,7 @@ jobs:
       security-events: write # Required to upload CodeQL results.
       packages: read # Required for private CodeQL packs.
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
-    runs-on: depot-ubuntu-latest-4
+    runs-on: ${{ github.repository == 'openmeterio/openmeter' && 'depot-ubuntu-latest-4' || 'ubuntu-latest' }}
     timeout-minutes: 30
 
     strategy:
