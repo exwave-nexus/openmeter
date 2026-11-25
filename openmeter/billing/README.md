@@ -263,6 +263,15 @@ invoicing operations return billing-owned validation issues. Critical issues
 move the invoice into the failed state for that step. Before issuing, invoice
 deletion returns a warning when provider cleanup has to be skipped.
 
+With `billing.featureSwitches.skipZeroTotalInvoices` (Exwave fork, default
+true in the server configuration), an invoice whose totals are all zero and
+that the invoicing app has never received skips the app: no validation, draft
+or issuing sync, finalization or provider deletion. It is issued internally and
+moves from `payment_processing.pending` to `paid`, keeping its lines. The check
+uses the current totals at each app operation, so a draft that becomes
+non-zero before issuing is created and finalized in the app as usual, and an
+invoice the app already holds keeps the standard flow.
+
 Retrying and deleting are separate domain actions. Use the billing service's
 retry operation for a retryable failure and its delete operation for the
 delete lifecycle; firing a generic state-machine trigger bypasses preparation

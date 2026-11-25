@@ -288,6 +288,13 @@ func allocateStateMachine() *InvoiceStateMachine {
 
 	// Payment states
 	stateMachine.Configure(billing.StandardInvoiceStatusPaymentProcessingPending).
+		// Exwave fork: a zero-total invoice that skipped the invoicing app has no
+		// provider payment to wait for, so OpenMeter settles it as paid.
+		Permit(
+			billing.TriggerNext,
+			billing.StandardInvoiceStatusPaymentProcessingBookingAuthorizedAndSettled,
+			statelessx.BoolFn(out.settlesWithoutInvoicingApp),
+		).
 		Permit(billing.TriggerAuthorized, billing.StandardInvoiceStatusPaymentProcessingBookingAuthorized).
 		Permit(billing.TriggerPaid, billing.StandardInvoiceStatusPaymentProcessingBookingAuthorizedAndSettled).
 		Permit(billing.TriggerFailed, billing.StandardInvoiceStatusPaymentProcessingFailed).
@@ -788,6 +795,11 @@ func (m *InvoiceStateMachine) validateDraftInvoice(ctx context.Context) error {
 	}
 
 	return m.withInvoicingApp(billing.StandardInvoiceOpValidate, func(app billing.InvoicingApp) (*billing.StandardInvoiceOperation, error) {
+		if m.settlesWithoutInvoicingApp() {
+			m.logInvoicingAppSkipped(billing.StandardInvoiceOpValidate)
+			return nil, nil
+		}
+
 		clonedInvoice, err := m.Invoice.Clone()
 		if err != nil {
 			return nil, err
@@ -822,6 +834,11 @@ func (m *InvoiceStateMachine) syncDraftInvoice(ctx context.Context) error {
 
 	// Let's save the invoice so that we are sure that all the IDs are available for downstream apps
 	return m.withInvoicingApp(billing.StandardInvoiceOpSync, func(app billing.InvoicingApp) (*billing.StandardInvoiceOperation, error) {
+		if m.settlesWithoutInvoicingApp() {
+			m.logInvoicingAppSkipped(billing.StandardInvoiceOpSync)
+			return nil, nil
+		}
+
 		clonedInvoice, err := m.Invoice.Clone()
 		if err != nil {
 			return nil, err
@@ -849,6 +866,11 @@ func (m *InvoiceStateMachine) finalizeInvoice(ctx context.Context) error {
 	}
 
 	return m.withInvoicingApp(billing.StandardInvoiceOpFinalize, func(app billing.InvoicingApp) (*billing.StandardInvoiceOperation, error) {
+		// Line finalization has already run, so these are the final totals.
+		if m.settlesWithoutInvoicingApp() {
+			return nil, m.issueWithoutInvoicingApp()
+		}
+
 		clonedInvoice, err := m.Invoice.Clone()
 		if err != nil {
 			return nil, err
@@ -907,6 +929,12 @@ func (m *InvoiceStateMachine) syncDeletedInvoice(ctx context.Context) error {
 	}
 
 	return m.withInvoicingApp(billing.StandardInvoiceOpDelete, func(app billing.InvoicingApp) (*billing.StandardInvoiceOperation, error) {
+		// The app never received the invoice, so there is nothing to delete there.
+		if m.settlesWithoutInvoicingApp() {
+			m.logInvoicingAppSkipped(billing.StandardInvoiceOpDelete)
+			return nil, nil
+		}
+
 		clonedInvoice, err := m.Invoice.Clone()
 		if err != nil {
 			return nil, err
@@ -1215,6 +1243,10 @@ func (m *InvoiceStateMachine) runLineEngineInvoiceSteps(
 }
 
 func (m *InvoiceStateMachine) canDraftSyncAdvance() bool {
+	if m.settlesWithoutInvoicingApp() {
+		return true
+	}
+
 	if invoicingApp, ok := m.Invoice.Workflow.Apps.Invoicing.(billing.InvoicingAppAsyncSyncer); ok {
 		can, err := invoicingApp.CanDraftSyncAdvance(m.Invoice)
 		if err != nil {
@@ -1237,6 +1269,10 @@ func (m *InvoiceStateMachine) validateNamespaceLockdown() error {
 }
 
 func (m *InvoiceStateMachine) canIssuingSyncAdvance() bool {
+	if m.settlesWithoutInvoicingApp() {
+		return true
+	}
+
 	if invoicingApp, ok := m.Invoice.Workflow.Apps.Invoicing.(billing.InvoicingAppAsyncSyncer); ok {
 		can, err := invoicingApp.CanIssuingSyncAdvance(m.Invoice)
 		if err != nil {

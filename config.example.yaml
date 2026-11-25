@@ -101,6 +101,9 @@ billing:
     # collected standard invoice to the earliest N lines by service period start.
     maxLinesPerCollectedInvoice: 0
     subscriptionSyncForceAsyncAdvance: true
+    # Exwave fork: settle invoices whose totals are all zero inside OpenMeter
+    # instead of sending them to the invoicing app (default true).
+    skipZeroTotalInvoices: true
 
 credits:
   enabled: true
