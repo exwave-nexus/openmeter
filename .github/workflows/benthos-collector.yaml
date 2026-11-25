@@ -17,7 +17,7 @@ jobs:
 
   depot:
     name: Build
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
+    if: ${{ github.repository == 'openmeterio/openmeter' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
     runs-on: depot-ubuntu-24.04-4
     permissions:
       contents: read
@@ -51,7 +51,7 @@ jobs:
 
   fork:
     name: Build (Fork)
-    if: ${{ github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]' }}
+    if: ${{ github.repository != 'openmeterio/openmeter' || github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read

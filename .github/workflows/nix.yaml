@@ -23,7 +23,7 @@ jobs:
 
   nix:
     name: Build Nix environment
-    runs-on: depot-ubuntu-24.04-16
+    runs-on: ${{ github.repository == 'openmeterio/openmeter' && 'depot-ubuntu-24.04-16' || 'ubuntu-24.04' }}
     env:
       # Nix namespaces GOCACHE by its Go toolchain and dynamic loader. Depot's
       # shared Go cache does not include those Nix store identities.
