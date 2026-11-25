@@ -238,6 +238,7 @@ func (r *Reconciler) All(ctx context.Context, in ReconcilerAllInput) error {
 				outErr = errors.Join(outErr, err)
 			}
 		}
+
 		return outErr
 	}
 
@@ -253,6 +254,7 @@ func (r *Reconciler) All(ctx context.Context, in ReconcilerAllInput) error {
 			groupIndexes[customerID] = groupIndex
 			groups = append(groups, nil)
 		}
+
 		groups[groupIndex] = append(groups[groupIndex], index)
 	}
 
@@ -270,9 +272,11 @@ func (r *Reconciler) All(ctx context.Context, in ReconcilerAllInput) error {
 			}
 		}()
 	}
+
 	for _, indexes := range groups {
 		jobs <- indexes
 	}
+
 	close(jobs)
 	workers.Wait()
 
@@ -303,5 +307,6 @@ func (r *Reconciler) reconcileSubscriptionIfNeeded(ctx context.Context, subscrip
 		r.logger.ErrorContext(ctx, "failed to reconcile subscription", "error", err)
 		return fmt.Errorf("failed to reconcile subscription: %w", err)
 	}
+
 	return nil
 }
