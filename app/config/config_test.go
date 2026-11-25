@@ -169,6 +169,7 @@ func TestComplete(t *testing.T) {
 			MaxParallelQuantitySnapshots: 4,
 			FeatureSwitches: BillingFeatureSwitchesConfiguration{
 				SubscriptionSyncForceAsyncAdvance: true,
+				SkipZeroTotalInvoices:             true,
 			},
 			Worker: BillingWorkerConfiguration{
 				ConsumerConfiguration: ConsumerConfiguration{

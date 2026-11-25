@@ -39,6 +39,9 @@ type BillingFeatureSwitchesConfiguration struct {
 	// MaxLinesPerCollectedInvoice is the maximum number of lines that can be collected for a single invoice, 0 means no limit.
 	MaxLinesPerCollectedInvoice       int
 	SubscriptionSyncForceAsyncAdvance bool
+	// SkipZeroTotalInvoices settles invoices whose totals are all zero inside OpenMeter,
+	// without sending them to the invoicing app (Exwave fork, enabled by default).
+	SkipZeroTotalInvoices bool
 }
 
 func (c BillingFeatureSwitchesConfiguration) Validate() error {
@@ -62,4 +65,5 @@ func ConfigureBilling(v *viper.Viper, flags *pflag.FlagSet) {
 	v.SetDefault("billing.maxParallelQuantitySnapshots", 4)
 	v.SetDefault("billing.featureSwitches.maxLinesPerCollectedInvoice", 0)
 	v.SetDefault("billing.featureSwitches.subscriptionSyncForceAsyncAdvance", true)
+	v.SetDefault("billing.featureSwitches.skipZeroTotalInvoices", true)
 }

@@ -162,6 +162,7 @@ func newBillingService(
 		Publisher:               eventPublisher,
 		AdvancementStrategy:     billingConfig.AdvancementStrategy,
 		FSNamespaceLockdown:     fsConfig.NamespaceLockdown,
+		SkipZeroTotalInvoices:   fsConfig.SkipZeroTotalInvoices,
 	})
 	if err != nil {
 		return nil, err

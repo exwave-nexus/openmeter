@@ -37,6 +37,9 @@ type Service struct {
 	advancementStrategy billing.AdvancementStrategy
 	fsNamespaceLockdown []string
 
+	// skipZeroTotalInvoices settles zero-total invoices without the invoicing app (Exwave fork).
+	skipZeroTotalInvoices bool
+
 	standardInvoiceHooks *billing.StandardInvoiceHooks
 }
 
@@ -52,6 +55,9 @@ type Config struct {
 	Publisher               eventbus.Publisher
 	AdvancementStrategy     billing.AdvancementStrategy
 	FSNamespaceLockdown     []string
+	// SkipZeroTotalInvoices settles invoices whose totals are all zero inside OpenMeter
+	// instead of sending them to the invoicing app (Exwave fork).
+	SkipZeroTotalInvoices bool
 }
 
 func (c Config) Validate() error {
@@ -117,6 +123,8 @@ func New(config Config) (*Service, error) {
 		invoiceCalculator:    invoicecalc.New(),
 		lineEngines:          newEngineRegistry(),
 		standardInvoiceHooks: models.NewServiceHookRegistry[billing.StandardInvoice](),
+
+		skipZeroTotalInvoices: config.SkipZeroTotalInvoices,
 	}
 
 	if err := svc.RegisterLineEngine(config.LegacyBillingLineEngine); err != nil {
@@ -128,6 +136,13 @@ func New(config Config) (*Service, error) {
 
 func (s Service) WithInvoiceCalculator(calc invoicecalc.Calculator) *Service {
 	s.invoiceCalculator = calc
+
+	return &s
+}
+
+// WithSkipZeroTotalInvoices returns a copy of the service with the zero-total invoice switch set.
+func (s Service) WithSkipZeroTotalInvoices(skip bool) *Service {
+	s.skipZeroTotalInvoices = skip
 
 	return &s
 }
